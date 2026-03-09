@@ -263,11 +263,23 @@
               </p>
 
               <ul v-if="!pendingLoading && !pendingError">
-                <li v-for="c in pendingCoupons" :key="c.id">
-                  <strong>{{ c.description }}</strong><br />
-                  Submitted by: {{ c.merchantName }} ({{ "Id: " + c.merchantId }})<br />
-                  Expires: {{ formatDate(c.expires_at) }}
+                <li v-for="c in pendingCoupons" :key="c.id" class="pending-submission-card">
+                  <div class="pending-card-header">
+                    <strong>{{ c.title || c.description }}</strong>
+                    <span v-if="c.couponType" class="badge badge-type">{{ c.couponType }}</span>
+                  </div>
+                  <div class="pending-card-meta muted tiny">
+                    Merchant: {{ c.merchantName }}<br />
+                    <span v-if="c.discountValue">Discount: {{ c.discountValue }}{{ c.couponType === 'percent' ? '%' : '' }}</span>
+                    <span v-if="c.expiresAt"> · Expires: {{ formatDate(c.expiresAt) }}</span>
+                  </div>
+                  <div v-if="c.updatedAt" class="muted tiny freshness-hint">
+                    Last edited by merchant on {{ formatDate(c.updatedAt) }}
+                  </div>
                   <div class="action-buttons">
+                    <button class="btn-review" @click="openReviewModal(c)">
+                      <i class="pi pi-eye icon-spacing-sm"></i>Review
+                    </button>
                     <button @click="approveCoupon(c)">
                       <i class="pi pi-check icon-spacing-sm"></i>Approve
                     </button>
@@ -311,6 +323,32 @@
           </div>
         </div>
       </section>
+
+      <!-- Review Detail Modal -->
+      <Modal v-if="reviewModalCoupon" @close="closeReviewModal">
+        <h2>Review Submission</h2>
+        <table class="review-table">
+          <tr><th>Title</th><td>{{ reviewModalCoupon.title }}</td></tr>
+          <tr><th>Description</th><td>{{ reviewModalCoupon.description }}</td></tr>
+          <tr><th>Coupon Type</th><td>{{ reviewModalCoupon.couponType }}</td></tr>
+          <tr v-if="reviewModalCoupon.discountValue"><th>Discount Value</th><td>{{ reviewModalCoupon.discountValue }}{{ reviewModalCoupon.couponType === 'percent' ? '%' : '' }}</td></tr>
+          <tr><th>Valid From</th><td>{{ formatDate(reviewModalCoupon.validFrom) }}</td></tr>
+          <tr><th>Expires At</th><td>{{ formatDate(reviewModalCoupon.expiresAt) }}</td></tr>
+          <tr><th>Locked</th><td>{{ reviewModalCoupon.locked ? 'Yes' : 'No' }}</td></tr>
+          <tr><th>Merchant</th><td>{{ reviewModalCoupon.merchantName }}</td></tr>
+          <tr v-if="reviewModalCoupon.submittedAt"><th>Submitted</th><td>{{ formatDate(reviewModalCoupon.submittedAt) }}</td></tr>
+          <tr v-if="reviewModalCoupon.updatedAt"><th>Last Edited</th><td>{{ formatDate(reviewModalCoupon.updatedAt) }}</td></tr>
+        </table>
+        <div class="review-modal-actions">
+          <button class="btn primary" @click="approveCoupon(reviewModalCoupon); closeReviewModal()">
+            <i class="pi pi-check icon-spacing-sm"></i>Approve
+          </button>
+          <button class="btn danger" @click="rejectCoupon(reviewModalCoupon); closeReviewModal()">
+            <i class="pi pi-times icon-spacing-sm"></i>Reject
+          </button>
+          <button class="btn tertiary" @click="closeReviewModal">Cancel</button>
+        </div>
+      </Modal>
     </template>
   </div>
 </template>
@@ -318,11 +356,14 @@
 <script>
 import { mapGetters } from "vuex";
 import { getAccessToken, signIn } from "@/services/authService";
+import Modal from "@/components/Common/Modal.vue";
 
 const API_BASE = "/api/v1";
 
 export default {
   name: "FoodieGroupDashboard",
+
+  components: { Modal },
 
   data() {
     return {
@@ -348,6 +389,7 @@ export default {
       pendingCoupons: [],
       pendingLoading: false,
       pendingError: null,
+      reviewModalCoupon: null,
 
       activeCoupons: [],
       activeLoading: false,
@@ -658,9 +700,17 @@ export default {
           .filter((sub) => sub.state === "pending")
           .map((sub) => ({
             id: sub.id,
+            title: sub.submissionData?.title || "",
             description: sub.submissionData?.description || "",
+            couponType: sub.submissionData?.coupon_type || "",
+            discountValue: sub.submissionData?.discount_value,
+            validFrom: sub.submissionData?.valid_from,
+            expiresAt: sub.submissionData?.expires_at,
+            locked: sub.submissionData?.locked,
             merchantName: sub.merchantName,
             merchantId: sub.merchantId,
+            submittedAt: sub.submittedAt,
+            updatedAt: sub.updatedAt,
             expires_at: sub.submissionData?.expires_at,
           }));
 
@@ -772,6 +822,14 @@ export default {
       } finally {
         this.overviewLoading = false;
       }
+    },
+
+    openReviewModal(coupon) {
+      this.reviewModalCoupon = coupon;
+    },
+
+    closeReviewModal() {
+      this.reviewModalCoupon = null;
     },
 
     // Approve a pending submission
@@ -1626,5 +1684,85 @@ textarea:focus {
   text-align: center;
   color: var(--color-error);
   padding: var(--spacing-xl);
+}
+
+.pending-submission-card {
+  border-left: 3px solid var(--color-warning, #f0ad4e);
+  padding-left: var(--spacing-sm);
+}
+
+.pending-card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.badge-type {
+  display: inline-block;
+  padding: 0.1em 0.5em;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+}
+
+.pending-card-meta {
+  margin-top: 0.25rem;
+}
+
+.freshness-hint {
+  font-style: italic;
+  margin-top: 0.15rem;
+}
+
+.btn-review {
+  background: var(--color-bg-secondary) !important;
+  color: var(--color-text-primary) !important;
+}
+
+.btn-review:hover {
+  background: var(--color-bg-tertiary, #e2e8f0) !important;
+}
+
+/* Review Modal */
+.review-modal {
+  max-width: 600px;
+}
+
+.review-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.review-table th,
+.review-table td {
+  text-align: left;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid var(--color-border, #e2e8f0);
+}
+
+.review-table th {
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+  width: 35%;
+  color: var(--color-text-secondary);
+}
+
+.review-modal-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-lg);
+  flex-wrap: wrap;
+}
+
+.review-modal-actions .btn.danger {
+  background: var(--color-error);
+  color: var(--color-text-on-error);
+}
+
+.review-modal-actions .btn.danger:hover {
+  background: var(--color-error-hover);
 }
 </style>

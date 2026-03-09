@@ -67,6 +67,8 @@ router.get('/', auth(), resolveLocalUser, async (req, res, next) => {
         merchantName:   merchant.name,
         state:          couponSubmission.state,
         submittedAt:    couponSubmission.submittedAt,
+        updatedAt:      couponSubmission.updatedAt,
+        reviewedAt:     couponSubmission.reviewedAt,
         submissionData: couponSubmission.submissionData,
         deletedAt:      couponSubmission.deletedAt,
       })
@@ -132,6 +134,8 @@ router.get('/by-merchant', auth(), resolveLocalUser, async (req, res, next) => {
         groupId:          couponSubmission.groupId,
         state:            couponSubmission.state,
         submittedAt:      couponSubmission.submittedAt,
+        updatedAt:        couponSubmission.updatedAt,
+        reviewedAt:       couponSubmission.reviewedAt,
         submissionData:   couponSubmission.submissionData,
         rejectionMessage: couponSubmission.rejectionMessage,
         deletedAt:        couponSubmission.deletedAt,
@@ -320,6 +324,75 @@ router.post('/', auth(), resolveLocalUser, async (req, res, next) => {
 });
 
 // ────────────────────────────────────────────────────────────────
+// PATCH /:id — merchant edits their own pending submission
+// Only the owning merchant (or super admin) can use this,
+// and only while the submission is still in 'pending' state.
+// ────────────────────────────────────────────────────────────────
+router.patch('/:id', auth(), resolveLocalUser, async (req, res, next) => {
+  const submissionId = req.params.id;
+  const { submission_data } = req.body;
+  const dbUser = req.dbUser;
+
+  console.log(`📦  PATCH /api/v1/coupon-submissions/${submissionId}`);
+
+  try {
+    if (!submission_data) {
+      return res.status(400).json({ error: 'submission_data is required' });
+    }
+
+    const validationErrors = validateSubmissionData(submission_data);
+    if (validationErrors.length > 0) {
+      return res.status(400).json({ error: 'Validation failed', details: validationErrors });
+    }
+
+    const normalizedData = normalizeSubmissionData(submission_data);
+
+    const [existing] = await db
+      .select()
+      .from(couponSubmission)
+      .where(eq(couponSubmission.id, submissionId));
+
+    if (!existing) {
+      return res.status(404).json({ message: 'Submission not found' });
+    }
+
+    if (existing.state !== 'pending') {
+      return res.status(403).json({
+        error: `Cannot edit a submission that has been ${existing.state}`,
+      });
+    }
+
+    const allowed = await canManageMerchant(dbUser, existing.merchantId);
+    if (!allowed) {
+      return res.status(403).json({ error: 'Forbidden: You do not own this merchant' });
+    }
+
+    const [updated] = await db
+      .update(couponSubmission)
+      .set({
+        submissionData: normalizedData,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(couponSubmission.id, submissionId))
+      .returning();
+
+    return res.json({
+      id: updated.id,
+      merchantId: updated.merchantId,
+      groupId: updated.groupId,
+      state: updated.state,
+      submittedAt: updated.submittedAt,
+      updatedAt: updated.updatedAt,
+      submissionData: updated.submissionData,
+      rejectionMessage: updated.rejectionMessage,
+    });
+  } catch (err) {
+    console.error(`❌ Error in PATCH /coupon-submissions/${submissionId}:`, err);
+    next(err);
+  }
+});
+
+// ────────────────────────────────────────────────────────────────
 // PUT update submission (approve/reject → may create coupon)
 // Only foodie_group_admin for that group (or super admin) can do this.
 // ────────────────────────────────────────────────────────────────
@@ -357,7 +430,7 @@ router.put('/:id', auth(), resolveLocalUser, async (req, res, next) => {
     }
 
     // Proceed with update
-    const updateData = { state };
+    const updateData = { state, reviewedAt: new Date().toISOString() };
     if (state === 'rejected' && message) {
       updateData.rejectionMessage = message;
     }

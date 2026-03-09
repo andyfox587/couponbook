@@ -80,12 +80,12 @@
               <span class="stat-value">{{ overview.counts?.foodieGroups || 0 }}</span>
               <span class="stat-hint">Click to manage</span>
             </div>
-            <div class="stat-card clickable" @click="viewCoupons" title="View all coupons">
+            <div class="stat-card clickable" @click="goToTab('coupons'); couponsTabView = 'approved'" title="View all coupons">
               <span class="stat-label">Coupons</span>
               <span class="stat-value">{{ overview.counts?.coupons || 0 }}</span>
               <span class="stat-hint">Click to view</span>
             </div>
-            <div class="stat-card clickable" @click="viewPendingSubmissions" title="Click to view pending submissions">
+            <div class="stat-card clickable" @click="goToTab('coupons'); couponsTabView = 'pending'" title="Click to view pending submissions">
               <span class="stat-label">Pending Submissions</span>
               <span class="stat-value highlight-warning">{{ overview.counts?.couponSubmissions?.pending || 0 }}</span>
               <span class="stat-hint">Click to view</span>
@@ -406,8 +406,148 @@
             </div>
           </div>
         </section>
+
+        <!-- COUPONS TAB -->
+        <section v-if="activeTab === 'coupons'" class="dashboard-section">
+          <h2>Coupon Operations</h2>
+
+          <nav class="sub-tab-nav">
+            <button :class="['sub-tab-btn', { active: couponsTabView === 'pending' }]" @click="switchCouponsTabView('pending')">
+              Pending Submissions
+            </button>
+            <button :class="['sub-tab-btn', { active: couponsTabView === 'approved' }]" @click="switchCouponsTabView('approved')">
+              Approved / Live Coupons
+            </button>
+            <button :class="['sub-tab-btn', { active: couponsTabView === 'rejected' }]" @click="switchCouponsTabView('rejected')">
+              Rejected Submissions
+            </button>
+          </nav>
+
+          <div v-if="couponsTabLoading" class="loading-state">Loading...</div>
+          <div v-else-if="couponsTabError" class="error-state">{{ couponsTabError }}</div>
+
+          <!-- Pending Submissions Sub-Tab -->
+          <div v-else-if="couponsTabView === 'pending'">
+            <div v-if="couponsTabPending.length === 0" class="empty-state">No pending submissions.</div>
+            <div v-else class="data-table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Title</th>
+                    <th>Merchant</th>
+                    <th>Type</th>
+                    <th>Submitted</th>
+                    <th>Last Edited</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="sub in couponsTabPending" :key="sub.id">
+                    <td>{{ sub.submissionData?.title || sub.submission_data?.title || '—' }}</td>
+                    <td>{{ sub.merchantName || '—' }}</td>
+                    <td>{{ sub.submissionData?.coupon_type || sub.submission_data?.coupon_type || '—' }}</td>
+                    <td>{{ formatDate(sub.submittedAt || sub.submitted_at) }}</td>
+                    <td>{{ sub.updatedAt || sub.updated_at ? formatDate(sub.updatedAt || sub.updated_at) : '—' }}</td>
+                    <td class="action-cell">
+                      <button class="btn compact primary" @click="adminApproveSub(sub)">Approve</button>
+                      <button class="btn compact danger" @click="adminRejectSub(sub)">Reject</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Approved / Live Coupons Sub-Tab -->
+          <div v-else-if="couponsTabView === 'approved'">
+            <div v-if="couponsTabApproved.length === 0" class="empty-state">No approved coupons found.</div>
+            <div v-else class="data-table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Title</th>
+                    <th>Merchant</th>
+                    <th>Type</th>
+                    <th>Discount</th>
+                    <th>Expires</th>
+                    <th>Locked</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="c in couponsTabApproved" :key="c.id">
+                    <td>{{ c.title }}</td>
+                    <td>{{ c.merchantName || '—' }}</td>
+                    <td>{{ c.couponType || c.coupon_type }}</td>
+                    <td>{{ c.discountValue || c.discount_value }}{{ (c.couponType || c.coupon_type) === 'percent' ? '%' : '' }}</td>
+                    <td>{{ formatDate(c.expiresAt || c.expires_at) }}</td>
+                    <td>{{ c.locked ? 'Yes' : 'No' }}</td>
+                    <td class="action-cell">
+                      <button class="btn compact tertiary" @click="openEditCouponModal(c)">Edit</button>
+                      <button class="btn compact danger" @click="removeCoupon(c)">Remove</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Rejected Submissions Sub-Tab -->
+          <div v-else-if="couponsTabView === 'rejected'">
+            <div v-if="couponsTabRejected.length === 0" class="empty-state">No rejected submissions.</div>
+            <div v-else class="data-table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Title</th>
+                    <th>Merchant</th>
+                    <th>Submitted</th>
+                    <th>Reviewed</th>
+                    <th>Rejection Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="sub in couponsTabRejected" :key="sub.id">
+                    <td>{{ sub.submissionData?.title || sub.submission_data?.title || '—' }}</td>
+                    <td>{{ sub.merchantName || '—' }}</td>
+                    <td>{{ formatDate(sub.submittedAt || sub.submitted_at) }}</td>
+                    <td>{{ sub.reviewedAt || sub.reviewed_at ? formatDate(sub.reviewedAt || sub.reviewed_at) : '—' }}</td>
+                    <td>{{ sub.rejectionMessage || sub.rejection_message || '—' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
       </div>
     </template>
+
+    <!-- Edit Coupon Modal -->
+    <Modal v-if="editCouponModal" @close="editCouponModal = null">
+      <h2>Edit Coupon</h2>
+      <div class="form-grid">
+        <label>Title<input v-model="editCouponForm.title" class="form-input" /></label>
+        <label>Description<textarea v-model="editCouponForm.description" class="form-input" rows="3"></textarea></label>
+        <label>Coupon Type
+          <select v-model="editCouponForm.couponType" class="form-input">
+            <option value="percent">Percent</option>
+            <option value="amount">Amount</option>
+            <option value="bogo">BOGO</option>
+            <option value="free_item">Free Item</option>
+          </select>
+        </label>
+        <label>Discount Value<input v-model.number="editCouponForm.discountValue" type="number" class="form-input" /></label>
+        <label>Valid From<input v-model="editCouponForm.validFrom" type="date" class="form-input" /></label>
+        <label>Expires At<input v-model="editCouponForm.expiresAt" type="date" class="form-input" /></label>
+        <label class="checkbox-label"><input type="checkbox" v-model="editCouponForm.locked" /> Locked</label>
+      </div>
+      <div class="modal-actions" style="margin-top: var(--spacing-lg);">
+        <button class="btn primary" :disabled="editCouponSaving" @click="saveEditCoupon">
+          {{ editCouponSaving ? 'Saving...' : 'Save Changes' }}
+        </button>
+        <button class="btn tertiary" @click="editCouponModal = null">Cancel</button>
+      </div>
+    </Modal>
 
     <!-- MODALS -->
     
@@ -833,6 +973,7 @@ export default {
         { id: "merchants", label: "Merchants", icon: "pi-building" },
         { id: "groups", label: "Groups", icon: "pi-sitemap" },
         { id: "payments", label: "Payments", icon: "pi-credit-card" },
+        { id: "coupons", label: "Coupons", icon: "pi-ticket" },
       ],
 
       // Overview
@@ -919,6 +1060,17 @@ export default {
       coupons: [],
       couponsLoading: false,
       couponSearch: "",
+
+      // Coupons tab
+      couponsTabView: 'pending',
+      couponsTabPending: [],
+      couponsTabApproved: [],
+      couponsTabRejected: [],
+      couponsTabLoading: false,
+      couponsTabError: null,
+      editCouponModal: null,
+      editCouponForm: {},
+      editCouponSaving: false,
     };
   },
 
@@ -1007,6 +1159,9 @@ export default {
         case "payments":
           await this.loadPaymentsOverview();
           await this.loadPurchases();
+          break;
+        case "coupons":
+          await this.loadCouponsTab();
           break;
       }
     },
@@ -1617,6 +1772,128 @@ export default {
         this.pendingSubmissions = [];
       } finally {
         this.submissionsLoading = false;
+      }
+    },
+
+    // ─────────────────────────────────────────────────────────────
+    // COUPONS TAB
+    // ─────────────────────────────────────────────────────────────
+    switchCouponsTabView(view) {
+      this.couponsTabView = view;
+      this.loadCouponsTab();
+    },
+
+    async loadCouponsTab() {
+      this.couponsTabLoading = true;
+      this.couponsTabError = null;
+      try {
+        const headers = await this.getAuthHeaders();
+
+        if (this.couponsTabView === 'pending') {
+          const res = await fetch(`${API_BASE}/admin/submissions?state=pending`, { headers });
+          if (!res.ok) throw new Error('Failed to load pending submissions');
+          const data = await res.json();
+          this.couponsTabPending = data.submissions || [];
+        } else if (this.couponsTabView === 'approved') {
+          const res = await fetch(`${API_BASE}/admin/coupons`, { headers });
+          if (!res.ok) throw new Error('Failed to load approved coupons');
+          const data = await res.json();
+          this.couponsTabApproved = data.coupons || [];
+        } else if (this.couponsTabView === 'rejected') {
+          const res = await fetch(`${API_BASE}/admin/submissions?state=rejected`, { headers });
+          if (!res.ok) throw new Error('Failed to load rejected submissions');
+          const data = await res.json();
+          this.couponsTabRejected = data.submissions || [];
+        }
+      } catch (err) {
+        console.error('Coupons tab load error:', err);
+        this.couponsTabError = err.message;
+      } finally {
+        this.couponsTabLoading = false;
+      }
+    },
+
+    async adminApproveSub(sub) {
+      if (!confirm('Approve this submission?')) return;
+      try {
+        const headers = await this.getAuthHeaders();
+        const res = await fetch(`${API_BASE}/coupon-submissions/${sub.id}`, {
+          method: 'PUT',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ state: 'approved' }),
+        });
+        if (!res.ok) throw new Error('Approval failed');
+        this.couponsTabPending = this.couponsTabPending.filter(s => s.id !== sub.id);
+      } catch (err) {
+        alert('Failed to approve: ' + err.message);
+      }
+    },
+
+    async adminRejectSub(sub) {
+      const reason = prompt('Rejection reason:');
+      if (reason === null) return;
+      try {
+        const headers = await this.getAuthHeaders();
+        const res = await fetch(`${API_BASE}/coupon-submissions/${sub.id}`, {
+          method: 'PUT',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ state: 'rejected', message: reason }),
+        });
+        if (!res.ok) throw new Error('Rejection failed');
+        this.couponsTabPending = this.couponsTabPending.filter(s => s.id !== sub.id);
+      } catch (err) {
+        alert('Failed to reject: ' + err.message);
+      }
+    },
+
+    openEditCouponModal(coupon) {
+      this.editCouponModal = coupon;
+      this.editCouponForm = {
+        title: coupon.title,
+        description: coupon.description,
+        couponType: coupon.couponType || coupon.coupon_type,
+        discountValue: coupon.discountValue || coupon.discount_value,
+        validFrom: (coupon.validFrom || coupon.valid_from || '').slice(0, 10),
+        expiresAt: (coupon.expiresAt || coupon.expires_at || '').slice(0, 10),
+        locked: coupon.locked,
+      };
+    },
+
+    async saveEditCoupon() {
+      this.editCouponSaving = true;
+      try {
+        const headers = await this.getAuthHeaders();
+        const res = await fetch(`${API_BASE}/coupons/${this.editCouponModal.id}`, {
+          method: 'PATCH',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.editCouponForm),
+        });
+        if (!res.ok) throw new Error('Failed to save coupon');
+        const updated = await res.json();
+        const idx = this.couponsTabApproved.findIndex(c => c.id === this.editCouponModal.id);
+        if (idx !== -1) {
+          this.couponsTabApproved[idx] = { ...this.couponsTabApproved[idx], ...updated };
+        }
+        this.editCouponModal = null;
+      } catch (err) {
+        alert('Failed to save: ' + err.message);
+      } finally {
+        this.editCouponSaving = false;
+      }
+    },
+
+    async removeCoupon(coupon) {
+      if (!confirm(`Remove coupon "${coupon.title}"? This will permanently delete it.`)) return;
+      try {
+        const headers = await this.getAuthHeaders();
+        const res = await fetch(`${API_BASE}/coupons/${coupon.id}`, {
+          method: 'DELETE',
+          headers,
+        });
+        if (!res.ok) throw new Error('Failed to remove coupon');
+        this.couponsTabApproved = this.couponsTabApproved.filter(c => c.id !== coupon.id);
+      } catch (err) {
+        alert('Failed to remove coupon: ' + err.message);
       }
     },
 
@@ -2317,5 +2594,98 @@ code {
 .btn.sm {
   padding: var(--spacing-xs) var(--spacing-sm);
   font-size: var(--font-size-sm);
+}
+
+/* Sub-tab navigation (for Coupons tab) */
+.sub-tab-nav {
+  display: flex;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-lg);
+  flex-wrap: wrap;
+}
+
+.sub-tab-btn {
+  padding: var(--spacing-xs) var(--spacing-md);
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  transition: all var(--transition-base);
+}
+
+.sub-tab-btn.active {
+  background: var(--color-primary);
+  color: var(--color-text-on-primary);
+  border-color: var(--color-primary);
+}
+
+.sub-tab-btn:hover:not(.active) {
+  background: var(--color-bg-secondary);
+}
+
+.action-cell {
+  display: flex;
+  gap: var(--spacing-xs);
+  flex-wrap: wrap;
+}
+
+.btn.compact {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  min-height: unset;
+}
+
+.btn.danger {
+  background: var(--color-error);
+  color: var(--color-text-on-error);
+}
+
+.btn.danger:hover {
+  background: var(--color-error-hover);
+}
+
+.empty-state {
+  text-align: center;
+  color: var(--color-text-muted);
+  font-style: italic;
+  padding: var(--spacing-xl);
+}
+
+.form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.form-input {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-base);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+}
+
+.checkbox-label {
+  flex-direction: row !important;
+  align-items: center;
+  gap: var(--spacing-sm) !important;
+}
+
+.modal-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
 }
 </style>

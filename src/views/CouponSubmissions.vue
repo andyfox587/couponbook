@@ -3,7 +3,7 @@
   <div class="coupon-submissions">
     <!-- NOT AUTHENTICATED -->
     <section v-if="!isAuthenticated" class="section-card signin-card">
-      <h1>Submit a New Coupon</h1>
+      <h1>{{ editMode ? 'Edit Pending Coupon Submission' : 'Submit a New Coupon' }}</h1>
       <p class="muted">
         You need to be signed in as a merchant or super admin to submit coupons.
       </p>
@@ -17,7 +17,7 @@
 
     <!-- ACCESS CHECK IN PROGRESS -->
     <section v-else-if="!authChecked" class="section-card access-check-card">
-      <h1>Submit a New Coupon</h1>
+      <h1>{{ editMode ? 'Edit Pending Coupon Submission' : 'Submit a New Coupon' }}</h1>
       <p class="subtitle">Checking your permissions…</p>
     </section>
 
@@ -53,24 +53,34 @@
           <div class="success-icon">
             <i class="pi pi-check-circle"></i>
           </div>
-          <h1>Coupon Submitted Successfully!</h1>
+          <h1>{{ editMode ? 'Submission Updated!' : 'Coupon Submitted Successfully!' }}</h1>
           <p class="success-message">
-            Your coupon has been sent for approval. You'll see it live once your Foodie Group accepts it.
+            {{ editMode
+              ? 'Your pending coupon submission has been updated successfully. The Foodie Group will review the latest version.'
+              : "Your coupon has been sent for approval. You'll see it live once your Foodie Group accepts it."
+            }}
           </p>
           <div class="success-actions">
-            <button class="btn primary" @click="goToCouponBook">
-              <i class="pi pi-arrow-right icon-spacing-sm"></i>View Coupon Book
+            <button class="btn primary" @click="$router.push('/profile')">
+              <i class="pi pi-arrow-left icon-spacing-sm"></i>Back to Profile
             </button>
-            <button class="btn secondary" @click="submitAnother">
+            <button v-if="!editMode" class="btn secondary" @click="submitAnother">
               <i class="pi pi-plus icon-spacing-sm"></i>Submit Another Coupon
             </button>
           </div>
         </div>
       </section>
 
+      <!-- LOADING EXISTING SUBMISSION -->
+      <section v-else-if="loadingSubmission" class="section-card access-check-card">
+        <h1>Edit Pending Coupon Submission</h1>
+        <p class="subtitle">Loading submission…</p>
+      </section>
+
       <!-- SURVEY FORM -->
       <div v-else class="submissions">
-        <h1>Submit a New Coupon</h1>
+        <h1>{{ editMode ? 'Edit Pending Coupon Submission' : 'Submit a New Coupon' }}</h1>
+        <p v-if="editMode" class="edit-hint">You can edit this submission until it is reviewed by the Foodie Group admin.</p>
         <survey-component :model="survey" />
       </div>
     </template>
@@ -97,6 +107,10 @@ export default {
     SurveyComponent,
   },
 
+  props: {
+    id: { type: String, default: null },
+  },
+
   data() {
     return {
       // Auth / gating state
@@ -111,6 +125,10 @@ export default {
       
       // Submission state
       submissionSuccess: false,
+
+      // Edit mode state
+      existingSubmission: null,
+      loadingSubmission: false,
     }
   },
 
@@ -119,6 +137,10 @@ export default {
 
     role() {
       return this.user?.role || null
+    },
+
+    editMode() {
+      return !!this.id
     },
 
     noMerchants() {
@@ -147,8 +169,21 @@ export default {
       // If user has no merchants and is foodie_group_admin, bail (noMerchants will show)
       if (this.noMerchants) return
 
+      // In edit mode, load the existing submission first
+      if (this.editMode) {
+        this.loadingSubmission = true
+        const loaded = await this.loadExistingSubmission()
+        this.loadingSubmission = false
+        if (!loaded) return
+      }
+
       // Initialize survey and load dropdown choices
       await this.initializeSurvey()
+
+      // In edit mode, preload the submission data into the survey fields
+      if (this.editMode && this.existingSubmission) {
+        this.preloadSurveyData()
+      }
     } finally {
       this.authChecked = true
     }
@@ -220,6 +255,67 @@ export default {
       }
     },
 
+    async loadExistingSubmission() {
+      try {
+        const token = await getAccessToken()
+        if (!token) {
+          this.markNotAuthorized('Your session does not have a valid access token.')
+          return false
+        }
+
+        const res = await fetch(`${API_BASE}/coupon-submissions/${this.id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+
+        if (!res.ok) {
+          this.markNotAuthorized('Unable to load the submission. It may not exist or you may not have access.')
+          return false
+        }
+
+        const sub = await res.json()
+
+        if (sub.state !== 'pending') {
+          this.markNotAuthorized(
+            `This submission has already been ${sub.state}. Only pending submissions can be edited.`
+          )
+          return false
+        }
+
+        this.existingSubmission = sub
+        return true
+      } catch (err) {
+        console.error('[CouponSubmissions] loadExistingSubmission error', err)
+        this.markNotAuthorized('Unable to load the submission at this time.')
+        return false
+      }
+    },
+
+    preloadSurveyData() {
+      if (!this.survey || !this.existingSubmission) return
+      const sd = this.existingSubmission.submissionData || this.existingSubmission.submission_data
+      if (!sd) return
+
+      const fieldMap = {
+        group_id: this.existingSubmission.groupId || this.existingSubmission.group_id,
+        merchant_id: this.existingSubmission.merchantId || this.existingSubmission.merchant_id,
+        title: sd.title,
+        description: sd.description,
+        coupon_type: sd.coupon_type,
+        discount_value: sd.discount_value,
+        valid_from: sd.valid_from,
+        expires_at: sd.expires_at,
+        qr_code_url: sd.qr_code_url,
+        locked: sd.locked,
+        cuisine_type: sd.cuisine_type,
+      }
+
+      for (const [key, value] of Object.entries(fieldMap)) {
+        if (value !== undefined && value !== null) {
+          this.survey.setValue(key, value)
+        }
+      }
+    },
+
     async initializeSurvey() {
       // Create survey model
       this.survey = new Model(couponSurveyJson)
@@ -265,7 +361,6 @@ export default {
     async handleSubmit(sender) {
       const d = sender.data
 
-      // Build submission_data payload
       const submissionData = {
         title: d.title,
         description: d.description,
@@ -284,41 +379,58 @@ export default {
           throw new Error('You must be signed in to submit a coupon')
         }
 
-        // 1) Insert into coupon_submissions
-        const res = await fetch(`${API_BASE}/coupon-submissions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            group_id: d.group_id,
-            merchant_id: d.merchant_id,
-            submission_data: submissionData,
-          }),
-        })
-        if (!res.ok) throw new Error(`Status ${res.status}`)
-        const saved = await res.json()
-        console.log('🗂 Saved submission:', saved)
+        if (this.editMode) {
+          // PATCH existing pending submission
+          const res = await fetch(`${API_BASE}/coupon-submissions/${this.id}`, {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ submission_data: submissionData }),
+          })
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}))
+            throw new Error(body.error || `Status ${res.status}`)
+          }
+          const updated = await res.json()
+          console.log('🗂 Updated submission:', updated)
+        } else {
+          // POST new submission
+          const res = await fetch(`${API_BASE}/coupon-submissions`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              group_id: d.group_id,
+              merchant_id: d.merchant_id,
+              submission_data: submissionData,
+            }),
+          })
+          if (!res.ok) throw new Error(`Status ${res.status}`)
+          const saved = await res.json()
+          console.log('🗂 Saved submission:', saved)
 
-        // 2) Fire off the n8n webhook to email the submitter (merchant)
-        const userEmail = this.user?.email || ''
-        await fetch(WEBHOOK_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userEmail,
-            groupId: d.group_id,
-            merchantId: d.merchant_id,
-            submission_data: submissionData,
-          }),
-        })
+          // Fire n8n webhook only for new submissions
+          const userEmail = this.user?.email || ''
+          await fetch(WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userEmail,
+              groupId: d.group_id,
+              merchantId: d.merchant_id,
+              submission_data: submissionData,
+            }),
+          })
+        }
 
-        // Show success state instead of alert popup
         this.submissionSuccess = true
       } catch (err) {
         console.error('❌ Submission error:', err)
-        alert(`⚠️ Coupon creation failed: ${err.message}`)
+        alert(`⚠️ ${this.editMode ? 'Update' : 'Coupon creation'} failed: ${err.message}`)
       }
     },
 
@@ -351,6 +463,15 @@ export default {
 .submissions {
   max-width: 700px;
   margin: 0 auto;
+}
+
+.edit-hint {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  margin-bottom: var(--spacing-lg);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
 }
 
 .section-card {

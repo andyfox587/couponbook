@@ -234,6 +234,14 @@
                 </span>
               </li>
 
+              <!-- Pending -->
+              <li class="link-row clickable" @click="loadPendingCoupons">
+                <span class="link-label"><i class="pi pi-clock icon-spacing-sm"></i>View Pending Submissions</span>
+                <span class="link-helper">
+                  Review and edit submissions awaiting Foodie Group approval.
+                </span>
+              </li>
+
               <!-- Rejected -->
               <li class="link-row clickable" @click="loadRejectedCoupons">
                 <span class="link-label"><i class="pi pi-times-circle icon-spacing-sm"></i>View Rejected Coupons</span>
@@ -268,6 +276,30 @@
                   <span class="muted tiny">
                     · {{ merchantNameById(c.merchant_id) }}
                   </span>
+                </li>
+              </ul>
+            </div>
+
+            <!-- Pending coupon submissions -->
+            <div v-if="activeToolsView === 'pending' && pendingCoupons.length" class="tools-results-block">
+              <h3 class="tiny-heading">Pending Submissions</h3>
+              <ul class="tiny-list">
+                <li v-for="sub in pendingCoupons" :key="sub.id" class="pending-row">
+                  <div>
+                    <strong>{{ sub.submissionData?.title || 'Untitled coupon' }}</strong>
+                    <span class="muted tiny">
+                      · {{ sub.merchantName || merchantNameById(sub.merchantId) }}
+                    </span>
+                    <br />
+                    <span class="muted tiny">
+                      Submitted {{ formatDateTiny(sub.submittedAt) }}
+                      <span v-if="sub.updatedAt"> · Edited {{ formatDateTiny(sub.updatedAt) }}</span>
+                    </span>
+                  </div>
+                  <span class="badge badge-pending">Pending</span>
+                  <button class="btn tertiary compact" @click="goToEditSubmission(sub.id)">
+                    Edit
+                  </button>
                 </li>
               </ul>
             </div>
@@ -379,6 +411,11 @@
             <div v-if="activeToolsView === 'approved' && !merchantToolsLoading && !approvedCoupons.length"
               class="muted tiny" style="margin-top: 0.5rem;">
               No approved coupons found for your restaurants yet.
+            </div>
+
+            <div v-if="activeToolsView === 'pending' && !merchantToolsLoading && !pendingCoupons.length"
+              class="muted tiny" style="margin-top: 0.5rem;">
+              No pending coupon submissions found for your restaurants.
             </div>
 
             <div v-if="activeToolsView === 'rejected' && !merchantToolsLoading && !rejectedCoupons.length"
@@ -506,6 +543,14 @@
                   </span>
                 </li>
 
+                <li class="link-row clickable" @click="loadPendingCoupons">
+                  <span class="link-label"><i class="pi pi-clock icon-spacing-sm"></i>View Pending
+                    Submissions</span>
+                  <span class="link-helper">
+                    Review and edit submissions awaiting Foodie Group approval.
+                  </span>
+                </li>
+
                 <li class="link-row clickable" @click="loadRejectedCoupons">
                   <span class="link-label"><i class="pi pi-times-circle icon-spacing-sm"></i>View Rejected
                     Coupons</span>
@@ -535,6 +580,29 @@
                   <li v-for="c in approvedCoupons" :key="c.id">
                     <strong>{{ c.title }}</strong>
                     <span class="muted tiny">· {{ merchantNameById(c.merchant_id) }}</span>
+                  </li>
+                </ul>
+              </div>
+
+              <div v-if="activeToolsView === 'pending' && pendingCoupons.length" class="tools-results-block">
+                <h3 class="tiny-heading">Pending Submissions</h3>
+                <ul class="tiny-list">
+                  <li v-for="sub in pendingCoupons" :key="sub.id" class="pending-row">
+                    <div>
+                      <strong>{{ sub.submissionData?.title || 'Untitled coupon' }}</strong>
+                      <span class="muted tiny">
+                        · {{ sub.merchantName || merchantNameById(sub.merchantId) }}
+                      </span>
+                      <br />
+                      <span class="muted tiny">
+                        Submitted {{ formatDateTiny(sub.submittedAt) }}
+                        <span v-if="sub.updatedAt"> · Edited {{ formatDateTiny(sub.updatedAt) }}</span>
+                      </span>
+                    </div>
+                    <span class="badge badge-pending">Pending</span>
+                    <button class="btn tertiary compact" @click="goToEditSubmission(sub.id)">
+                      Edit
+                    </button>
                   </li>
                 </ul>
               </div>
@@ -723,6 +791,7 @@ export default {
 
       // merchant tools state
       approvedCoupons: [],
+      pendingCoupons: [],
       rejectedCoupons: [],
       redemptionInsights: [],
       selectedCouponId: null,
@@ -1009,20 +1078,9 @@ export default {
       this.detailsLoading = false;
       this.detailsError = null;
       this.exportingDetails = false;
-      if (view === 'approved') {
-        // keep approved list between clicks if you want; for now we just reload each time
-        this.rejectedCoupons = [];
-        this.redemptionInsights = [];
-      } else if (view === 'rejected') {
-        this.approvedCoupons = [];
-        this.redemptionInsights = [];
-      } else if (view === 'insights') {
-        this.approvedCoupons = [];
-        this.rejectedCoupons = [];
-      } else {
-        this.approvedCoupons = [];
-        this.rejectedCoupons = [];
-        this.redemptionInsights = [];
+      const lists = { approved: 'approvedCoupons', pending: 'pendingCoupons', rejected: 'rejectedCoupons', insights: 'redemptionInsights' };
+      for (const [key, prop] of Object.entries(lists)) {
+        if (key !== view) this[prop] = [];
       }
     },
 
@@ -1110,6 +1168,48 @@ export default {
       } finally {
         this.merchantToolsLoading = false;
       }
+    },
+
+    async loadPendingCoupons() {
+      if (!this.merchants.length) {
+        this.activeToolsView = 'pending';
+        this.merchantToolsError = 'You do not have any restaurants linked to this account yet.';
+        this.pendingCoupons = [];
+        return;
+      }
+
+      this.resetMerchantToolsState('pending');
+      this.merchantToolsLoading = true;
+
+      try {
+        const token = await getAccessToken();
+        const res = await fetch('/api/v1/coupon-submissions/by-merchant?state=pending', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (!res.ok) {
+          throw new Error(`Failed to load pending submissions, status ${res.status}`);
+        }
+
+        const subs = await res.json();
+        const list = Array.isArray(subs) ? subs : [];
+        this.pendingCoupons = list.map((s) => ({
+          ...s,
+          merchantId: s.merchantId ?? s.merchant_id,
+          submittedAt: s.submittedAt ?? s.submitted_at,
+          updatedAt: s.updatedAt ?? s.updated_at,
+          submissionData: s.submissionData ?? s.submission_data,
+        }));
+      } catch (err) {
+        console.error('Error loading pending coupons', err);
+        this.merchantToolsError = 'Could not load pending coupon submissions.';
+      } finally {
+        this.merchantToolsLoading = false;
+      }
+    },
+
+    goToEditSubmission(submissionId) {
+      this.$router.push({ name: 'EditCouponSubmission', params: { id: submissionId } });
     },
 
     async loadRedemptionInsights() {
@@ -1709,6 +1809,32 @@ export default {
 
 .tiny-list li {
   margin-bottom: var(--spacing-xs);
+}
+
+.pending-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.pending-row > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.15em 0.6em;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+}
+
+.badge-pending {
+  background: var(--color-warning-light, #fef3cd);
+  color: var(--color-warning-dark, #856404);
 }
 
 .insights-list {

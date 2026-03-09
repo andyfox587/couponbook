@@ -205,6 +205,194 @@ describe('CouponSubmissions Routes', () => {
     });
   });
 
+  describe('PATCH /api/v1/coupon-submissions/:id (merchant edit pending)', () => {
+    const pendingSubmission = {
+      id: 'sub-1',
+      groupId: 'group-1',
+      merchantId: 'merchant-1',
+      state: 'pending',
+      submittedAt: '2025-06-01T00:00:00.000Z',
+      submissionData: { title: 'Old Title', description: 'Old', coupon_type: 'percent', discount_value: 10, valid_from: '2025-06-01', expires_at: '2025-07-01' },
+      rejectionMessage: null,
+    };
+
+    function setupPatchMocks(existing, updatedRow) {
+      // 1st select: fetch existing submission
+      db.select.mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue(existing ? [existing] : []),
+        }),
+      });
+      // update chain
+      if (updatedRow) {
+        db.update.mockReturnValueOnce({
+          set: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              returning: vi.fn().mockResolvedValue([updatedRow]),
+            }),
+          }),
+        });
+      }
+    }
+
+    it('should allow merchant to edit own pending submission', async () => {
+      req = createMockRequest({
+        user: { sub: 'merchant-sub' },
+        params: { id: 'sub-1' },
+        body: { submission_data: { title: 'New Title', description: 'Desc', coupon_type: 'percent', discount_value: 15, valid_from: '2025-06-01', expires_at: '2025-07-01' } },
+      });
+      req.dbUser = { id: 'owner-1', role: 'merchant' };
+      res = createMockResponse();
+      const next = createMockNext();
+
+      const updatedRow = { ...pendingSubmission, submissionData: req.body.submission_data, updatedAt: '2025-06-02T00:00:00.000Z' };
+      setupPatchMocks(pendingSubmission, updatedRow);
+
+      // Mock canManageMerchant — the route calls it with (dbUser, existing.merchantId)
+      // Since we mock the db, we need to mock the merchant-owner lookup too
+      db.select.mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{ ownerId: 'owner-1' }]),
+          }),
+        }),
+      });
+
+      const layer = couponSubmissionsRouter.stack.find(
+        (l) => l.route && l.route.path === '/:id' && l.route.methods.patch,
+      );
+      const handler = layer.route.stack[layer.route.stack.length - 1].handle;
+      await handler(req, res, next);
+
+      expect(res.json).toHaveBeenCalled();
+      const result = res.json.mock.calls[0][0];
+      expect(result.id).toBe('sub-1');
+      expect(result.state).toBe('pending');
+      expect(result.updatedAt).toBeTruthy();
+    });
+
+    it('should return 403 when merchant does not own the submission merchant', async () => {
+      req = createMockRequest({
+        user: { sub: 'other-sub' },
+        params: { id: 'sub-1' },
+        body: { submission_data: { title: 'New', description: 'Desc', coupon_type: 'percent', discount_value: 15, valid_from: '2025-06-01', expires_at: '2025-07-01' } },
+      });
+      req.dbUser = { id: 'other-owner', role: 'merchant' };
+      res = createMockResponse();
+      const next = createMockNext();
+
+      setupPatchMocks(pendingSubmission, null);
+
+      // canManageMerchant lookup — different owner
+      db.select.mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{ ownerId: 'owner-1' }]),
+          }),
+        }),
+      });
+
+      const layer = couponSubmissionsRouter.stack.find(
+        (l) => l.route && l.route.path === '/:id' && l.route.methods.patch,
+      );
+      const handler = layer.route.stack[layer.route.stack.length - 1].handle;
+      await handler(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    it('should return 403 when submission is approved', async () => {
+      req = createMockRequest({
+        user: { sub: 'merchant-sub' },
+        params: { id: 'sub-1' },
+        body: { submission_data: { title: 'New', description: 'Desc', coupon_type: 'percent', discount_value: 15, valid_from: '2025-06-01', expires_at: '2025-07-01' } },
+      });
+      req.dbUser = { id: 'owner-1', role: 'merchant' };
+      res = createMockResponse();
+      const next = createMockNext();
+
+      setupPatchMocks({ ...pendingSubmission, state: 'approved' }, null);
+
+      const layer = couponSubmissionsRouter.stack.find(
+        (l) => l.route && l.route.path === '/:id' && l.route.methods.patch,
+      );
+      const handler = layer.route.stack[layer.route.stack.length - 1].handle;
+      await handler(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.stringContaining('approved') }),
+      );
+    });
+
+    it('should return 403 when submission is rejected', async () => {
+      req = createMockRequest({
+        user: { sub: 'merchant-sub' },
+        params: { id: 'sub-1' },
+        body: { submission_data: { title: 'New', description: 'Desc', coupon_type: 'percent', discount_value: 15, valid_from: '2025-06-01', expires_at: '2025-07-01' } },
+      });
+      req.dbUser = { id: 'owner-1', role: 'merchant' };
+      res = createMockResponse();
+      const next = createMockNext();
+
+      setupPatchMocks({ ...pendingSubmission, state: 'rejected' }, null);
+
+      const layer = couponSubmissionsRouter.stack.find(
+        (l) => l.route && l.route.path === '/:id' && l.route.methods.patch,
+      );
+      const handler = layer.route.stack[layer.route.stack.length - 1].handle;
+      await handler(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.stringContaining('rejected') }),
+      );
+    });
+
+    it('should allow super admin to edit any pending submission', async () => {
+      req = createMockRequest({
+        user: { sub: 'admin-sub' },
+        params: { id: 'sub-1' },
+        body: { submission_data: { title: 'Admin Edit', description: 'Desc', coupon_type: 'bogo', valid_from: '2025-06-01', expires_at: '2025-07-01' } },
+      });
+      req.dbUser = { id: 'admin-user', role: 'super_admin' };
+      res = createMockResponse();
+      const next = createMockNext();
+
+      const updatedRow = { ...pendingSubmission, submissionData: req.body.submission_data, updatedAt: '2025-06-02T00:00:00.000Z' };
+      setupPatchMocks(pendingSubmission, updatedRow);
+
+      const layer = couponSubmissionsRouter.stack.find(
+        (l) => l.route && l.route.path === '/:id' && l.route.methods.patch,
+      );
+      const handler = layer.route.stack[layer.route.stack.length - 1].handle;
+      await handler(req, res, next);
+
+      expect(res.json).toHaveBeenCalled();
+      const result = res.json.mock.calls[0][0];
+      expect(result.state).toBe('pending');
+    });
+
+    it('should return 400 when submission_data is missing', async () => {
+      req = createMockRequest({
+        user: { sub: 'merchant-sub' },
+        params: { id: 'sub-1' },
+        body: {},
+      });
+      req.dbUser = { id: 'owner-1', role: 'merchant' };
+      res = createMockResponse();
+      const next = createMockNext();
+
+      const layer = couponSubmissionsRouter.stack.find(
+        (l) => l.route && l.route.path === '/:id' && l.route.methods.patch,
+      );
+      const handler = layer.route.stack[layer.route.stack.length - 1].handle;
+      await handler(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+  });
+
   describe('POST /api/v1/coupon-submissions validation', () => {
     it('should reject submission with missing required fields', () => {
       const submissionData = {

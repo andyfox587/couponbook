@@ -14,6 +14,8 @@ export const couponSubmission = pgTable("coupon_submission", {
     submissionData: jsonb("submission_data").notNull(),
     rejectionMessage: text("rejection_message"),
     deletedAt: timestamp("deleted_at", { mode: 'string' }),
+    updatedAt: timestamp("updated_at", { mode: 'string' }),
+    reviewedAt: timestamp("reviewed_at", { mode: 'string' }),
 }, (table) => [
     foreignKey({
         columns: [table.groupId],

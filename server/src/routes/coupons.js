@@ -561,13 +561,31 @@ router.patch('/:id', auth(), resolveLocalUser, async (req, res, next) => {
 
     const updates = {};
 
-    // Only allow specific fields to be updated
-    const allowedFields = ['cuisine_type', 'title', 'description', 'locked'];
-    for (const field of allowedFields) {
-      if (req.body[field] !== undefined) {
-        // Map snake_case to camelCase for Drizzle
-        const camelField = field === 'cuisine_type' ? 'cuisineType' : field;
-        updates[camelField] = req.body[field];
+    const fieldMapping = {
+      cuisine_type: 'cuisineType',
+      couponType: 'couponType',
+      coupon_type: 'couponType',
+      discountValue: 'discountValue',
+      discount_value: 'discountValue',
+      validFrom: 'validFrom',
+      valid_from: 'validFrom',
+      expiresAt: 'expiresAt',
+      expires_at: 'expiresAt',
+      title: 'title',
+      description: 'description',
+      locked: 'locked',
+    };
+
+    for (const [bodyKey, schemaKey] of Object.entries(fieldMapping)) {
+      if (req.body[bodyKey] !== undefined) {
+        let value = req.body[bodyKey];
+        if (schemaKey === 'validFrom' || schemaKey === 'expiresAt') {
+          value = value ? new Date(value).toISOString() : value;
+        }
+        if (schemaKey === 'discountValue' && value !== null) {
+          value = Number(value);
+        }
+        updates[schemaKey] = value;
       }
     }
 

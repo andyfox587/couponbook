@@ -82,6 +82,12 @@ const routes = [
     name: 'CouponSubmissions',
     component: CouponSubmissions
   },
+  {
+    path: '/submissions/:id/edit',
+    name: 'EditCouponSubmission',
+    component: CouponSubmissions,
+    props: true
+  },
 ]
 
 const router = createRouter({
