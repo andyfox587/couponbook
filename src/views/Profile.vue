@@ -296,14 +296,83 @@
             <!-- Redemption insights summary -->
             <div v-if="activeToolsView === 'insights' && redemptionInsights.length" class="tools-results-block">
               <h3 class="tiny-heading">Redemption Insights</h3>
-              <ul class="tiny-list">
-                <li v-for="row in redemptionInsights" :key="row.merchantId">
-                  <strong>{{ row.merchantName }}</strong>
-                  <span class="muted tiny">
-                    · {{ row.totalRedemptions }} total redemptions
-                  </span>
+              <ul class="insights-list">
+                <li v-for="row in redemptionInsights" :key="row.couponId" class="insight-row">
+                  <div class="insight-copy">
+                    <strong>{{ row.merchantName }}</strong>
+                    <div class="muted tiny">{{ row.couponTitle }}</div>
+                    <div class="muted tiny">
+                      {{ row.redemptions }} redemptions
+                      <span v-if="row.lastRedeemedAt">
+                        · Last redeemed {{ formatDateDateTime(row.lastRedeemedAt) }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <button class="btn tertiary compact" @click="loadRedemptionDetails(row.couponId)">
+                    {{ selectedCouponId === row.couponId ? 'Refresh redeemers' : 'View redeemers' }}
+                  </button>
                 </li>
               </ul>
+
+              <div v-if="selectedCouponRow" class="redemption-details-block">
+                <div class="details-header">
+                  <div>
+                    <strong>{{ selectedCouponRow.couponTitle }}</strong>
+                    <div class="muted tiny">{{ selectedCouponRow.merchantName }}</div>
+                  </div>
+                  <span class="muted tiny">
+                    {{ displayedRedemptionDetails.length }} row{{ displayedRedemptionDetails.length === 1 ? '' : 's' }}
+                  </span>
+                </div>
+
+                <div class="details-actions">
+                  <button
+                    class="btn tertiary compact"
+                    @click="copyRedeemerEmails"
+                    :disabled="detailsLoading || !displayedRedemptionDetails.length"
+                  >
+                    Copy emails
+                  </button>
+                  <button
+                    class="btn tertiary compact"
+                    @click="exportRedemptionDetails"
+                    :disabled="detailsLoading || exportingDetails"
+                  >
+                    {{ exportingDetails ? 'Exporting…' : 'Export CSV' }}
+                  </button>
+                  <label class="checkbox-row muted tiny">
+                    <input type="checkbox" v-model="uniqueEmailsOnly" />
+                    Show unique emails only
+                  </label>
+                </div>
+
+                <p v-if="detailsLoading" class="muted tiny">Loading redeemers…</p>
+                <p v-else-if="detailsError" class="tiny error-text">{{ detailsError }}</p>
+
+                <div v-else-if="displayedRedemptionDetails.length" class="details-table-wrap">
+                  <table class="details-table">
+                    <thead>
+                      <tr>
+                        <th>Customer name</th>
+                        <th>Customer email</th>
+                        <th>Redeemed at</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="row in displayedRedemptionDetails" :key="row.redemptionId">
+                        <td>{{ row.customerName || '—' }}</td>
+                        <td>{{ row.customerEmail || '—' }}</td>
+                        <td>{{ formatDateDateTime(row.redeemedAt) }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <p v-else class="muted tiny">
+                  No redeemers found for this coupon.
+                </p>
+              </div>
             </div>
 
             <!-- Empty states per view -->
@@ -487,12 +556,83 @@
 
               <div v-if="activeToolsView === 'insights' && redemptionInsights.length" class="tools-results-block">
                 <h3 class="tiny-heading">Redemption Insights</h3>
-                <ul class="tiny-list">
-                  <li v-for="row in redemptionInsights" :key="row.merchantId">
-                    <strong>{{ row.merchantName }}</strong>
-                    <span class="muted tiny">· {{ row.totalRedemptions }} total redemptions</span>
+                <ul class="insights-list">
+                  <li v-for="row in redemptionInsights" :key="row.couponId" class="insight-row">
+                    <div class="insight-copy">
+                      <strong>{{ row.merchantName }}</strong>
+                      <div class="muted tiny">{{ row.couponTitle }}</div>
+                      <div class="muted tiny">
+                        {{ row.redemptions }} redemptions
+                        <span v-if="row.lastRedeemedAt">
+                          · Last redeemed {{ formatDateDateTime(row.lastRedeemedAt) }}
+                        </span>
+                      </div>
+                    </div>
+
+                    <button class="btn tertiary compact" @click="loadRedemptionDetails(row.couponId)">
+                      {{ selectedCouponId === row.couponId ? 'Refresh redeemers' : 'View redeemers' }}
+                    </button>
                   </li>
                 </ul>
+
+                <div v-if="selectedCouponRow" class="redemption-details-block">
+                  <div class="details-header">
+                    <div>
+                      <strong>{{ selectedCouponRow.couponTitle }}</strong>
+                      <div class="muted tiny">{{ selectedCouponRow.merchantName }}</div>
+                    </div>
+                    <span class="muted tiny">
+                      {{ displayedRedemptionDetails.length }} row{{ displayedRedemptionDetails.length === 1 ? '' : 's' }}
+                    </span>
+                  </div>
+
+                  <div class="details-actions">
+                    <button
+                      class="btn tertiary compact"
+                      @click="copyRedeemerEmails"
+                      :disabled="detailsLoading || !displayedRedemptionDetails.length"
+                    >
+                      Copy emails
+                    </button>
+                    <button
+                      class="btn tertiary compact"
+                      @click="exportRedemptionDetails"
+                      :disabled="detailsLoading || exportingDetails"
+                    >
+                      {{ exportingDetails ? 'Exporting…' : 'Export CSV' }}
+                    </button>
+                    <label class="checkbox-row muted tiny">
+                      <input type="checkbox" v-model="uniqueEmailsOnly" />
+                      Show unique emails only
+                    </label>
+                  </div>
+
+                  <p v-if="detailsLoading" class="muted tiny">Loading redeemers…</p>
+                  <p v-else-if="detailsError" class="tiny error-text">{{ detailsError }}</p>
+
+                  <div v-else-if="displayedRedemptionDetails.length" class="details-table-wrap">
+                    <table class="details-table">
+                      <thead>
+                        <tr>
+                          <th>Customer name</th>
+                          <th>Customer email</th>
+                          <th>Redeemed at</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="row in displayedRedemptionDetails" :key="row.redemptionId">
+                          <td>{{ row.customerName || '—' }}</td>
+                          <td>{{ row.customerEmail || '—' }}</td>
+                          <td>{{ formatDateDateTime(row.redeemedAt) }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <p v-else class="muted tiny">
+                    No redeemers found for this coupon.
+                  </p>
+                </div>
               </div>
 
               <div v-if="activeToolsView === 'approved' && !merchantToolsLoading && !approvedCoupons.length"
@@ -585,6 +725,12 @@ export default {
       approvedCoupons: [],
       rejectedCoupons: [],
       redemptionInsights: [],
+      selectedCouponId: null,
+      redemptionDetails: [],
+      uniqueEmailsOnly: false,
+      detailsLoading: false,
+      detailsError: null,
+      exportingDetails: false,
       merchantToolsLoading: false,
       merchantToolsError: null,
       activeToolsView: null, // 'approved' | 'rejected' | 'insights'
@@ -634,6 +780,26 @@ export default {
     // A user has merchant capability if they own at least one merchant.
     hasMerchantCapability() {
       return this.merchants && this.merchants.length > 0;
+    },
+
+    selectedCouponRow() {
+      return this.redemptionInsights.find((row) => row.couponId === this.selectedCouponId) || null;
+    },
+
+    displayedRedemptionDetails() {
+      if (!this.uniqueEmailsOnly) {
+        return this.redemptionDetails;
+      }
+
+      const seenCustomers = new Set();
+      return this.redemptionDetails.filter((row) => {
+        const key = row.customerId || row.customerEmail || row.redemptionId;
+        if (seenCustomers.has(key)) {
+          return false;
+        }
+        seenCustomers.add(key);
+        return true;
+      });
     },
   },
 
@@ -821,9 +987,28 @@ export default {
       return d.toLocaleDateString();
     },
 
+    formatDateDateTime(value) {
+      if (!value) return '—';
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return '—';
+      return d.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+    },
+
     resetMerchantToolsState(view) {
       this.activeToolsView = view || null;
       this.merchantToolsError = null;
+      this.selectedCouponId = null;
+      this.redemptionDetails = [];
+      this.uniqueEmailsOnly = false;
+      this.detailsLoading = false;
+      this.detailsError = null;
+      this.exportingDetails = false;
       if (view === 'approved') {
         // keep approved list between clicks if you want; for now we just reload each time
         this.rejectedCoupons = [];
@@ -960,30 +1145,113 @@ export default {
         }
 
         const rows = await res.json();
-
-        // Collapse rows into per-merchant totals to match the template:
-        // <li v-for="row in redemptionInsights" :key="row.merchantId">
-        //   {{ row.merchantName }} · {{ row.totalRedemptions }}
-        const byMerchant = {};
-
-        for (const r of rows) {
-          if (!byMerchant[r.merchantId]) {
-            byMerchant[r.merchantId] = {
-              merchantId: r.merchantId,
-              merchantName: r.merchantName,
-              totalRedemptions: 0,
-            };
-          }
-          byMerchant[r.merchantId].totalRedemptions += Number(r.redemptions || 0);
-        }
-
-        this.redemptionInsights = Object.values(byMerchant);
+        this.redemptionInsights = Array.isArray(rows) ? rows : [];
       } catch (err) {
         console.error('Error loading redemption insights', err);
         this.merchantToolsError = 'Could not load redemption insights.';
         this.redemptionInsights = [];
       } finally {
         this.merchantToolsLoading = false;
+      }
+    },
+
+    async loadRedemptionDetails(couponId) {
+      this.selectedCouponId = couponId;
+      this.detailsLoading = true;
+      this.detailsError = null;
+      this.redemptionDetails = [];
+
+      try {
+        const token = await getAccessToken();
+        const params = new URLSearchParams({ couponId });
+        const res = await fetch(
+          `/api/v1/coupons/redemptions/merchant-details?${params.toString()}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+
+        if (!res.ok) {
+          throw new Error(`Failed to load redemption details, status ${res.status}`);
+        }
+
+        const rows = await res.json();
+        this.redemptionDetails = Array.isArray(rows) ? rows : [];
+      } catch (err) {
+        console.error('Error loading redemption details', err);
+        this.detailsError = 'Could not load redeemer details.';
+        this.redemptionDetails = [];
+      } finally {
+        this.detailsLoading = false;
+      }
+    },
+
+    async copyRedeemerEmails() {
+      const emails = this.displayedRedemptionDetails
+        .map((row) => row.customerEmail)
+        .filter(Boolean);
+
+      if (!emails.length) {
+        this.detailsError = 'No customer emails available to copy.';
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(emails.join('\n'));
+        this.detailsError = null;
+      } catch (err) {
+        console.error('Error copying redeemer emails', err);
+        this.detailsError = 'Could not copy emails to the clipboard.';
+      }
+    },
+
+    async exportRedemptionDetails() {
+      if (!this.selectedCouponId) {
+        return;
+      }
+
+      this.exportingDetails = true;
+      this.detailsError = null;
+
+      try {
+        const token = await getAccessToken();
+        const params = new URLSearchParams({
+          couponId: this.selectedCouponId,
+          mode: this.uniqueEmailsOnly ? 'unique-customers' : 'redemptions',
+        });
+
+        const res = await fetch(
+          `/api/v1/coupons/redemptions/merchant-export?${params.toString()}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+
+        if (!res.ok) {
+          throw new Error(`Failed to export redemption details, status ${res.status}`);
+        }
+
+        const blob = await res.blob();
+        const disposition = res.headers.get('content-disposition') || '';
+        const match = disposition.match(/filename="?([^"]+)"?/i);
+        const filename = match && match[1] ? match[1] : 'redemptions.csv';
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(downloadUrl);
+      } catch (err) {
+        console.error('Error exporting redemption details', err);
+        this.detailsError = 'Could not export redeemer details.';
+      } finally {
+        this.exportingDetails = false;
       }
     },
 
@@ -1214,7 +1482,7 @@ export default {
   padding: var(--spacing-md) var(--spacing-lg);
   background: var(--color-bg-surface);
   color: var(--color-text-primary);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--shadow-card);
 }
 
 .merchant-card-header {
@@ -1291,7 +1559,7 @@ export default {
   justify-content: center;
   padding: var(--spacing-xs) var(--spacing-md);
   border-radius: var(--radius-full);
-  background: var(--color-bg-primary);
+  background: color-mix(in srgb, var(--surface-1) 75%, var(--surface-2));
   font-size: var(--font-size-sm);
   cursor: pointer;
   transition: all var(--transition-fast);
@@ -1299,7 +1567,8 @@ export default {
 }
 
 .file-label:hover {
-  box-shadow: var(--shadow-sm);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-card);
 }
 
 .file-label input[type="file"] {
@@ -1325,12 +1594,15 @@ export default {
 }
 
 .link-list li {
-  padding: var(--spacing-md) 0;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  padding: var(--spacing-md);
+  margin-bottom: var(--spacing-sm);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--surface-1) 72%, var(--surface-2));
+  box-shadow: var(--shadow-xs);
 }
 
 .link-list li:last-child {
-  box-shadow: none;
+  margin-bottom: 0;
 }
 
 .link-label {
@@ -1369,15 +1641,22 @@ export default {
 }
 
 .btn.tertiary {
-  background: var(--color-bg-muted);
+  background: color-mix(in srgb, var(--surface-1) 74%, var(--surface-2));
   color: var(--color-text-primary);
   box-shadow: var(--shadow-xs);
 }
 
 .btn.tertiary:hover:not(:disabled) {
-  background: var(--color-bg-secondary);
+  background: var(--surface-2);
   color: var(--color-text-primary);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card);
+}
+
+.btn:focus-visible,
+.file-label:focus-within,
+.checkbox-row input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 22%, transparent), var(--shadow-sm);
 }
 
 .btn[disabled] {
@@ -1403,10 +1682,17 @@ export default {
   text-decoration: underline;
 }
 
+.btn.compact {
+  margin-top: 0;
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-size: var(--font-size-sm);
+  min-height: auto;
+}
+
 .tools-results-block {
   margin-top: var(--spacing-lg);
-  padding-top: var(--spacing-md);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06);
+  padding-top: var(--spacing-lg);
+  box-shadow: inset 0 14px 18px -22px rgba(0, 0, 0, 0.24);
 }
 
 .tiny-heading {
@@ -1425,6 +1711,115 @@ export default {
   margin-bottom: var(--spacing-xs);
 }
 
+.insights-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.insight-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  margin-bottom: var(--spacing-sm);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--surface-1) 76%, var(--surface-2));
+  box-shadow: var(--shadow-card);
+  transition: background-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.insight-row:last-child {
+  margin-bottom: 0;
+}
+
+.insight-row:hover {
+  background: var(--surface-2);
+  box-shadow: var(--shadow-card-hover);
+  transform: translateY(-1px);
+}
+
+.insight-copy {
+  min-width: 0;
+}
+
+.redemption-details-block {
+  margin-top: var(--spacing-lg);
+  padding: var(--spacing-lg);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--surface-1) 86%, var(--surface-2));
+  box-shadow: var(--shadow-card);
+}
+
+.details-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+  padding-bottom: var(--spacing-md);
+  box-shadow: inset 0 -10px 16px -18px rgba(0, 0, 0, 0.24);
+}
+
+.details-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  align-items: center;
+  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-2) 80%, var(--surface-1));
+  box-shadow: var(--shadow-xs);
+}
+
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: 0 var(--spacing-xs);
+  min-height: 2rem;
+  border-radius: var(--radius-full);
+}
+
+.checkbox-row input {
+  accent-color: var(--color-primary);
+}
+
+.details-table-wrap {
+  overflow-x: auto;
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-xs);
+}
+
+.details-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+
+.details-table th,
+.details-table td {
+  text-align: left;
+  padding: var(--spacing-sm) var(--spacing-md);
+}
+
+.details-table th {
+  background: var(--surface-2);
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.details-table tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--surface-2) 38%, var(--surface-1));
+}
+
+.details-table tbody tr:hover {
+  background: color-mix(in srgb, var(--surface-2) 72%, var(--surface-1));
+}
+
 @media (max-width: 480px) {
   .profile-page {
     padding: 0 var(--spacing-sm);
@@ -1433,6 +1828,21 @@ export default {
   .user-info {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .insight-row,
+  .details-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .details-actions {
+    align-items: stretch;
+  }
+
+  .details-actions .btn.compact {
+    width: 100%;
+    justify-content: center;
   }
 }
 
