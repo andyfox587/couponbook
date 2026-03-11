@@ -134,6 +134,43 @@
         </div>
       </section>
 
+      <section class="dashboard-section group-redemption-overview" v-if="groupLoaded">
+        <h2>Group Coupon Performance</h2>
+
+        <div v-if="redemptionOverviewLoading" class="loading-state">Loading redemption analytics...</div>
+        <div v-else-if="redemptionOverviewError" class="error-state">{{ redemptionOverviewError }}</div>
+        <div v-else class="stats-grid">
+          <div class="stat-card">
+            <span class="stat-label">Group Redemptions (Last 30 Days)</span>
+            <span class="stat-value highlight-success">
+              {{ redemptionOverview.redemptionsLast30Days }}
+            </span>
+          </div>
+          <div class="stat-card wide">
+            <span class="stat-label">Top Coupon (Last 30 Days)</span>
+            <span class="stat-value">
+              {{ redemptionOverview.topCoupon ? redemptionOverview.topCoupon.couponTitle : 'None yet' }}
+            </span>
+            <template v-if="redemptionOverview.topCoupon">
+              <span class="stat-hint">
+                {{ redemptionOverview.topCoupon.redemptions }} redemption{{ redemptionOverview.topCoupon.redemptions === 1 ? '' : 's' }}
+              </span>
+              <div class="stat-details">
+                <span class="stat-detail">
+                  Submitted by: {{ redemptionOverview.topCoupon.submittedBy || 'Unknown' }}
+                </span>
+                <span class="stat-detail">
+                  Submitted at: {{ formatDate(redemptionOverview.topCoupon.submittedAt) }}
+                </span>
+                <span class="stat-detail">
+                  Expires at: {{ formatDate(redemptionOverview.topCoupon.expiresAt) }}
+                </span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </section>
+
       <!-- Edit Group Section -->
       <section class="dashboard-section edit-group" v-if="groupLoaded">
         <h2>Edit Group Details</h2>
@@ -300,8 +337,6 @@
           <h2>Active Coupons</h2>
           <div class="column-content">
             <div class="active-coupons card">
-              <h3>Active Coupons</h3>
-
               <p v-if="activeLoading" class="muted tiny">
                 Loading active coupons…
               </p>
@@ -310,10 +345,25 @@
               </p>
 
               <ul v-if="!activeLoading && !activeError">
-                <li v-for="c in activeCoupons" :key="c.id">
-                  <strong>{{ c.description }}</strong><br />
-                  Submitted by: {{ c.merchantName }}<br />
-                  Redemptions: {{ c.redemptions }}
+                <li v-for="c in activeCoupons" :key="c.id" class="pending-submission-card">
+                  <div class="pending-card-header">
+                    <strong>{{ c.title || c.description }}</strong>
+                    <span v-if="c.couponType" class="badge badge-type">{{ c.couponType }}</span>
+                  </div>
+                  <div v-if="c.description" class="muted tiny pending-card-meta">
+                    {{ c.description }}
+                  </div>
+                  <div class="pending-card-meta muted tiny">
+                    Submitted by: {{ c.merchantName || 'Unknown' }}<br />
+                    <span v-if="c.discountValue">
+                      Discount: {{ c.discountValue }}{{ c.couponType === 'percent' ? '%' : '' }}
+                    </span>
+                    <span v-if="c.validFrom"> · Active since: {{ formatDate(c.validFrom) }}</span>
+                    <span v-if="c.expiresAt"> · Expires: {{ formatDate(c.expiresAt) }}</span>
+                  </div>
+                  <div class="muted tiny">
+                    Redemptions: {{ c.redemptions }}
+                  </div>
                 </li>
                 <li v-if="activeCoupons.length === 0" class="muted tiny">
                   No active coupons for this group yet.
@@ -420,6 +470,13 @@ export default {
       overviewLoading: false,
       overviewError: null,
 
+      redemptionOverview: {
+        redemptionsLast30Days: 0,
+        topCoupon: null,
+      },
+      redemptionOverviewLoading: false,
+      redemptionOverviewError: null,
+
       // authorization gate
       authChecked: false,
       notAuthorized: false,
@@ -475,6 +532,7 @@ export default {
         this.loadActiveCoupons(),
         this.fetchCurrentPrice(),
         this.loadGroupOverview(),
+        this.loadRedemptionOverview(),
       ]);
     } finally {
       this.authChecked = true;
@@ -538,6 +596,7 @@ export default {
           this.loadActiveCoupons(),
           this.fetchCurrentPrice(),
           this.loadGroupOverview(),
+          this.loadRedemptionOverview(),
         ]);
       }
       this.authChecked = true;
@@ -776,12 +835,19 @@ export default {
           throw new Error("Unexpected response format from /coupons");
         }
 
-        this.activeCoupons = list.map((c) => ({
-          id: c.id,
-          description: c.description,
-          merchantName: c.merchant_name,
-          redemptions: c.redemptions || 0,
-        }));
+        this.activeCoupons = list
+          .map((c) => ({
+            id: c.id,
+            title: c.title,
+            description: c.description,
+            couponType: c.coupon_type,
+            discountValue: c.discount_value,
+            validFrom: c.valid_from,
+            expiresAt: c.expires_at,
+            merchantName: c.merchant_name,
+            redemptions: c.redemptions || 0,
+          }))
+          .filter((coupon) => !this.isExpiredCoupon(coupon.expiresAt));
         this.stats.totalCoupons = this.activeCoupons.length;
       } catch (err) {
         if (!this.notAuthorized) {
@@ -823,6 +889,43 @@ export default {
         this.overviewError = err.message || 'Could not load group overview';
       } finally {
         this.overviewLoading = false;
+      }
+    },
+
+    async loadRedemptionOverview() {
+      if (this.notAuthorized || !this.groupId) return;
+
+      this.redemptionOverviewLoading = true;
+      this.redemptionOverviewError = null;
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(
+          `${API_BASE}/groups/${this.groupId}/redemption-overview`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+
+        if (res.status === 403 || res.status === 401) {
+          const body = await res.json().catch(() => ({}));
+          this.markNotAuthorized(body.error || 'Not authorized');
+          return;
+        }
+
+        if (!res.ok) throw new Error(`Failed to load redemption overview: ${res.status}`);
+
+        const data = await res.json();
+        this.redemptionOverview = {
+          redemptionsLast30Days: Number(data.redemptionsLast30Days || 0),
+          topCoupon: data.topCoupon || null,
+        };
+      } catch (err) {
+        console.error('[FoodieGroupDashboard] loadRedemptionOverview error', err);
+        this.redemptionOverviewError = err.message || 'Could not load redemption overview';
+        this.redemptionOverview = {
+          redemptionsLast30Days: 0,
+          topCoupon: null,
+        };
+      } finally {
+        this.redemptionOverviewLoading = false;
       }
     },
 
@@ -891,11 +994,19 @@ export default {
 
         this.activeCoupons.push({
           id: newCoupon.id,
+          title: newCoupon.title,
           description: newCoupon.description,
-          merchantName: newCoupon.merchant_name,
+          couponType: newCoupon.couponType || newCoupon.coupon_type,
+          discountValue: newCoupon.discountValue ?? newCoupon.discount_value,
+          validFrom: newCoupon.validFrom || newCoupon.valid_from,
+          expiresAt: newCoupon.expiresAt || newCoupon.expires_at,
+          merchantName: newCoupon.merchant_name || coupon.merchantName,
           redemptions: newCoupon.redemptions || 0,
         });
 
+        this.activeCoupons = this.activeCoupons.filter(
+          (activeCoupon) => !this.isExpiredCoupon(activeCoupon.expiresAt)
+        );
         this.stats.totalCoupons = this.activeCoupons.length;
       } catch (err) {
         if (!this.notAuthorized) {
@@ -985,6 +1096,13 @@ export default {
       const d = new Date(s);
       if (Number.isNaN(d.getTime())) return "—";
       return d.toLocaleDateString();
+    },
+
+    isExpiredCoupon(expiresAt) {
+      if (!expiresAt) return false;
+      const expirationDate = new Date(expiresAt);
+      if (Number.isNaN(expirationDate.getTime())) return false;
+      return expirationDate.getTime() <= Date.now();
     },
 
     // Format currency from cents
@@ -1607,6 +1725,18 @@ textarea:focus {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   margin-top: var(--spacing-xs);
+}
+
+.stat-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: var(--spacing-xs);
+}
+
+.stat-detail {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
 }
 
 .data-table-container {

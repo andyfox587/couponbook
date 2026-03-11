@@ -26,6 +26,8 @@ async function runMigrations(pg) {
   const migration5 = readFileSync(join(drizzleDir, '0005_add_stripe_checkout_support.sql'), 'utf-8');
   const migration6 = readFileSync(join(drizzleDir, '0006_add_membership_unique_constraint.sql'), 'utf-8');
   const migration7 = readFileSync(join(drizzleDir, '0007_add_admin_audit_and_user_anonymization.sql'), 'utf-8');
+  const migration8 = readFileSync(join(drizzleDir, '0008_add_stripe_test_live_ids.sql'), 'utf-8');
+  const migration9 = readFileSync(join(drizzleDir, '0009_add_submission_timestamps.sql'), 'utf-8');
   
   // Split by statement breakpoint and execute each statement
   const statements0 = migration0.split('--> statement-breakpoint').map(s => s.trim()).filter(Boolean);
@@ -61,6 +63,30 @@ async function runMigrations(pg) {
     });
 
   const statements7 = migration7
+    .split(';')
+    .map(s => s.trim())
+    .filter(s => {
+      if (!s) return false;
+      const withoutComments = s.split('\n')
+        .filter(line => !line.trim().startsWith('--'))
+        .join('\n')
+        .trim();
+      return withoutComments.length > 0;
+    });
+
+  const statements8 = migration8
+    .split(';')
+    .map(s => s.trim())
+    .filter(s => {
+      if (!s) return false;
+      const withoutComments = s.split('\n')
+        .filter(line => !line.trim().startsWith('--'))
+        .join('\n')
+        .trim();
+      return withoutComments.length > 0;
+    });
+
+  const statements9 = migration9
     .split(';')
     .map(s => s.trim())
     .filter(s => {
@@ -111,6 +137,24 @@ async function runMigrations(pg) {
   }
 
   for (const stmt of statements7) {
+    try {
+      await pg.exec(stmt);
+    } catch (e) {
+      // Some statements might fail in PGlite (like partial indexes)
+      // Continue with other statements
+    }
+  }
+
+  for (const stmt of statements8) {
+    try {
+      await pg.exec(stmt);
+    } catch (e) {
+      // Some statements might fail in PGlite (like partial indexes)
+      // Continue with other statements
+    }
+  }
+
+  for (const stmt of statements9) {
     try {
       await pg.exec(stmt);
     } catch (e) {

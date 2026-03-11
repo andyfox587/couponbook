@@ -5,6 +5,7 @@ import { coupon, merchant, foodieGroup, couponRedemption, user } from '../schema
 import { eq, and, inArray, sql, isNull, ilike, or, asc, desc } from 'drizzle-orm';
 import auth from '../middleware/auth.js'; // auth() verifies Cognito token and sets req.user
 import { resolveLocalUser, canManageMerchant, canManageCoupon, hasEntitlement } from '../authz/index.js';
+import { getMerchantRedemptionOverview } from '../redemptionAnalytics.js';
 
 const router = express.Router();
 
@@ -12,6 +13,13 @@ console.log('📦  coupons router loaded');
 
 const DEFAULT_REDEMPTION_LIMIT = 100;
 const MAX_REDEMPTION_LIMIT = 500;
+
+function isCouponExpired(expiresAt, now = new Date()) {
+  if (!expiresAt) return false;
+  const expirationDate = new Date(expiresAt);
+  if (Number.isNaN(expirationDate.getTime())) return false;
+  return expirationDate.getTime() <= now.getTime();
+}
 
 function parseIntegerParam(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -97,7 +105,9 @@ async function getMerchantRedemptionRows(dbUser, query = {}) {
 // GET all coupons
 router.get('/', async (req, res) => {
   try {
-    const { groupId } = req.query;
+    const { groupId, includeExpired } = req.query;
+    const shouldIncludeExpired = String(includeExpired || '').toLowerCase() === 'true';
+    const now = new Date();
 
     let couponsQuery = db
       .select({
@@ -146,10 +156,13 @@ router.get('/', async (req, res) => {
       );
     }
 
-    const response = allCoupons.map((couponRow) => ({
-      ...couponRow,
-      redemptions: redemptionCounts.get(couponRow.id) || 0,
-    }));
+    const response = allCoupons
+      .filter((couponRow) => shouldIncludeExpired || !isCouponExpired(couponRow.expires_at, now))
+      .map((couponRow) => ({
+        ...couponRow,
+        is_active: !isCouponExpired(couponRow.expires_at, now),
+        redemptions: redemptionCounts.get(couponRow.id) || 0,
+      }));
 
     res.json(response);
   } catch (err) {
@@ -185,7 +198,10 @@ router.get('/:id', async (req, res, next) => {
       return res.status(404).json({ message: 'Coupon not found' });
     }
 
-    res.json(found);
+    res.json({
+      ...found,
+      is_active: !isCouponExpired(found.expiresAt),
+    });
   } catch (err) {
     console.error('📦  error in GET /api/v1/coupons/:id', err);
     next(err);
@@ -359,6 +375,18 @@ router.get('/redemptions/merchant-insights', auth(), resolveLocalUser, async (re
     res.json(rows);
   } catch (err) {
     console.error('🎟️  error in GET /api/v1/coupons/redemptions/merchant-insights', err);
+    next(err);
+  }
+});
+
+// GET /api/v1/coupons/redemptions/merchant-overview
+// Lightweight dashboard summary for merchants
+router.get('/redemptions/merchant-overview', auth(), resolveLocalUser, async (req, res, next) => {
+  try {
+    const overview = await getMerchantRedemptionOverview(req.dbUser.id);
+    res.json(overview);
+  } catch (err) {
+    console.error('🎟️  error in GET /api/v1/coupons/redemptions/merchant-overview', err);
     next(err);
   }
 });

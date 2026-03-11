@@ -5,10 +5,18 @@ import express from 'express';
 import { db } from '../db.js';
 import * as schema from '../schema.js';
 import { eq, and, isNull, count, sql, desc, ilike, or, isNotNull, gte, lte } from 'drizzle-orm';
+import { getPlatformRedemptionOverview } from '../redemptionAnalytics.js';
 
 const router = express.Router();
 
 console.log('📦  admin router loaded');
+
+function isCouponExpired(expiresAt, now = new Date()) {
+  if (!expiresAt) return false;
+  const expirationDate = new Date(expiresAt);
+  if (Number.isNaN(expirationDate.getTime())) return false;
+  return expirationDate.getTime() <= now.getTime();
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // A) OVERVIEW / ANALYTICS
@@ -124,6 +132,21 @@ router.get('/overview', async (req, res, next) => {
 });
 
 /**
+ * GET /api/v1/admin/redemption-overview
+ * Returns lightweight platform-wide redemption analytics
+ */
+router.get('/redemption-overview', async (req, res, next) => {
+  console.log('📦  GET /api/v1/admin/redemption-overview');
+  try {
+    const overview = await getPlatformRedemptionOverview();
+    res.json(overview);
+  } catch (err) {
+    console.error('📦  error in GET /admin/redemption-overview', err);
+    next(err);
+  }
+});
+
+/**
  * GET /api/v1/admin/coupons
  * List all coupons with merchant and group info
  */
@@ -132,6 +155,7 @@ router.get('/coupons', async (req, res, next) => {
   console.log('📦  GET /api/v1/admin/coupons', { query });
 
   try {
+    const now = new Date();
     // Build query
     let baseQuery = db
       .select({
@@ -171,10 +195,10 @@ router.get('/coupons', async (req, res, next) => {
       .orderBy(desc(schema.coupon.createdAt))
       .limit(Number(limit));
 
-    // Transform locked to isActive for frontend (locked=false means active)
+    // Expired coupons should surface as inactive in admin views too.
     const coupons = couponsRaw.map(c => ({
       ...c,
-      isActive: !c.locked,
+      isActive: !isCouponExpired(c.expiresAt, now),
     }));
 
     res.json({ coupons });

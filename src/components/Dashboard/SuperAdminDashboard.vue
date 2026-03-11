@@ -95,9 +95,21 @@
               <span class="stat-value highlight-success">{{ overview.counts?.purchases?.paid || 0 }}</span>
               <span class="stat-hint">Click to view</span>
             </div>
+            <div class="stat-card clickable" @click="goToTab('groups')" title="View foodie groups">
+              <span class="stat-label">Top Foodie Group (30d)</span>
+              <span class="stat-value">{{ redemptionOverview.topGroup?.groupName || 'None yet' }}</span>
+              <span class="stat-hint" v-if="redemptionOverview.topGroup">
+                {{ redemptionOverview.topGroup.redemptions }} redemption{{ redemptionOverview.topGroup.redemptions === 1 ? '' : 's' }}
+              </span>
+            </div>
             <div class="stat-card wide">
               <span class="stat-label">Gross Revenue</span>
               <span class="stat-value highlight-success">{{ formatCurrency(overview.revenue?.grossCents || 0) }}</span>
+            </div>
+            <div class="stat-card clickable" @click="goToTab('coupons')" title="View recent coupon redemptions">
+              <span class="stat-label">Platform Redemptions (30d)</span>
+              <span class="stat-value highlight-success">{{ redemptionOverview.redemptionsLast30Days || 0 }}</span>
+              <span class="stat-hint">Recent coupon activity</span>
             </div>
             <div class="stat-card clickable" @click="goToTab('users')" title="View recent signups">
               <span class="stat-label">Recent Signups (30d)</span>
@@ -110,6 +122,8 @@
               <span class="stat-hint">Click to view payments</span>
             </div>
           </div>
+
+          <div v-if="redemptionOverviewError" class="error-state">{{ redemptionOverviewError }}</div>
 
           <div class="health-section" v-if="overview.paymentHealth">
             <h3>Payment Health</h3>
@@ -410,6 +424,36 @@
         <!-- COUPONS TAB -->
         <section v-if="activeTab === 'coupons'" class="dashboard-section">
           <h2>Coupon Operations</h2>
+
+          <div class="coupon-redemptions-panel">
+            <h3>Recent Redemptions (Last 30 Days)</h3>
+            <div v-if="redemptionOverview.recentRedemptions?.length" class="data-table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Coupon</th>
+                    <th>Merchant</th>
+                    <th>Foodie Group</th>
+                    <th>Customer</th>
+                    <th>Redeemed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="redemption in redemptionOverview.recentRedemptions"
+                    :key="redemption.redemptionId"
+                  >
+                    <td>{{ redemption.couponTitle || '—' }}</td>
+                    <td>{{ redemption.merchantName || '—' }}</td>
+                    <td>{{ redemption.groupName || '—' }}</td>
+                    <td>{{ redemption.customerEmail || '—' }}</td>
+                    <td>{{ formatDate(redemption.redeemedAt) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div v-else class="empty-state">No redemptions in the last 30 days.</div>
+          </div>
 
           <nav class="sub-tab-nav">
             <button :class="['sub-tab-btn', { active: couponsTabView === 'pending' }]" @click="switchCouponsTabView('pending')">
@@ -978,8 +1022,14 @@ export default {
 
       // Overview
       overview: {},
+      redemptionOverview: {
+        redemptionsLast30Days: 0,
+        topGroup: null,
+        recentRedemptions: [],
+      },
       overviewLoading: false,
       overviewError: null,
+      redemptionOverviewError: null,
 
       // Users
       users: [],
@@ -1170,11 +1220,34 @@ export default {
     async loadOverview() {
       this.overviewLoading = true;
       this.overviewError = null;
+      this.redemptionOverviewError = null;
       try {
         const headers = await this.getAuthHeaders();
-        const res = await fetch(`${API_BASE}/admin/overview`, { headers });
-        if (!res.ok) throw new Error(`Failed to load overview: ${res.status}`);
-        this.overview = await res.json();
+        const [overviewRes, redemptionRes] = await Promise.all([
+          fetch(`${API_BASE}/admin/overview`, { headers }),
+          fetch(`${API_BASE}/admin/redemption-overview`, { headers }),
+        ]);
+
+        if (!overviewRes.ok) throw new Error(`Failed to load overview: ${overviewRes.status}`);
+        this.overview = await overviewRes.json();
+
+        if (!redemptionRes.ok) {
+          this.redemptionOverviewError = `Failed to load redemption overview: ${redemptionRes.status}`;
+          this.redemptionOverview = {
+            redemptionsLast30Days: 0,
+            topGroup: null,
+            recentRedemptions: [],
+          };
+        } else {
+          const redemptionData = await redemptionRes.json();
+          this.redemptionOverview = {
+            redemptionsLast30Days: Number(redemptionData.redemptionsLast30Days || 0),
+            topGroup: redemptionData.topGroup || null,
+            recentRedemptions: Array.isArray(redemptionData.recentRedemptions)
+              ? redemptionData.recentRedemptions
+              : [],
+          };
+        }
       } catch (err) {
         console.error("loadOverview error:", err);
         this.overviewError = err.message;
@@ -2602,6 +2675,10 @@ code {
   gap: var(--spacing-xs);
   margin-bottom: var(--spacing-lg);
   flex-wrap: wrap;
+}
+
+.coupon-redemptions-panel {
+  margin-bottom: var(--spacing-xl);
 }
 
 .sub-tab-btn {

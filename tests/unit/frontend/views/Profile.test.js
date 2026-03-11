@@ -33,6 +33,21 @@ function mockFetch(url) {
       json: () => Promise.resolve([{ groupId: 'g1', name: 'Group 1' }]),
     });
   }
+  if (String(url).includes('/coupons/redemptions/merchant-overview')) {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          redemptionsLast30Days: 18,
+          topCoupon: {
+            couponId: 'coupon-1',
+            couponTitle: 'Free Appetizer',
+            redemptions: 7,
+          },
+        }),
+    });
+  }
   return Promise.resolve({
     ok: true,
     status: 200,
@@ -217,5 +232,84 @@ describe('Profile - Admin Memberships', () => {
     });
 
     expect(wrapper.vm.roleLabel).toBe('Foodie Group Admin');
+  });
+
+  it('renders merchant redemption analytics from mocked API data', async () => {
+    const wrapper = mount(Profile, {
+      global: {
+        plugins: [store],
+        mocks: {
+          $router: { push: vi.fn() },
+        },
+      },
+    });
+
+    await wrapper.setData({
+      user: { role: 'merchant' },
+      merchants: [{ id: 'merchant-1', name: 'Test Merchant' }],
+      merchantOverviewLoading: false,
+      merchantOverview: {
+        redemptionsLast30Days: 18,
+        topCoupon: {
+          couponId: 'coupon-1',
+          couponTitle: 'Free Appetizer',
+          redemptions: 7,
+        },
+      },
+    });
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain('Merchant Tools');
+    expect(wrapper.text()).toContain('Redemptions (Last 30 Days)');
+    expect(wrapper.text()).toContain('18');
+    expect(wrapper.text()).toContain('Free Appetizer');
+    expect(wrapper.text()).toContain('7 redemptions');
+  });
+
+  it('renders a safe merchant empty state when topCoupon is null', async () => {
+    const wrapper = mount(Profile, {
+      global: {
+        plugins: [store],
+        mocks: {
+          $router: { push: vi.fn() },
+        },
+      },
+    });
+
+    await wrapper.setData({
+      user: { role: 'merchant' },
+      merchants: [{ id: 'merchant-1', name: 'Test Merchant' }],
+      merchantOverviewLoading: false,
+      merchantOverview: {
+        redemptionsLast30Days: 0,
+        topCoupon: null,
+      },
+    });
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain('None yet');
+    expect(wrapper.text()).toContain('0');
+  });
+
+  it('renders merchant analytics error state without breaking the dashboard', async () => {
+    const wrapper = mount(Profile, {
+      global: {
+        plugins: [store],
+        mocks: {
+          $router: { push: vi.fn() },
+        },
+      },
+    });
+
+    await wrapper.setData({
+      user: { role: 'merchant' },
+      merchants: [{ id: 'merchant-1', name: 'Test Merchant' }],
+      merchantOverviewLoading: false,
+      merchantOverviewError: 'Could not load recent coupon performance.',
+    });
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain('Could not load recent coupon performance.');
+    expect(wrapper.text()).toContain('Merchant Tools');
   });
 });

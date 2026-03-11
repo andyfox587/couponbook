@@ -7,6 +7,7 @@ import auth from '../middleware/auth.js';
 import { resolveLocalUser, requireAdmin, canManageGroup } from '../authz/index.js';
 import { stripe } from '../config/stripe.js';
 import { getValidatedStripeIds, prepareStripeIdFields } from '../utils/stripeIdHelper.js';
+import { getFoodieGroupRedemptionOverview } from '../redemptionAnalytics.js';
 
 const router = express.Router();
 
@@ -143,6 +144,7 @@ router.get('/:groupId/admin/overview', auth(), resolveLocalUser, async (req, res
     }
 
     // Run all queries in parallel for performance
+    const now = new Date().toISOString();
     const [
       purchasesPaidResult,
       couponsResult,
@@ -163,7 +165,11 @@ router.get('/:groupId/admin/overview', auth(), resolveLocalUser, async (req, res
         .where(
           and(
             eq(coupon.groupId, groupId),
-            isNull(coupon.deletedAt)
+            isNull(coupon.deletedAt),
+            or(
+              isNull(coupon.expiresAt),
+              sql`${coupon.expiresAt} > ${now}`
+            )
           )
         ),
       // Gross revenue
@@ -207,6 +213,26 @@ router.get('/:groupId/admin/overview', auth(), resolveLocalUser, async (req, res
     });
   } catch (err) {
     console.error('📦  error in GET /groups/:groupId/admin/overview', err);
+    next(err);
+  }
+});
+
+// ─── GET /api/v1/groups/:groupId/redemption-overview ─────────────────────
+// Return lightweight redemption analytics for foodie group admins
+router.get('/:groupId/redemption-overview', auth(), resolveLocalUser, async (req, res, next) => {
+  const { groupId } = req.params;
+  console.log('📦  GET /api/v1/groups/:groupId/redemption-overview', { groupId });
+
+  try {
+    const canManage = await canManageGroup(req.dbUser, groupId);
+    if (!canManage) {
+      return res.status(403).json({ error: 'Not authorized to view this group\'s analytics' });
+    }
+
+    const overview = await getFoodieGroupRedemptionOverview(groupId);
+    res.json(overview);
+  } catch (err) {
+    console.error('📦  error in GET /groups/:groupId/redemption-overview', err);
     next(err);
   }
 });

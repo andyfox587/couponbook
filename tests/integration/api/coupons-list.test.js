@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import request from 'supertest';
 import { getTestDb, closeTestDb, resetTestDb, seedHelpers } from '../../helpers/db.js';
 
-const HOOK_TIMEOUT_MS = 30000;
+const HOOK_TIMEOUT_MS = 60000;
 const TEST_TIMEOUT_MS = 30000;
 
 // Use the in-memory test DB for server routes
@@ -120,5 +120,51 @@ describe('Coupons List (API)', () => {
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
     expect(res.body[0].redemptions).toBe(0);
+  }, TEST_TIMEOUT_MS);
+
+  it('treats expired coupons as inactive by excluding them from the default list', async () => {
+    const owner = await seedHelpers.createUser(db);
+    const group = await seedHelpers.createFoodieGroup(db);
+    const merchant = await seedHelpers.createMerchant(db, owner.id);
+
+    await seedHelpers.createCoupon(db, group.id, merchant.id, {
+      title: 'Still Active',
+      expiresAt: new Date(Date.now() + 86400000).toISOString(),
+    });
+    await seedHelpers.createCoupon(db, group.id, merchant.id, {
+      title: 'Already Expired',
+      expiresAt: new Date(Date.now() - 86400000).toISOString(),
+    });
+
+    const res = await request(app).get(`/api/v1/coupons?groupId=${group.id}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0].title).toBe('Still Active');
+    expect(res.body[0].is_active).toBe(true);
+  }, TEST_TIMEOUT_MS);
+
+  it('can include expired coupons when explicitly requested', async () => {
+    const owner = await seedHelpers.createUser(db);
+    const group = await seedHelpers.createFoodieGroup(db);
+    const merchant = await seedHelpers.createMerchant(db, owner.id);
+
+    await seedHelpers.createCoupon(db, group.id, merchant.id, {
+      title: 'Still Active',
+      expiresAt: new Date(Date.now() + 86400000).toISOString(),
+    });
+    await seedHelpers.createCoupon(db, group.id, merchant.id, {
+      title: 'Already Expired',
+      expiresAt: new Date(Date.now() - 86400000).toISOString(),
+    });
+
+    const res = await request(app).get(
+      `/api/v1/coupons?groupId=${group.id}&includeExpired=true`
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(2);
+    expect(res.body.find((coupon) => coupon.title === 'Still Active')?.is_active).toBe(true);
+    expect(res.body.find((coupon) => coupon.title === 'Already Expired')?.is_active).toBe(false);
   }, TEST_TIMEOUT_MS);
 });

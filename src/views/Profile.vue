@@ -216,6 +216,31 @@
               add filters so you can focus on a single location at a time.
             </p>
 
+            <p v-if="merchantOverviewError" class="tiny error-text" style="margin-top: 0.5rem;">
+              {{ merchantOverviewError }}
+            </p>
+
+            <div class="stat-row" style="margin-top: 1rem; margin-bottom: 1rem;">
+              <div class="stat-card">
+                <span class="stat-number">
+                  <span v-if="merchantOverviewLoading">…</span>
+                  <span v-else>{{ merchantOverview.redemptionsLast30Days }}</span>
+                </span>
+                <span class="stat-label">Redemptions (Last 30 Days)</span>
+              </div>
+
+              <div class="stat-card">
+                <span class="stat-number">
+                  <span v-if="merchantOverviewLoading">…</span>
+                  <span v-else>{{ merchantOverview.topCoupon ? merchantOverview.topCoupon.couponTitle : 'None yet' }}</span>
+                </span>
+                <span class="stat-label">Top Coupon (Last 30 Days)</span>
+                <span v-if="!merchantOverviewLoading && merchantOverview.topCoupon" class="muted tiny">
+                  {{ merchantOverview.topCoupon.redemptions }} redemption{{ merchantOverview.topCoupon.redemptions === 1 ? '' : 's' }}
+                </span>
+              </div>
+            </div>
+
             <ul class="link-list">
               <!-- Create / Submit -->
               <li class="link-row clickable" @click="goToCouponSubmissions">
@@ -803,6 +828,12 @@ export default {
       merchantToolsLoading: false,
       merchantToolsError: null,
       activeToolsView: null, // 'approved' | 'rejected' | 'insights'
+      merchantOverview: {
+        redemptionsLast30Days: 0,
+        topCoupon: null,
+      },
+      merchantOverviewLoading: false,
+      merchantOverviewError: null,
     };
   },
 
@@ -911,6 +942,9 @@ export default {
 
         if (this.role === 'customer') {
           this.loadCustomerStats();
+        }
+        if (this.role === 'merchant') {
+          this.loadMerchantOverview();
         }
       } catch (err) {
         console.error("Error fetching /api/v1/users/me", err);
@@ -1042,6 +1076,39 @@ export default {
 
     signInNow() {
       signIn();
+    },
+
+    async loadMerchantOverview() {
+      this.merchantOverviewLoading = true;
+      this.merchantOverviewError = null;
+
+      try {
+        const token = await getAccessToken();
+        const res = await fetch('/api/v1/coupons/redemptions/merchant-overview', {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!res.ok) {
+          throw new Error(`Failed to load merchant overview, status ${res.status}`);
+        }
+
+        const data = await res.json();
+        this.merchantOverview = {
+          redemptionsLast30Days: Number(data.redemptionsLast30Days || 0),
+          topCoupon: data.topCoupon || null,
+        };
+      } catch (err) {
+        console.error('Error loading merchant overview', err);
+        this.merchantOverviewError = 'Could not load recent coupon performance.';
+        this.merchantOverview = {
+          redemptionsLast30Days: 0,
+          topCoupon: null,
+        };
+      } finally {
+        this.merchantOverviewLoading = false;
+      }
     },
 
     merchantNameById(id) {
