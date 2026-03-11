@@ -328,16 +328,18 @@
       <Modal v-if="reviewModalCoupon" @close="closeReviewModal">
         <h2>Review Submission</h2>
         <table class="review-table">
-          <tr><th>Title</th><td>{{ reviewModalCoupon.title }}</td></tr>
-          <tr><th>Description</th><td>{{ reviewModalCoupon.description }}</td></tr>
-          <tr><th>Coupon Type</th><td>{{ reviewModalCoupon.couponType }}</td></tr>
-          <tr v-if="reviewModalCoupon.discountValue"><th>Discount Value</th><td>{{ reviewModalCoupon.discountValue }}{{ reviewModalCoupon.couponType === 'percent' ? '%' : '' }}</td></tr>
-          <tr><th>Valid From</th><td>{{ formatDate(reviewModalCoupon.validFrom) }}</td></tr>
-          <tr><th>Expires At</th><td>{{ formatDate(reviewModalCoupon.expiresAt) }}</td></tr>
-          <tr><th>Locked</th><td>{{ reviewModalCoupon.locked ? 'Yes' : 'No' }}</td></tr>
-          <tr><th>Merchant</th><td>{{ reviewModalCoupon.merchantName }}</td></tr>
-          <tr v-if="reviewModalCoupon.submittedAt"><th>Submitted</th><td>{{ formatDate(reviewModalCoupon.submittedAt) }}</td></tr>
-          <tr v-if="reviewModalCoupon.updatedAt"><th>Last Edited</th><td>{{ formatDate(reviewModalCoupon.updatedAt) }}</td></tr>
+          <tbody>
+            <tr><th>Title</th><td>{{ reviewModalCoupon.title }}</td></tr>
+            <tr><th>Description</th><td>{{ reviewModalCoupon.description }}</td></tr>
+            <tr><th>Coupon Type</th><td>{{ reviewModalCoupon.couponType }}</td></tr>
+            <tr v-if="reviewModalCoupon.discountValue"><th>Discount Value</th><td>{{ reviewModalCoupon.discountValue }}{{ reviewModalCoupon.couponType === 'percent' ? '%' : '' }}</td></tr>
+            <tr><th>Valid From</th><td>{{ formatDate(reviewModalCoupon.validFrom) }}</td></tr>
+            <tr><th>Expires At</th><td>{{ formatDate(reviewModalCoupon.expiresAt) }}</td></tr>
+            <tr><th>Locked</th><td>{{ reviewModalCoupon.locked ? 'Yes' : 'No' }}</td></tr>
+            <tr><th>Merchant</th><td>{{ reviewModalCoupon.merchantName }}</td></tr>
+            <tr v-if="reviewModalCoupon.submittedAt"><th>Submitted</th><td>{{ formatDate(reviewModalCoupon.submittedAt) }}</td></tr>
+            <tr v-if="reviewModalCoupon.updatedAt"><th>Last Edited</th><td>{{ formatDate(reviewModalCoupon.updatedAt) }}</td></tr>
+          </tbody>
         </table>
         <div class="review-modal-actions">
           <button class="btn primary" @click="approveCoupon(reviewModalCoupon); closeReviewModal()">

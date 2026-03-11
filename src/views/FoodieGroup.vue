@@ -467,10 +467,11 @@ export default {
       if (!data || data.type !== 'coupon-redeemed') return;
 
       const couponId = data.couponId;
+      const redeemedAt = data.redeemedAt || new Date().toISOString();
       if (!couponId) return;
 
       console.log('[FoodieGroup] received coupon-redeemed message for', couponId);
-      this._markRedeemed(couponId, true, new Date().toISOString());
+      this._markRedeemed(couponId, true, redeemedAt);
     },
 
     _markRedeemed(

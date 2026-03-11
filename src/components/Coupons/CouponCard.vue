@@ -18,6 +18,10 @@
       <small>Expires: {{ formatDate(coupon.expires_at) }}</small>
     </div>
 
+    <div v-if="redeemedAtDisplay" class="redemption-meta">
+      <small>Redeemed: {{ redeemedAtDisplay }}</small>
+    </div>
+
     <!-- Button with dynamic label + disabled logic -->
     <button
       class="action-btn"
@@ -141,12 +145,30 @@ export default {
         return "btn-primary";
       }
       return "btn-secondary";
+    },
+
+    redeemedAtDisplay() {
+      const redeemedAt = this.coupon.redeemed_at || this.coupon.redeemedAt;
+      return redeemedAt ? this.formatDateTime(redeemedAt) : '';
     }
   },
 
   methods: {
     formatDate(dateStr) {
       return new Date(dateStr).toLocaleDateString();
+    },
+
+    formatDateTime(dateStr) {
+      const date = new Date(dateStr);
+      if (Number.isNaN(date.getTime())) return '';
+
+      return new Intl.DateTimeFormat(undefined, {
+        month: 'numeric',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit'
+      }).format(date);
     },
 
     handleClick() {
@@ -264,7 +286,19 @@ export default {
   color: var(--color-text-secondary);
 }
 
+.redemption-meta {
+  margin: 0 0 var(--spacing-md);
+  color: var(--color-text-secondary);
+}
+
+.redemption-meta small {
+  color: var(--color-text-secondary);
+}
+
 .action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   padding: var(--spacing-md) var(--spacing-lg);
   border-radius: var(--radius-md);

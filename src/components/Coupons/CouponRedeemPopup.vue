@@ -349,7 +349,11 @@ export default {
           try {
             if (window.opener) {
               window.opener.postMessage(
-                { type: "coupon-redeemed", couponId: this.couponId },
+                {
+                  type: "coupon-redeemed",
+                  couponId: this.couponId,
+                  redeemedAt: this.redeemedAt,
+                },
                 "*"
               );
             }
@@ -378,7 +382,11 @@ export default {
           try {
             if (window.opener) {
               window.opener.postMessage(
-                { type: "coupon-redeemed", couponId: this.couponId },
+                {
+                  type: "coupon-redeemed",
+                  couponId: this.couponId,
+                  redeemedAt: this.redeemedAt,
+                },
                 "*"
               );
             }
@@ -408,7 +416,11 @@ export default {
         try {
           if (window.opener) {
             window.opener.postMessage(
-              { type: "coupon-redeemed", couponId: this.couponId },
+              {
+                type: "coupon-redeemed",
+                couponId: this.couponId,
+                redeemedAt: this.redeemedAt,
+              },
               "*"
             );
           }

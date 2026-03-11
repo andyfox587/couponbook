@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "serve": "vue-cli-service serve",
+    "serve": "BROWSERSLIST_IGNORE_OLD_DATA=true vue-cli-service serve",
     "build": "vue-cli-service build",
     "lint": "vue-cli-service lint",
     "dev": "nodemon --loader ts-node/esm server/src/dev.js",
