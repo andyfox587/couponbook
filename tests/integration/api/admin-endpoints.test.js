@@ -534,26 +534,8 @@ describe('Admin Endpoints Security Audit', () => {
   // EVENTS WRITE LOCKDOWN (per plan requirement)
   // ═══════════════════════════════════════════════════════════════
 
-  describe('POST /api/v1/events (events write lockdown)', () => {
-    it('returns 401 when unauthenticated', async () => {
-      const res = await request(app)
-        .post('/api/v1/events')
-        .send({ name: 'Test Event' });
-
-      expect(res.status).toBe(401);
-    }, TEST_TIMEOUT_MS);
-
-    it('returns 403 when authenticated but not super_admin', async () => {
-      await seedHelpers.createUser(db, { cognitoSub: 'regular-user', role: 'customer' });
-
-      const res = await request(app)
-        .post('/api/v1/events')
-        .set('Authorization', 'Bearer regular-user')
-        .send({ name: 'Test Event' });
-
-      expect(res.status).toBe(403);
-    }, TEST_TIMEOUT_MS);
-  });
+  // POST /api/v1/events is intentionally removed — events are created via the
+  // event-submission approval flow (POST /api/v1/event-submissions + PUT approval).
 
   describe('PUT /api/v1/events/:id (events write lockdown)', () => {
     it('returns 401 when unauthenticated', async () => {

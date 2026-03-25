@@ -9,59 +9,21 @@ import auth from '../middleware/auth.js';
 import { resolveLocalUser, requireAdmin, canManageMerchant } from '../authz/index.js';
 
 // 📦 File upload & S3
-import multer from 'multer';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { upload, handleMulterError, ALLOWED_MIME_TYPES, getExtensionFromMime, uploadFileToS3 } from '../lib/uploadHelper.js';
 
 const router = express.Router();
 
 console.log('📦  merchant router loaded');
 
 // ────────────────────────────────────────────────────────────────
-// Multer setup: in-memory storage (we pipe buffer into S3)
+// S3 / bucket config (merchant logo specific)
 // ────────────────────────────────────────────────────────────────
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5 MB
-  },
-});
-
-// ────────────────────────────────────────────────────────────────
-// S3 client setup
-// ────────────────────────────────────────────────────────────────
-const REGION = (process.env.AWS_REGION || "us-east-1").trim();
+const REGION = (process.env.AWS_REGION || 'us-east-1').trim();
 const LOGO_BUCKET = process.env.AWS_S3_MERCHANT_LOGO_BUCKET;
 
 const LOGO_BASE_URL =
   process.env.AWS_S3_MERCHANT_LOGO_BASE_URL ||
   (LOGO_BUCKET ? `https://${LOGO_BUCKET}.s3.${REGION}.amazonaws.com` : null);
-
-const accessKeyId = process.env.AWS_ACCESS_KEY_ID?.trim();
-const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY?.trim();
-
-if (!accessKeyId || !secretAccessKey) {
-  console.error("❌ Missing AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY");
-}
-
-// ✅ DO NOT pass session token at all
-const s3 = new S3Client({
-  region: REGION,
-  credentials: {
-    accessKeyId,
-    secretAccessKey,
-  },
-});
-
-// helper to map mimetype → extension
-function getExtensionFromMime(mime) {
-  if (!mime) return 'bin';
-  if (mime === 'image/png') return 'png';
-  if (mime === 'image/jpeg') return 'jpg';
-  if (mime === 'image/jpg') return 'jpg';
-  if (mime === 'image/webp') return 'webp';
-  if (mime === 'image/svg+xml') return 'svg';
-  return 'bin';
-}
 
 // ────────────────────────────────────────────────────────────────
 // GET all merchants
@@ -222,25 +184,6 @@ router.delete('/:id', auth(), resolveLocalUser, async (req, res, next) => {
 });
 
 // ────────────────────────────────────────────────────────────────
-// Multer error handler middleware
-// Catches MulterError instances and converts them to user-friendly JSON responses
-// ────────────────────────────────────────────────────────────────
-function handleMulterError(err, req, res, next) {
-  if (err && err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(400).json({ error: 'File too large. Maximum size is 5 MB.' });
-  }
-  if (err && err.code === 'LIMIT_UNEXPECTED_FILE') {
-    return res.status(400).json({ error: 'Unexpected file field. Use "file" as the field name.' });
-  }
-  // If it's a multer error or any other file upload error, handle it
-  if (err) {
-    return res.status(400).json({ error: err.message || 'File upload error' });
-  }
-  // If no error, pass to next middleware
-  next();
-}
-
-// ────────────────────────────────────────────────────────────────
 // POST /api/v1/merchants/:id/logo
 // Upload/update logo for a merchant (owner only)
 // Field name: "file" in multipart/form-data
@@ -276,8 +219,7 @@ router.post(
 
       // 4) Validate file type (must be done before S3 check to ensure validation always runs)
       const { mimetype, buffer, originalname } = req.file;
-      const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/svg+xml'];
-      if (!allowedTypes.includes(mimetype)) {
+      if (!ALLOWED_MIME_TYPES.includes(mimetype)) {
         return res.status(400).json({ error: 'Unsupported file type' });
       }
 
@@ -305,29 +247,17 @@ router.post(
       // 6) Real S3 upload path
 
       const ext = getExtensionFromMime(mimetype);
-      const safeName = originalname
-        .replace(/\s+/g, '-')
-        .replace(/[^a-zA-Z0-9.\-]/g, '');
       const randomSuffix = Math.random().toString(36).slice(2);
       const key = `logos/merchants/${merchantId}/logo-${randomSuffix}.${ext}`;
 
-      const putParams = {
-        Bucket: LOGO_BUCKET,
-        Key: key,
-        Body: buffer,
-        ContentType: mimetype,
-      };      
-      
       console.log("AWS key prefix", {
         accessKeyPrefix: process.env.AWS_ACCESS_KEY_ID?.slice(0, 4),
         sessionTokenPrefix: process.env.AWS_SESSION_TOKEN?.slice(0, 4),
       });
-      
-      console.time('s3:putObject');
-      await s3.send(new PutObjectCommand(putParams));
-      console.timeEnd('s3:putObject');
 
-      const logoUrl = `${LOGO_BASE_URL}/${key}`;
+      console.time('s3:putObject');
+      const logoUrl = await uploadFileToS3({ bucket: LOGO_BUCKET, baseUrl: LOGO_BASE_URL, key, buffer, mimetype });
+      console.timeEnd('s3:putObject');
 
       console.time('db:updateMerchantLogo');
       const [updated] = await db

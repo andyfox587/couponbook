@@ -150,6 +150,49 @@ export async function canManageGroup(dbUser, groupId) {
 }
 
 /**
+ * canManageEvent:
+ * Returns true if the user is a super admin OR the owner of the event's merchant.
+ */
+export async function canManageEvent(dbUser, eventId) {
+  if (!dbUser || !eventId) return false;
+  if (dbUser.role === 'super_admin') return true;
+
+  try {
+    const [eventWithMerchant] = await db
+      .select({ merchantOwnerId: schema.merchant.ownerId })
+      .from(schema.event)
+      .innerJoin(schema.merchant, eq(schema.event.merchantId, schema.merchant.id))
+      .where(eq(schema.event.id, eventId))
+      .limit(1);
+
+    return eventWithMerchant?.merchantOwnerId === dbUser.id;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * canManageEventSubmission:
+ * Returns true if super admin OR merchant owner of the submission OR group admin.
+ */
+export async function canManageEventSubmission(dbUser, submission) {
+  if (!dbUser || !submission) return false;
+  if (dbUser.role === 'super_admin') return true;
+
+  if (submission.merchantId) {
+    const isOwner = await canManageMerchant(dbUser, submission.merchantId);
+    if (isOwner) return true;
+  }
+
+  if (submission.groupId) {
+    const isGAdmin = await canManageGroup(dbUser, submission.groupId);
+    if (isGAdmin) return true;
+  }
+
+  return false;
+}
+
+/**
  * hasEntitlement:
  * Returns true if the user has access to the given group's locked coupons.
  * (e.g. they have a paid purchase for this group or are a super admin)

@@ -1,13 +1,14 @@
 // server/src/routes/foodieGroup.js
 import express from 'express';
 import { db } from '../db.js';
-import { foodieGroup, purchase, user, foodieGroupMembership, couponBookPrice, coupon } from '../schema.js';
+import { foodieGroup, purchase, user, foodieGroupMembership, couponBookPrice, coupon, event } from '../schema.js';
 import { eq, and, count, isNull, or, sql, desc } from 'drizzle-orm';
 import auth from '../middleware/auth.js';
 import { resolveLocalUser, requireAdmin, canManageGroup } from '../authz/index.js';
 import { stripe } from '../config/stripe.js';
 import { getValidatedStripeIds, prepareStripeIdFields } from '../utils/stripeIdHelper.js';
 import { getFoodieGroupRedemptionOverview } from '../redemptionAnalytics.js';
+import { getFoodieGroupEventOverview, getEventSubmissionCounts } from '../eventAnalytics.js';
 
 const router = express.Router();
 
@@ -149,6 +150,8 @@ router.get('/:groupId/admin/overview', auth(), resolveLocalUser, async (req, res
       purchasesPaidResult,
       couponsResult,
       revenueResult,
+      publishedEventsResult,
+      eventSubmissionCounts,
     ] = await Promise.all([
       // Paid purchases count
       db.select({ count: count() })
@@ -181,6 +184,18 @@ router.get('/:groupId/admin/overview', auth(), resolveLocalUser, async (req, res
             eq(purchase.status, 'paid')
           )
         ),
+      // Published events count (non-deleted)
+      db.select({ count: count() })
+        .from(event)
+        .where(
+          and(
+            eq(event.groupId, groupId),
+            eq(event.status, 'published'),
+            isNull(event.deletedAt),
+          )
+        ),
+      // Event submission counts by state
+      getEventSubmissionCounts(groupId),
     ]);
 
     // Recent purchases (last 10, with user email)
@@ -201,6 +216,10 @@ router.get('/:groupId/admin/overview', auth(), resolveLocalUser, async (req, res
     res.json({
       counts: {
         coupons: couponsResult[0]?.count ?? 0,
+        events: {
+          published: publishedEventsResult[0]?.count ?? 0,
+        },
+        eventSubmissions: eventSubmissionCounts,
         purchases: {
           paid: purchasesPaidResult[0]?.count ?? 0,
         },
@@ -233,6 +252,26 @@ router.get('/:groupId/redemption-overview', auth(), resolveLocalUser, async (req
     res.json(overview);
   } catch (err) {
     console.error('📦  error in GET /groups/:groupId/redemption-overview', err);
+    next(err);
+  }
+});
+
+// ─── GET /api/v1/groups/:groupId/event-overview ─────────────────────
+// Return lightweight event RSVP/attendance analytics for foodie group admins
+router.get('/:groupId/event-overview', auth(), resolveLocalUser, async (req, res, next) => {
+  const { groupId } = req.params;
+  console.log('📦  GET /api/v1/groups/:groupId/event-overview', { groupId });
+
+  try {
+    const canManage = await canManageGroup(req.dbUser, groupId);
+    if (!canManage) {
+      return res.status(403).json({ error: 'Not authorized to view this group\'s analytics' });
+    }
+
+    const overview = await getFoodieGroupEventOverview(groupId);
+    res.json(overview);
+  } catch (err) {
+    console.error('📦  error in GET /groups/:groupId/event-overview', err);
     next(err);
   }
 });

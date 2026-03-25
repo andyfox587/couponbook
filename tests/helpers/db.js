@@ -28,6 +28,9 @@ async function runMigrations(pg) {
   const migration7 = readFileSync(join(drizzleDir, '0007_add_admin_audit_and_user_anonymization.sql'), 'utf-8');
   const migration8 = readFileSync(join(drizzleDir, '0008_add_stripe_test_live_ids.sql'), 'utf-8');
   const migration9 = readFileSync(join(drizzleDir, '0009_add_submission_timestamps.sql'), 'utf-8');
+  const migration10 = readFileSync(join(drizzleDir, '0010_expand_event_schema.sql'), 'utf-8');
+  const migration11 = readFileSync(join(drizzleDir, '0011_expand_event_rsvp.sql'), 'utf-8');
+  const migration12 = readFileSync(join(drizzleDir, '0012_expand_event_submission.sql'), 'utf-8');
   
   // Split by statement breakpoint and execute each statement
   const statements0 = migration0.split('--> statement-breakpoint').map(s => s.trim()).filter(Boolean);
@@ -162,7 +165,55 @@ async function runMigrations(pg) {
       // Continue with other statements
     }
   }
-  
+
+  // Migration 10: event schema expansion (uses DO $$ blocks for safe enum creation)
+  // Try the full file first since PGlite supports PL/pgSQL DO blocks.
+  // Fall back to direct CREATE TYPE + ALTER TABLE if the full exec fails.
+  try {
+    await pg.exec(migration10);
+  } catch (e) {
+    try { await pg.exec(`CREATE TYPE event_status AS ENUM ('draft', 'published', 'cancelled')`); } catch (_) { /* already exists */ }
+    try { await pg.exec(`CREATE TYPE event_visibility AS ENUM ('public', 'members_only', 'invite_only')`); } catch (_) { /* already exists */ }
+    const stmts10 = migration10
+      .split(';')
+      .map(s => s.trim())
+      .filter(s => {
+        if (!s) return false;
+        const noComments = s.split('\n').filter(l => !l.trim().startsWith('--')).join('\n').trim();
+        // Skip DO $$ blocks — handled above
+        return noComments.length > 0 && !noComments.startsWith('DO $$') && !noComments.includes('EXCEPTION') && !noComments.startsWith('END');
+      });
+    for (const stmt of stmts10) {
+      try { await pg.exec(stmt); } catch (_) { /* continue */ }
+    }
+  }
+
+  // Migration 11: event_rsvp expansion (simple ALTER TABLE statements)
+  const stmts11 = migration11
+    .split(';')
+    .map(s => s.trim())
+    .filter(s => {
+      if (!s) return false;
+      const noComments = s.split('\n').filter(l => !l.trim().startsWith('--')).join('\n').trim();
+      return noComments.length > 0;
+    });
+  for (const stmt of stmts11) {
+    try { await pg.exec(stmt); } catch (_) { /* continue */ }
+  }
+
+  // Migration 12: event_submission expansion (simple ALTER TABLE statements)
+  const stmts12 = migration12
+    .split(';')
+    .map(s => s.trim())
+    .filter(s => {
+      if (!s) return false;
+      const noComments = s.split('\n').filter(l => !l.trim().startsWith('--')).join('\n').trim();
+      return noComments.length > 0;
+    });
+  for (const stmt of stmts12) {
+    try { await pg.exec(stmt); } catch (_) { /* continue */ }
+  }
+
   // Add the unique constraint on coupon_redemption that may not be in migrations
   try {
     await pg.exec(`
@@ -376,5 +427,76 @@ export const seedHelpers = {
       })
       .returning();
     return newRedemption;
+  },
+
+  async createEvent(db, groupId, merchantId, overrides = {}) {
+    const { event } = schema;
+    const now = new Date();
+    const [newEvent] = await db
+      .insert(event)
+      .values({
+        groupId,
+        merchantId,
+        name: overrides.name || 'Test Event',
+        description: overrides.description || 'Test event description',
+        startDatetime: overrides.startDatetime || new Date(now.getTime() + 86400000).toISOString(),
+        endDatetime: overrides.endDatetime || new Date(now.getTime() + 2 * 86400000).toISOString(),
+        location: overrides.location || '123 Main St',
+        capacity: overrides.capacity ?? 50,
+        status: overrides.status || 'published',
+        visibility: overrides.visibility || 'public',
+        isFree: overrides.isFree !== undefined ? overrides.isFree : true,
+        slug: overrides.slug || `test-event-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        coverImageUrl: overrides.coverImageUrl || null,
+        bannerImageUrl: overrides.bannerImageUrl || null,
+        priceCents: overrides.priceCents || null,
+        membersOnlyPriceCents: overrides.membersOnlyPriceCents || null,
+        maxTicketsPerGuest: overrides.maxTicketsPerGuest || 1,
+        inviteOnly: overrides.inviteOnly || false,
+      })
+      .returning();
+    return newEvent;
+  },
+
+  async createEventRsvp(db, eventId, overrides = {}) {
+    const { eventRsvp } = schema;
+    const [newRsvp] = await db
+      .insert(eventRsvp)
+      .values({
+        eventId,
+        userId: overrides.userId || null,
+        attendees: overrides.attendees ?? 1,
+        status: overrides.status || 'going',
+        guestName: overrides.guestName || null,
+        guestEmail: overrides.guestEmail || null,
+      })
+      .returning();
+    return newRsvp;
+  },
+
+  async createEventSubmission(db, groupId, merchantId, overrides = {}) {
+    const { eventSubmission } = schema;
+    const [newSub] = await db
+      .insert(eventSubmission)
+      .values({
+        groupId,
+        merchantId,
+        state: overrides.state || 'pending',
+        submissionData: overrides.submissionData || {
+          name: 'Test Event',
+          description: 'A test event',
+          start_datetime: new Date(Date.now() + 86400000).toISOString(),
+          end_datetime: new Date(Date.now() + 2 * 86400000).toISOString(),
+          location: '123 Main St',
+          capacity: 10,
+          is_free: true,
+          visibility: 'public',
+          max_tickets_per_guest: 1,
+        },
+        ...(overrides.rejectionMessage ? { rejectionMessage: overrides.rejectionMessage } : {}),
+        ...(overrides.reviewedAt ? { reviewedAt: overrides.reviewedAt } : {}),
+      })
+      .returning();
+    return newSub;
   },
 };

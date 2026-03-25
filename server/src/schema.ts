@@ -7,6 +7,8 @@ export const purchaseStatus = pgEnum("purchase_status", ['created', 'pending', '
 export const purchaseProvider = pgEnum("purchase_provider", ['stripe', 'test'])
 export const role = pgEnum("role", ['super_admin', 'merchant', 'customer', 'foodie_group_admin'])
 export const submissionState = pgEnum("submission_state", ['pending', 'approved', 'rejected'])
+export const eventStatus = pgEnum("event_status", ['draft', 'published', 'cancelled'])
+export const eventVisibility = pgEnum("event_visibility", ['public', 'members_only', 'invite_only'])
 
 
 export const couponSubmission = pgTable("coupon_submission", {
@@ -36,9 +38,12 @@ export const couponSubmission = pgTable("coupon_submission", {
 export const eventRsvp = pgTable("event_rsvp", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	eventId: uuid("event_id").notNull(),
-	userId: uuid("user_id").notNull(),
+	userId: uuid("user_id"),
 	attendees: integer().notNull(),
 	status: attendanceStatus().notNull(),
+	waitlistPosition: integer("waitlist_position"),
+	guestName: varchar("guest_name", { length: 255 }),
+	guestEmail: varchar("guest_email", { length: 255 }),
 	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow().notNull(),
 	deletedAt: timestamp("deleted_at", { mode: 'string' }),
@@ -91,7 +96,10 @@ export const eventSubmission = pgTable("event_submission", {
 	state: submissionState().notNull(),
 	submittedAt: timestamp("submitted_at", { mode: 'string' }).defaultNow().notNull(),
 	submissionData: jsonb("submission_data").notNull(),
+	rejectionMessage: text("rejection_message"),
 	deletedAt: timestamp("deleted_at", { mode: 'string' }),
+	updatedAt: timestamp("updated_at", { mode: 'string' }),
+	reviewedAt: timestamp("reviewed_at", { mode: 'string' }),
 }, (table) => [
 	foreignKey({
 		columns: [table.groupId],
@@ -116,6 +124,16 @@ export const event = pgTable("event", {
 	location: varchar({ length: 255 }),
 	capacity: integer().notNull(),
 	coverImageUrl: varchar("cover_image_url", { length: 500 }),
+	slug: varchar({ length: 255 }),
+	memberAccessToken: varchar("member_access_token", { length: 255 }),
+	status: eventStatus("status").default('published').notNull(),
+	priceCents: integer("price_cents"),
+	membersOnlyPriceCents: integer("members_only_price_cents"),
+	isFree: boolean("is_free").default(true).notNull(),
+	visibility: eventVisibility().default('public').notNull(),
+	maxTicketsPerGuest: integer("max_tickets_per_guest").default(1).notNull(),
+	inviteOnly: boolean("invite_only").default(false).notNull(),
+	bannerImageUrl: varchar("banner_image_url", { length: 500 }),
 	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow().notNull(),
 	deletedAt: timestamp("deleted_at", { mode: 'string' }),

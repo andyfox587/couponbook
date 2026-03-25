@@ -61,6 +61,25 @@ function mockFetchOk(url) {
         }),
     });
   }
+  if (String(url).includes('/event-submissions')) {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([]),
+    });
+  }
+  if (String(url).includes('/event-overview')) {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          rsvpsLast30Days: 0,
+          topEvent: null,
+          upcomingPublishedEvents: 0,
+        }),
+    });
+  }
   if (String(url).includes('/coupon-submissions')) {
     return Promise.resolve({
       ok: true,
@@ -346,5 +365,190 @@ describe('FoodieGroupDashboard', () => {
 
     expect(wrapper.text()).toContain('None yet');
     expect(wrapper.text()).toContain('0');
+  });
+
+  // ─── Event submission moderation ────────────────────────────
+
+  it('renders pending event submission cards when data is loaded', async () => {
+    store.state.auth.isAuthenticated = true;
+
+    const wrapper = mount(FoodieGroupDashboard, {
+      global: {
+        plugins: [store],
+        mocks: {
+          $route: { params: { groupId: 'group-1' } },
+          $router: { replace: vi.fn() },
+        },
+      },
+    });
+
+    await wrapper.setData({
+      authChecked: true,
+      notAuthorized: false,
+      groupLoaded: true,
+      pendingEventsLoading: false,
+      pendingEventsError: null,
+      pendingEvents: [
+        {
+          id: 'ev-sub-1',
+          name: 'Taco Tuesday Bash',
+          description: 'Free tacos for members',
+          startDatetime: '2026-04-10T18:00:00.000Z',
+          location: 'Main Square',
+          capacity: 100,
+          visibility: 'public',
+          merchantName: 'Taco Merchant',
+          submittedAt: '2026-03-20T10:00:00.000Z',
+        },
+      ],
+    });
+    await wrapper.vm.$nextTick();
+
+    const text = wrapper.text();
+    expect(text).toContain('Event Submissions');
+    expect(text).toContain('Taco Tuesday Bash');
+    expect(text).toContain('Taco Merchant');
+    expect(text).toContain('Main Square');
+  });
+
+  it('renders empty state when no pending event submissions exist', async () => {
+    store.state.auth.isAuthenticated = true;
+
+    const wrapper = mount(FoodieGroupDashboard, {
+      global: {
+        plugins: [store],
+        mocks: {
+          $route: { params: { groupId: 'group-1' } },
+          $router: { replace: vi.fn() },
+        },
+      },
+    });
+
+    await wrapper.setData({
+      authChecked: true,
+      notAuthorized: false,
+      groupLoaded: true,
+      pendingEventsLoading: false,
+      pendingEventsError: null,
+      pendingEvents: [],
+    });
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain('No pending event submissions for this group.');
+  });
+
+  it('renders event overview analytics section with RSVP data', async () => {
+    store.state.auth.isAuthenticated = true;
+
+    const wrapper = mount(FoodieGroupDashboard, {
+      global: {
+        plugins: [store],
+        mocks: {
+          $route: { params: { groupId: 'group-1' } },
+          $router: { replace: vi.fn() },
+        },
+      },
+    });
+
+    await wrapper.setData({
+      authChecked: true,
+      notAuthorized: false,
+      groupLoaded: true,
+      eventOverviewLoading: false,
+      eventOverviewError: null,
+      eventOverview: {
+        rsvpsLast30Days: 42,
+        topEvent: {
+          eventId: 'ev-1',
+          eventName: 'Big Launch Party',
+          merchantName: 'Launch Co',
+          startDatetime: '2026-04-15T19:00:00.000Z',
+          rsvps: 18,
+        },
+        upcomingPublishedEvents: 3,
+      },
+    });
+    await wrapper.vm.$nextTick();
+
+    const text = wrapper.text();
+    expect(text).toContain('Group Event Performance');
+    expect(text).toContain('RSVPs (Last 30 Days)');
+    expect(text).toContain('42');
+    expect(text).toContain('Big Launch Party');
+    expect(text).toContain('18 RSVPs');
+    expect(text).toContain('Merchant: Launch Co');
+    expect(text).toContain('Upcoming Published Events');
+    expect(text).toContain('3');
+  });
+
+  it('renders event overview empty state when no events exist', async () => {
+    store.state.auth.isAuthenticated = true;
+
+    const wrapper = mount(FoodieGroupDashboard, {
+      global: {
+        plugins: [store],
+        mocks: {
+          $route: { params: { groupId: 'group-1' } },
+          $router: { replace: vi.fn() },
+        },
+      },
+    });
+
+    await wrapper.setData({
+      authChecked: true,
+      notAuthorized: false,
+      groupLoaded: true,
+      eventOverviewLoading: false,
+      eventOverviewError: null,
+      eventOverview: {
+        rsvpsLast30Days: 0,
+        topEvent: null,
+        upcomingPublishedEvents: 0,
+      },
+    });
+    await wrapper.vm.$nextTick();
+
+    const text = wrapper.text();
+    expect(text).toContain('Group Event Performance');
+    expect(text).toContain('None yet');
+  });
+
+  it('shows Published Events and Pending Event Submissions stats in the overview', async () => {
+    store.state.auth.isAuthenticated = true;
+
+    const wrapper = mount(FoodieGroupDashboard, {
+      global: {
+        plugins: [store],
+        mocks: {
+          $route: { params: { groupId: 'group-1' } },
+          $router: { replace: vi.fn() },
+        },
+      },
+    });
+
+    await wrapper.setData({
+      authChecked: true,
+      notAuthorized: false,
+      groupLoaded: true,
+      overviewLoading: false,
+      overviewError: null,
+      groupOverview: {
+        counts: {
+          coupons: 5,
+          events: { published: 7 },
+          eventSubmissions: { pending: 2, approved: 4, rejected: 1 },
+          purchases: { paid: 10 },
+        },
+        revenue: { grossCents: 5000 },
+        recentPurchases: [],
+      },
+    });
+    await wrapper.vm.$nextTick();
+
+    const text = wrapper.text();
+    expect(text).toContain('Published Events');
+    expect(text).toContain('7');
+    expect(text).toContain('Pending Event Submissions');
+    expect(text).toContain('2');
   });
 });

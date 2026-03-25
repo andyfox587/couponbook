@@ -9,6 +9,7 @@ import eventsRouter from './routes/events.js';
 import groupsRouter from './routes/foodieGroups.js';
 import merchantsRouter from './routes/merchants.js';
 import couponSubmissionsRouter from './routes/couponSubmissions.js';
+import eventSubmissionsRouter from './routes/eventSubmissions.js';
 import stripeRouter from './routes/stripe.js';
 import adminRouter from './routes/admin.js';
 
@@ -48,18 +49,16 @@ app.use('/api/v1/merchants', merchantsRouter);
 app.use('/api/v1/coupons', couponsRouter);
 app.use('/api/v1/groups', groupsRouter);
 app.use('/api/v1/coupon-submissions', couponSubmissionsRouter);
+// Event submissions: individual endpoints apply auth() as needed (mirrors coupon-submissions)
+app.use('/api/v1/event-submissions', eventSubmissionsRouter);
+// Events: public read endpoints + auth-gated write/RSVP endpoints (individual routes apply auth)
+app.use('/api/v1/events', eventsRouter);
 // Stripe webhook is unauthenticated; security is Stripe-Signature + STRIPE_WEBHOOK_SECRET
 app.use('/api/v1/stripe', stripeRouter);
 
 // 🔐 Super Admin "god mode" routes - require authentication + super_admin role
 // Mounted with full auth chain for auditing and security
 app.use('/api/v1/admin', auth(), resolveLocalUser, requireSuperAdmin, adminRouter);
-
-// 🔐 protect everything else
-app.use('/api/v1', auth());
-
-// Events router - read endpoints are public-ish, write endpoints require super_admin
-app.use('/api/v1/events', eventsRouter);
 
 // global error handler (get JSON instead of opaque 500)
 app.use((err, req, res, _next) => {

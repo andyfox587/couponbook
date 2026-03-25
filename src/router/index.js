@@ -9,6 +9,8 @@ import Profile from '../views/Profile.vue'
 import AuthCallback from '@/views/AuthCallback.vue'
 import CouponSubmissions from '@/views/CouponSubmissions.vue'
 import CheckoutSuccess from '@/views/CheckoutSuccess.vue'
+import EventSubmissions from '@/views/EventSubmissions.vue'
+import EventDetail from '@/views/EventDetail.vue'
 
 // Import dashboards directly from their component paths:
 import FoodieGroupDashboard from '../components/Dashboard/FoodieGroupDashboard.vue'
@@ -27,8 +29,35 @@ const routes = [
   },
   {
     path: '/event-page',
+    redirect: '/events'
+  },
+  {
+    path: '/events',
     name: 'EventPage',
     component: EventPage
+  },
+  {
+    path: '/events/:id',
+    name: 'EventDetail',
+    component: EventDetail,
+    props: true
+  },
+  {
+    path: '/e/:slug',
+    name: 'EventDetailSlug',
+    component: EventDetail,
+    props: true
+  },
+  {
+    path: '/event-submissions',
+    name: 'EventSubmissions',
+    component: EventSubmissions
+  },
+  {
+    path: '/event-submissions/:id/edit',
+    name: 'EditEventSubmission',
+    component: EventSubmissions,
+    props: true
   },
   {
     path: '/coupon/redeem/:id',

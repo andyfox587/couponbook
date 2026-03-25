@@ -12,13 +12,13 @@ describe('Vercel Entrypoint Smoke Test', () => {
     expect(response.body).toHaveProperty('ok', true);
   });
 
-  it('GET /api/v1/events (protected) should return 401', async () => {
+  it('GET /api/v1/events (public) should return 200', async () => {
     const response = await request(handler)
       .get('/api/v1/events')
       .expect('Content-Type', /json/)
-      .expect(401);
+      .expect(200);
 
-    expect(response.body).toHaveProperty('message');
+    expect(Array.isArray(response.body)).toBe(true);
   });
 
   it('GET /api/non-existent-route should return 404 (handled by Express)', async () => {

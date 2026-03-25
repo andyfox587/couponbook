@@ -1,36 +1,63 @@
 <template>
-  <div class="event-details">
-    <h2>{{ event.name }}</h2>
-
-    <div class="merchant-info">
-      <img
-        class="merchant-logo"
-        :src="event.merchantLogo"
-        :alt="`Logo of ${event.merchantName}`"
-      />
-      <p class="merchant-name">{{ event.merchantName }}</p>
+  <div class="event-card">
+    <div
+      class="card-image"
+      :style="imageStyle"
+      :class="{ 'card-image-placeholder': !cardImage }"
+    >
+      <span v-if="event.status === 'cancelled'" class="status-badge status-cancelled">Cancelled</span>
     </div>
 
-    <p>{{ event.description }}</p>
-    <p v-if="event.location" class="event-location">
-      Location: {{ event.location }}
-    </p>
-    <p class="event-date">
-      Date: {{ formatDate(event.event_date) }}
-    </p>
+    <div class="card-body">
+      <div class="merchant-row" v-if="event.merchantName">
+        <img
+          v-if="event.merchantLogoUrl"
+          class="merchant-logo"
+          :src="event.merchantLogoUrl"
+          :alt="`Logo of ${event.merchantName}`"
+        />
+        <span class="merchant-name">{{ event.merchantName }}</span>
+      </div>
 
-    <div class="actions">
-      <button @click="emitRSVP" class="rsvp-btn">
-        {{ event.showRSVP ? 'Close RSVP' : 'RSVP' }}
-      </button>
-    </div>
+      <h2 class="event-name">{{ event.name }}</h2>
 
-    <!-- Locked overlay for events with redirect button -->
-    <div v-if="!hasAccess" class="locked-overlay">
-      <p>Locked: Purchase coupon book to RSVP</p>
-      <button class="redirect-btn" @click="redirectToGroup">
-        Purchase Coupon Book
-      </button>
+      <p class="event-desc">{{ event.description }}</p>
+
+      <div class="event-meta">
+        <span v-if="event.location" class="meta-item">
+          <i class="pi pi-map-marker"></i> {{ event.location }}
+        </span>
+        <span class="meta-item">
+          <i class="pi pi-calendar"></i> {{ formatDate(event.startDatetime) }}
+        </span>
+        <span class="meta-item price-tag">
+          <i class="pi pi-tag"></i> {{ priceLabel }}
+        </span>
+      </div>
+
+      <div v-if="event.capacity > 0" class="capacity-bar-wrapper">
+        <div class="capacity-bar">
+          <div class="capacity-bar-fill" :style="{ width: capacityPercent + '%' }"></div>
+        </div>
+        <span class="capacity-label">{{ confirmedCount }} / {{ event.capacity }} spots filled</span>
+      </div>
+
+      <div class="card-actions">
+        <router-link
+          :to="event.slug ? `/e/${event.slug}` : `/events/${event.id}`"
+          class="btn primary"
+        >
+          View Details
+        </router-link>
+        <button
+          v-if="!event.inviteOnly"
+          class="btn secondary"
+          @click="$emit('rsvp', event)"
+        >
+          RSVP
+        </button>
+        <span v-else class="invite-badge">Invite Only</span>
+      </div>
     </div>
   </div>
 </template>
@@ -38,153 +65,218 @@
 <script>
 export default {
   name: 'EventCard',
+
   props: {
-    event: {
-      type: Object,
-      required: true
-    },
-    hasAccess: {
-      type: Boolean,
-      default: true
-    }
+    event: { type: Object, required: true },
   },
+
+  emits: ['rsvp'],
+
+  computed: {
+    cardImage() {
+      return this.event.bannerImageUrl || this.event.coverImageUrl || null
+    },
+
+    imageStyle() {
+      return this.cardImage ? { backgroundImage: `url('${this.cardImage}')` } : {}
+    },
+
+    confirmedCount() {
+      return Number(this.event.confirmedCount) || 0
+    },
+
+    capacityPercent() {
+      if (!this.event.capacity || this.event.capacity <= 0) return 0
+      return Math.min(100, Math.round((this.confirmedCount / this.event.capacity) * 100))
+    },
+
+    priceLabel() {
+      if (this.event.isFree) return 'Free'
+      if (this.event.priceCents) return `$${(this.event.priceCents / 100).toFixed(2)}`
+      return 'See details'
+    },
+  },
+
   methods: {
-    formatDate(dateStr) {
-      const date = new Date(dateStr);
-      return date.toLocaleString();
+    formatDate(dt) {
+      if (!dt) return ''
+      return new Date(dt).toLocaleDateString(undefined, {
+        weekday: 'short', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+      })
     },
-    emitRSVP() {
-      this.$emit('rsvp', this.event);
-    },
-    redirectToGroup() {
-      // Assuming the event object has a foodieGroup property.
-      // Use a mapping to determine the group id.
-      const mapping = {
-        'charlotte': 1,
-        'raleigh': 2,
-        'chapel hill': 3,
-        'wnc': 4
-      };
-      // Ensure event.foodieGroup exists.
-      if (!this.event.foodieGroup) {
-        alert("Group information unavailable.");
-        return;
-      }
-      const groupId = mapping[this.event.foodieGroup.toLowerCase()];
-      if (groupId) {
-        this.$router.push({ name: 'FoodieGroupView', params: { id: groupId } });
-      } else {
-        alert("Unable to determine group. Please contact support.");
-      }
-    }
-  }
-};
+  },
+}
 </script>
 
 <style scoped>
-.event-details {
-  position: relative; /* For overlay positioning */
+.event-card {
   display: flex;
   flex-direction: column;
   width: 300px;
-  margin-bottom: var(--spacing-2xl);
-  padding: var(--spacing-lg);
   border-radius: var(--radius-lg);
   background: var(--color-bg-muted);
   box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  transition: box-shadow var(--transition-base);
 }
 
-.event-details h2 {
-  min-height: 3em;
+.event-card:hover {
+  box-shadow: var(--shadow-md);
 }
 
-.actions {
-  margin-top: auto;
-  margin-bottom: 1rem;
+.card-image {
+  height: 160px;
+  background-size: cover;
+  background-position: center;
+  position: relative;
 }
 
-.event-date {
-  color: #555;
-  margin-top: 0.5rem;
+.card-image-placeholder {
+  background: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
+  opacity: 0.6;
 }
 
-.event-location {
-  font-weight: bold;
-  margin: 0.5rem 0;
+.status-badge {
+  position: absolute;
+  top: var(--spacing-sm);
+  right: var(--spacing-sm);
+  padding: 2px var(--spacing-sm);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
-.rsvp-btn {
-  background-color: #007bff;
-  color: #fff;
-  border: none;
-  padding: 0.75rem 1.5rem;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 1rem;
+.status-cancelled {
+  background: var(--color-error);
+  color: var(--color-text-on-error, #fff);
 }
 
-.rsvp-btn:hover {
-  background-color: #0056b3;
-}
-
-.merchant-info {
+.card-body {
   display: flex;
-  flex-direction: column; 
+  flex-direction: column;
+  padding: var(--spacing-lg);
+  flex: 1;
+}
+
+.merchant-row {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  margin: 1rem;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
 }
 
 .merchant-logo {
-  height: 80px;
-  width: 80px;
+  width: 32px;
+  height: 32px;
   object-fit: contain;
   border-radius: 50%;
-  box-shadow: var(--shadow-sm);
-  margin-bottom: var(--spacing-sm);
-  background-color: #FFFFFF !important;
-  padding: var(--spacing-xs);
+  background: #fff;
+  padding: 2px;
 }
 
 .merchant-name {
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
-}
-
-/* Locked overlay styles */
-.locked-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(255, 255, 255, 0.9);
-  background: var(--color-bg-surface);
-  opacity: 0.95;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
-  border-radius: var(--radius-lg);
-}
-
-.redirect-btn {
-  margin-top: var(--spacing-sm);
-  background-color: var(--color-secondary);
-  color: var(--color-text-on-secondary);
-  border: none;
-  padding: var(--spacing-sm) var(--spacing-lg);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: background-color var(--transition-base);
-  min-height: var(--button-height-md);
   font-weight: var(--font-weight-medium);
 }
 
-.redirect-btn:hover {
-  background-color: var(--color-secondary-hover);
+.event-name {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0 0 var(--spacing-sm);
+  min-height: 2.5em;
+}
+
+.event-desc {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-relaxed);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-bottom: var(--spacing-md);
+}
+
+.event-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-lg);
+}
+
+.meta-item {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.price-tag { font-weight: var(--font-weight-medium); }
+
+.capacity-bar-wrapper {
+  margin-bottom: var(--spacing-md);
+}
+
+.capacity-bar {
+  height: 6px;
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  margin-bottom: var(--spacing-xs);
+}
+
+.capacity-bar-fill {
+  height: 100%;
+  background: var(--color-secondary);
+  border-radius: var(--radius-full);
+  transition: width var(--transition-base);
+}
+
+.capacity-label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.card-actions {
+  margin-top: auto;
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.btn {
+  padding: var(--spacing-xs) var(--spacing-md);
+  border-radius: var(--radius-full);
+  border: none;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family-base);
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+  transition: all var(--transition-base);
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+}
+
+.btn.primary { background: var(--color-primary); color: var(--color-text-on-primary); }
+.btn.primary:hover { background: var(--color-primary-hover); }
+.btn.secondary { background: var(--color-secondary); color: var(--color-text-on-secondary); }
+.btn.secondary:hover { background: var(--color-secondary-hover); }
+
+.invite-badge {
+  font-size: var(--font-size-xs);
+  background: var(--color-error-light);
+  color: var(--color-error);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-full);
+  font-weight: var(--font-weight-medium);
 }
 </style>

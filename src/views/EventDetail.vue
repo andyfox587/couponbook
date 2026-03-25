@@ -1,0 +1,312 @@
+<!-- src/views/EventDetail.vue -->
+<template>
+  <div class="event-detail">
+    <div v-if="loading" class="state-card">
+      <p class="muted">Loading event…</p>
+    </div>
+
+    <div v-else-if="error" class="state-card error-card">
+      <p>{{ error }}</p>
+      <button class="btn primary" @click="$router.push('/events')">Back to Events</button>
+    </div>
+
+    <template v-else-if="evt">
+      <!-- Hero -->
+      <div
+        class="hero"
+        :style="evt.bannerImageUrl ? `background-image: url('${evt.bannerImageUrl}')` : ''"
+        :class="{ 'hero-no-image': !evt.bannerImageUrl }"
+      >
+        <div class="hero-overlay">
+          <h1>{{ evt.name }}</h1>
+          <p class="merchant-name" v-if="evt.merchantName">by {{ evt.merchantName }}</p>
+        </div>
+      </div>
+
+      <!-- Details -->
+      <div class="detail-body">
+        <div class="detail-main">
+          <p class="description">{{ evt.description }}</p>
+
+          <dl class="meta-list">
+            <template v-if="evt.location">
+              <dt><i class="pi pi-map-marker"></i> Location</dt>
+              <dd>{{ evt.location }}</dd>
+            </template>
+            <dt><i class="pi pi-calendar"></i> Starts</dt>
+            <dd>{{ formatDate(evt.startDatetime) }}</dd>
+            <template v-if="evt.endDatetime">
+              <dt><i class="pi pi-calendar"></i> Ends</dt>
+              <dd>{{ formatDate(evt.endDatetime) }}</dd>
+            </template>
+            <dt><i class="pi pi-users"></i> Capacity</dt>
+            <dd>{{ evt.capacity > 0 ? evt.capacity + ' spots' : 'Unlimited' }}</dd>
+            <dt><i class="pi pi-tag"></i> Price</dt>
+            <dd>
+              {{ priceLabel }}
+              <span v-if="memberPriceLabel" class="member-price">
+                (Members: {{ memberPriceLabel }})
+              </span>
+            </dd>
+          </dl>
+
+          <div v-if="evt.capacity > 0" class="capacity-section">
+            <div class="capacity-bar">
+              <div class="capacity-bar-fill" :style="{ width: capacityPercent + '%' }"></div>
+            </div>
+            <span class="capacity-label">{{ confirmedCount }} / {{ evt.capacity }} spots filled</span>
+          </div>
+
+          <div v-if="evt.inviteOnly" class="invite-badge">Invite Only</div>
+          <div v-else-if="evt.visibility === 'members_only'" class="members-badge">Members Only</div>
+        </div>
+
+        <!-- RSVP Panel -->
+        <div class="rsvp-panel" v-if="!evt.inviteOnly">
+          <EventRSVP :event="evt" @rsvp-submitted="onRsvpSubmitted" @rsvp-cancelled="onRsvpCancelled" />
+        </div>
+      </div>
+
+      <!-- Back -->
+      <div class="back-row">
+        <button class="btn secondary" @click="$router.push('/events')">
+          <i class="pi pi-arrow-left icon-spacing-sm"></i>All Events
+        </button>
+      </div>
+    </template>
+  </div>
+</template>
+
+<script>
+import EventRSVP from '@/components/Events/EventRSVP.vue'
+import { getEvent, getEventBySlug } from '@/services/eventService'
+
+export default {
+  name: 'EventDetail',
+  components: { EventRSVP },
+
+  props: {
+    id:   { type: String, default: null },
+    slug: { type: String, default: null },
+  },
+
+  data() {
+    return {
+      evt: null,
+      loading: true,
+      error: null,
+    }
+  },
+
+  computed: {
+    confirmedCount() {
+      return Number(this.evt?.confirmedCount) || 0
+    },
+
+    capacityPercent() {
+      if (!this.evt?.capacity || this.evt.capacity <= 0) return 0
+      return Math.min(100, Math.round((this.confirmedCount / this.evt.capacity) * 100))
+    },
+
+    priceLabel() {
+      if (!this.evt) return ''
+      if (this.evt.isFree) return 'Free'
+      if (this.evt.priceCents) return `$${(this.evt.priceCents / 100).toFixed(2)}`
+      return 'See details'
+    },
+
+    memberPriceLabel() {
+      if (!this.evt?.membersOnlyPriceCents) return null
+      return `$${(this.evt.membersOnlyPriceCents / 100).toFixed(2)}`
+    },
+  },
+
+  async created() {
+    await this.load()
+  },
+
+  methods: {
+    async load() {
+      this.loading = true
+      this.error = null
+      try {
+        const memberToken = this.$route.query.member_token || this.$route.query.token || null
+        if (this.slug) {
+          this.evt = await getEventBySlug(this.slug, memberToken)
+        } else if (this.id) {
+          this.evt = await getEvent(this.id, memberToken)
+        } else {
+          this.error = 'No event identifier provided.'
+        }
+      } catch (err) {
+        console.error('[EventDetail] failed to load event', err)
+        this.error = 'Event not found or unavailable.'
+      } finally {
+        this.loading = false
+      }
+    },
+
+    formatDate(dt) {
+      if (!dt) return ''
+      return new Date(dt).toLocaleString(undefined, {
+        weekday: 'short', year: 'numeric', month: 'long',
+        day: 'numeric', hour: '2-digit', minute: '2-digit',
+      })
+    },
+
+    onRsvpSubmitted() {
+      this.load()
+    },
+
+    onRsvpCancelled() {
+      this.load()
+    },
+  },
+}
+</script>
+
+<style scoped>
+.event-detail {
+  max-width: 900px;
+  margin: 0 auto;
+  color: var(--color-text-primary);
+}
+
+.state-card {
+  padding: var(--spacing-3xl);
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+
+.error-card { color: var(--color-error); }
+.muted { color: var(--color-text-muted); }
+
+.hero {
+  height: 280px;
+  background-size: cover;
+  background-position: center;
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  position: relative;
+  margin-bottom: var(--spacing-2xl);
+}
+
+.hero-no-image {
+  background: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
+}
+
+.hero-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: var(--spacing-2xl);
+  color: #fff;
+}
+
+.hero-overlay h1 { margin: 0; font-size: var(--font-size-3xl); }
+.merchant-name { margin: var(--spacing-xs) 0 0; opacity: 0.85; }
+
+.detail-body {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: var(--spacing-2xl);
+  padding: 0 var(--spacing-xl);
+  margin-bottom: var(--spacing-2xl);
+}
+
+@media (max-width: 700px) {
+  .detail-body { grid-template-columns: 1fr; }
+}
+
+.description {
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-xl);
+}
+
+.meta-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--spacing-sm) var(--spacing-lg);
+  margin: 0 0 var(--spacing-xl);
+}
+
+.meta-list dt {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.meta-list dd { margin: 0; color: var(--color-text-secondary); }
+
+.member-price {
+  color: var(--color-success);
+  font-weight: var(--font-weight-medium);
+}
+
+.capacity-section {
+  margin-bottom: var(--spacing-xl);
+}
+
+.capacity-bar {
+  height: 8px;
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  margin-bottom: var(--spacing-xs);
+}
+
+.capacity-bar-fill {
+  height: 100%;
+  background: var(--color-secondary);
+  border-radius: var(--radius-full);
+  transition: width var(--transition-base);
+}
+
+.capacity-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.invite-badge, .members-badge {
+  display: inline-block;
+  padding: var(--spacing-xs) var(--spacing-md);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.invite-badge { background: var(--color-error-light); color: var(--color-error); }
+.members-badge { background: var(--color-primary); color: var(--color-text-on-primary); opacity: 0.85; }
+
+.rsvp-panel {
+  position: sticky;
+  top: var(--spacing-xl);
+  align-self: start;
+}
+
+.back-row {
+  padding: var(--spacing-xl);
+}
+
+.btn {
+  padding: var(--spacing-sm) var(--spacing-lg);
+  border-radius: var(--radius-full);
+  border: none;
+  cursor: pointer;
+  font-size: var(--font-size-base);
+  font-family: var(--font-family-base);
+  transition: all var(--transition-base);
+  min-height: var(--button-height-md);
+  font-weight: var(--font-weight-medium);
+}
+
+.btn.primary { background: var(--color-primary); color: var(--color-text-on-primary); }
+.btn.primary:hover { background: var(--color-primary-hover); }
+.btn.secondary { background: var(--color-bg-secondary); color: var(--color-text-primary); }
+.btn.secondary:hover { background: var(--color-border-light); }
+</style>

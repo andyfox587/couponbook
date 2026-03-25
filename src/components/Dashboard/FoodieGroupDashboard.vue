@@ -96,9 +96,22 @@
             <span class="stat-hint">Click to view</span>
           </div>
           <div class="stat-card clickable" @click="scrollToSection('pending-submissions')" title="View pending submissions">
-            <span class="stat-label">Pending Submissions</span>
+            <span class="stat-label">Pending Coupon Submissions</span>
             <span class="stat-value highlight-warning">
               {{ stats.pendingSubmissions || 0 }}
+            </span>
+            <span class="stat-hint">Click to view</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Published Events</span>
+            <span class="stat-value">
+              {{ groupOverview.counts?.events?.published || 0 }}
+            </span>
+          </div>
+          <div class="stat-card clickable" @click="scrollToSection('pending-event-submissions')" title="View pending event submissions">
+            <span class="stat-label">Pending Event Submissions</span>
+            <span class="stat-value highlight-warning">
+              {{ groupOverview.counts?.eventSubmissions?.pending || 0 }}
             </span>
             <span class="stat-hint">Click to view</span>
           </div>
@@ -164,6 +177,47 @@
                 </span>
                 <span class="stat-detail">
                   Expires at: {{ formatDate(redemptionOverview.topCoupon.expiresAt) }}
+                </span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </section>
+
+      <!-- Group Event Performance Section -->
+      <section class="dashboard-section group-event-overview" v-if="groupLoaded">
+        <h2>Group Event Performance</h2>
+
+        <div v-if="eventOverviewLoading" class="loading-state">Loading event analytics...</div>
+        <div v-else-if="eventOverviewError" class="error-state">{{ eventOverviewError }}</div>
+        <div v-else class="stats-grid">
+          <div class="stat-card">
+            <span class="stat-label">RSVPs (Last 30 Days)</span>
+            <span class="stat-value highlight-success">
+              {{ eventOverview.rsvpsLast30Days }}
+            </span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Upcoming Published Events</span>
+            <span class="stat-value">
+              {{ eventOverview.upcomingPublishedEvents }}
+            </span>
+          </div>
+          <div class="stat-card wide">
+            <span class="stat-label">Top Event (Last 30 Days)</span>
+            <span class="stat-value">
+              {{ eventOverview.topEvent ? eventOverview.topEvent.eventName : 'None yet' }}
+            </span>
+            <template v-if="eventOverview.topEvent">
+              <span class="stat-hint">
+                {{ eventOverview.topEvent.rsvps }} RSVP{{ eventOverview.topEvent.rsvps === 1 ? '' : 's' }}
+              </span>
+              <div class="stat-details">
+                <span class="stat-detail">
+                  Merchant: {{ eventOverview.topEvent.merchantName || 'Unknown' }}
+                </span>
+                <span class="stat-detail">
+                  Starts: {{ formatDate(eventOverview.topEvent.startDatetime) }}
                 </span>
               </div>
             </template>
@@ -330,6 +384,49 @@
                 </li>
               </ul>
             </div>
+
+            <div id="pending-event-submissions" class="pending-events card">
+              <h3>Event Submissions</h3>
+
+              <p v-if="pendingEventsLoading" class="muted tiny">
+                Loading pending event submissions…
+              </p>
+              <p v-if="pendingEventsError" class="tiny error-text">
+                {{ pendingEventsError }}
+              </p>
+
+              <ul v-if="!pendingEventsLoading && !pendingEventsError">
+                <li v-for="e in pendingEvents" :key="e.id" class="pending-submission-card">
+                  <div class="pending-card-header">
+                    <strong>{{ e.name || e.description }}</strong>
+                    <span v-if="e.visibility" class="badge badge-type">{{ e.visibility }}</span>
+                  </div>
+                  <div class="pending-card-meta muted tiny">
+                    Merchant: {{ e.merchantName }}<br />
+                    <span v-if="e.startDatetime">Starts: {{ formatDate(e.startDatetime) }}</span>
+                    <span v-if="e.location"> · {{ e.location }}</span>
+                    <span v-if="e.capacity"> · Capacity: {{ e.capacity }}</span>
+                  </div>
+                  <div v-if="e.updatedAt" class="muted tiny freshness-hint">
+                    Last edited by merchant on {{ formatDate(e.updatedAt) }}
+                  </div>
+                  <div class="action-buttons">
+                    <button class="btn-review" @click="openEventReviewModal(e)">
+                      <i class="pi pi-eye icon-spacing-sm"></i>Review
+                    </button>
+                    <button @click="approveEvent(e)">
+                      <i class="pi pi-check icon-spacing-sm"></i>Approve
+                    </button>
+                    <button @click="rejectEvent(e)">
+                      <i class="pi pi-times icon-spacing-sm"></i>Reject
+                    </button>
+                  </div>
+                </li>
+                <li v-if="pendingEvents.length === 0" class="muted tiny">
+                  No pending event submissions for this group.
+                </li>
+              </ul>
+            </div>
           </div>
         </div>
 
@@ -374,7 +471,7 @@
         </div>
       </section>
 
-      <!-- Review Detail Modal -->
+      <!-- Review Detail Modal (Coupon) -->
       <Modal v-if="reviewModalCoupon" @close="closeReviewModal">
         <h2>Review Submission</h2>
         <table class="review-table">
@@ -399,6 +496,39 @@
             <i class="pi pi-times icon-spacing-sm"></i>Reject
           </button>
           <button class="btn tertiary" @click="closeReviewModal">Cancel</button>
+        </div>
+      </Modal>
+
+      <!-- Review Detail Modal (Event) -->
+      <Modal v-if="reviewModalEvent" @close="closeEventReviewModal">
+        <h2>Review Event Submission</h2>
+        <table class="review-table">
+          <tbody>
+            <tr><th>Event Name</th><td>{{ reviewModalEvent.name }}</td></tr>
+            <tr><th>Description</th><td>{{ reviewModalEvent.description }}</td></tr>
+            <tr><th>Starts</th><td>{{ formatDate(reviewModalEvent.startDatetime) }}</td></tr>
+            <tr v-if="reviewModalEvent.endDatetime"><th>Ends</th><td>{{ formatDate(reviewModalEvent.endDatetime) }}</td></tr>
+            <tr v-if="reviewModalEvent.location"><th>Location</th><td>{{ reviewModalEvent.location }}</td></tr>
+            <tr><th>Capacity</th><td>{{ reviewModalEvent.capacity }}</td></tr>
+            <tr><th>Free</th><td>{{ reviewModalEvent.isFree ? 'Yes' : 'No' }}</td></tr>
+            <tr><th>Visibility</th><td>{{ reviewModalEvent.visibility }}</td></tr>
+            <tr><th>Merchant</th><td>{{ reviewModalEvent.merchantName }}</td></tr>
+            <tr v-if="reviewModalEvent.submittedAt"><th>Submitted</th><td>{{ formatDate(reviewModalEvent.submittedAt) }}</td></tr>
+            <tr v-if="reviewModalEvent.updatedAt"><th>Last Edited</th><td>{{ formatDate(reviewModalEvent.updatedAt) }}</td></tr>
+          </tbody>
+        </table>
+        <div v-if="reviewModalEvent.coverImageUrl" style="margin-top: var(--spacing-md);">
+          <strong>Cover Image:</strong><br />
+          <img :src="reviewModalEvent.coverImageUrl" alt="Cover" style="max-width: 100%; max-height: 200px; border-radius: var(--radius-md); margin-top: var(--spacing-xs);" />
+        </div>
+        <div class="review-modal-actions">
+          <button class="btn primary" @click="approveEvent(reviewModalEvent); closeEventReviewModal()">
+            <i class="pi pi-check icon-spacing-sm"></i>Approve
+          </button>
+          <button class="btn danger" @click="rejectEvent(reviewModalEvent); closeEventReviewModal()">
+            <i class="pi pi-times icon-spacing-sm"></i>Reject
+          </button>
+          <button class="btn tertiary" @click="closeEventReviewModal">Cancel</button>
         </div>
       </Modal>
     </template>
@@ -463,7 +593,7 @@ export default {
 
       // group overview analytics
       groupOverview: {
-        counts: { coupons: 0, purchases: { paid: 0 } },
+        counts: { coupons: 0, events: { published: 0 }, eventSubmissions: { pending: 0, approved: 0, rejected: 0 }, purchases: { paid: 0 } },
         revenue: { grossCents: 0 },
         recentPurchases: []
       },
@@ -476,6 +606,21 @@ export default {
       },
       redemptionOverviewLoading: false,
       redemptionOverviewError: null,
+
+      // event submissions
+      pendingEvents: [],
+      pendingEventsLoading: false,
+      pendingEventsError: null,
+      reviewModalEvent: null,
+
+      // event overview analytics
+      eventOverview: {
+        rsvpsLast30Days: 0,
+        topEvent: null,
+        upcomingPublishedEvents: 0,
+      },
+      eventOverviewLoading: false,
+      eventOverviewError: null,
 
       // authorization gate
       authChecked: false,
@@ -533,6 +678,8 @@ export default {
         this.fetchCurrentPrice(),
         this.loadGroupOverview(),
         this.loadRedemptionOverview(),
+        this.loadPendingEvents(),
+        this.loadEventOverview(),
       ]);
     } finally {
       this.authChecked = true;
@@ -597,6 +744,8 @@ export default {
           this.fetchCurrentPrice(),
           this.loadGroupOverview(),
           this.loadRedemptionOverview(),
+          this.loadPendingEvents(),
+          this.loadEventOverview(),
         ]);
       }
       this.authChecked = true;
@@ -926,6 +1075,188 @@ export default {
         };
       } finally {
         this.redemptionOverviewLoading = false;
+      }
+    },
+
+    // ── Event submissions (pending queue for group admins) ─────────
+    async loadPendingEvents() {
+      if (this.notAuthorized || !this.groupId) return;
+
+      this.pendingEventsLoading = true;
+      this.pendingEventsError = null;
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(
+          `${API_BASE}/event-submissions?groupId=${encodeURIComponent(this.groupId)}`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+
+        if (res.status === 403) {
+          const body = await res.json().catch(() => ({}));
+          this.markNotAuthorized(body.error || 'You are not authorized to view pending event submissions.');
+          return;
+        }
+        if (res.status === 401) {
+          this.markNotAuthorized('Your session is not authorized. Please sign in again.');
+          return;
+        }
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          throw new Error(errBody.error || `Failed to load pending events (status ${res.status})`);
+        }
+
+        const list = await res.json();
+        if (!Array.isArray(list)) throw new Error('Unexpected response format from /event-submissions');
+
+        this.pendingEvents = list
+          .filter((sub) => sub.state === 'pending')
+          .map((sub) => ({
+            id: sub.id,
+            name: sub.submissionData?.name || '',
+            description: sub.submissionData?.description || '',
+            startDatetime: sub.submissionData?.start_datetime,
+            endDatetime: sub.submissionData?.end_datetime,
+            location: sub.submissionData?.location,
+            capacity: sub.submissionData?.capacity,
+            isFree: sub.submissionData?.is_free,
+            visibility: sub.submissionData?.visibility,
+            coverImageUrl: sub.submissionData?.cover_image_url,
+            merchantName: sub.merchantName,
+            merchantId: sub.merchantId,
+            submittedAt: sub.submittedAt,
+            updatedAt: sub.updatedAt,
+          }));
+      } catch (err) {
+        if (!this.notAuthorized) {
+          console.error('[FoodieGroupDashboard] loadPendingEvents failed', err);
+          this.pendingEventsError = err.message || 'Could not load pending event submissions.';
+          this.pendingEvents = [];
+        }
+      } finally {
+        this.pendingEventsLoading = false;
+      }
+    },
+
+    async loadEventOverview() {
+      if (this.notAuthorized || !this.groupId) return;
+
+      this.eventOverviewLoading = true;
+      this.eventOverviewError = null;
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(
+          `${API_BASE}/groups/${this.groupId}/event-overview`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+
+        if (res.status === 403 || res.status === 401) {
+          const body = await res.json().catch(() => ({}));
+          this.markNotAuthorized(body.error || 'Not authorized');
+          return;
+        }
+        if (!res.ok) throw new Error(`Failed to load event overview: ${res.status}`);
+
+        const data = await res.json();
+        this.eventOverview = {
+          rsvpsLast30Days: Number(data.rsvpsLast30Days || 0),
+          topEvent: data.topEvent || null,
+          upcomingPublishedEvents: Number(data.upcomingPublishedEvents || 0),
+        };
+      } catch (err) {
+        console.error('[FoodieGroupDashboard] loadEventOverview error', err);
+        this.eventOverviewError = err.message || 'Could not load event overview';
+        this.eventOverview = { rsvpsLast30Days: 0, topEvent: null, upcomingPublishedEvents: 0 };
+      } finally {
+        this.eventOverviewLoading = false;
+      }
+    },
+
+    openEventReviewModal(evt) {
+      this.reviewModalEvent = evt;
+    },
+    closeEventReviewModal() {
+      this.reviewModalEvent = null;
+    },
+
+    async approveEvent(evt) {
+      if (this.notAuthorized) return;
+
+      try {
+        const token = await getAccessToken();
+
+        const before = this.pendingEvents.slice();
+        this.pendingEvents = this.pendingEvents.filter((e) => e.id !== evt.id);
+
+        const res = await fetch(`${API_BASE}/event-submissions/${evt.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ state: 'approved' }),
+        });
+
+        if (res.status === 403) {
+          const body = await res.json().catch(() => ({}));
+          this.markNotAuthorized(body.error || 'Not authorized to approve event submissions.');
+          this.pendingEvents = before;
+          return;
+        }
+        if (res.status === 401) {
+          this.markNotAuthorized('Session expired. Please sign in again.');
+          this.pendingEvents = before;
+          return;
+        }
+        if (!res.ok) {
+          console.error('Approve event failed:', res.status, await res.text());
+          this.pendingEvents = before;
+          return;
+        }
+
+        await this.loadEventOverview();
+      } catch (err) {
+        if (!this.notAuthorized) {
+          console.error('[FoodieGroupDashboard] approveEvent error', err);
+          await this.loadPendingEvents();
+        }
+      }
+    },
+
+    async rejectEvent(evt) {
+      if (this.notAuthorized) return;
+
+      const reason = window.prompt('Please enter a brief reason for rejection:', '');
+      if (reason === null) return;
+
+      try {
+        const token = await getAccessToken();
+
+        const before = this.pendingEvents.slice();
+        this.pendingEvents = this.pendingEvents.filter((e) => e.id !== evt.id);
+
+        const res = await fetch(`${API_BASE}/event-submissions/${evt.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ state: 'rejected', rejection_message: reason }),
+        });
+
+        if (res.status === 403) {
+          const body = await res.json().catch(() => ({}));
+          this.markNotAuthorized(body.error || 'Not authorized to reject event submissions.');
+          this.pendingEvents = before;
+          return;
+        }
+        if (res.status === 401) {
+          this.markNotAuthorized('Session expired. Please sign in again.');
+          this.pendingEvents = before;
+          return;
+        }
+        if (!res.ok) {
+          console.error('Reject event failed:', res.status, await res.text());
+          this.pendingEvents = before;
+        }
+      } catch (err) {
+        if (!this.notAuthorized) {
+          console.error('[FoodieGroupDashboard] rejectEvent error', err);
+          await this.loadPendingEvents();
+        }
       }
     },
 

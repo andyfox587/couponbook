@@ -282,6 +282,33 @@
                   See how many times coupons from your restaurants have been redeemed.
                 </span>
               </li>
+
+              <!-- Divider -->
+              <li class="link-divider"><span>Events</span></li>
+
+              <!-- Submit Event -->
+              <li class="link-row clickable" @click="goToEventSubmissions">
+                <span class="link-label"><i class="pi pi-calendar-plus icon-spacing-sm"></i>Submit a New Event</span>
+                <span class="link-helper">
+                  Propose an event for your restaurant. The Foodie Group will review and approve it.
+                </span>
+              </li>
+
+              <!-- Pending Events -->
+              <li class="link-row clickable" @click="loadPendingEvents">
+                <span class="link-label"><i class="pi pi-clock icon-spacing-sm"></i>View Pending Event Submissions</span>
+                <span class="link-helper">
+                  Review and edit event submissions awaiting Foodie Group approval.
+                </span>
+              </li>
+
+              <!-- Rejected Events -->
+              <li class="link-row clickable" @click="loadRejectedEvents">
+                <span class="link-label"><i class="pi pi-times-circle icon-spacing-sm"></i>View Rejected Events</span>
+                <span class="link-helper">
+                  Review event submissions that were not approved and see the reason.
+                </span>
+              </li>
             </ul>
 
             <!-- Status / errors -->
@@ -348,6 +375,56 @@
                   </span>
                 </li>
               </ul>
+            </div>
+
+            <!-- Pending event submissions -->
+            <div v-if="activeToolsView === 'pending-events' && pendingEvents.length" class="tools-results-block">
+              <h3 class="tiny-heading">Pending Event Submissions</h3>
+              <ul class="tiny-list">
+                <li v-for="sub in pendingEvents" :key="sub.id" class="pending-row">
+                  <div>
+                    <strong>{{ sub.submissionData?.name || 'Untitled event' }}</strong>
+                    <span class="muted tiny">
+                      · {{ sub.merchantName || merchantNameById(sub.merchantId) }}
+                    </span>
+                    <br />
+                    <span class="muted tiny">
+                      Submitted {{ formatDateTiny(sub.submittedAt) }}
+                      <span v-if="sub.updatedAt"> · Edited {{ formatDateTiny(sub.updatedAt) }}</span>
+                    </span>
+                  </div>
+                  <span class="badge badge-pending">Pending</span>
+                  <button class="btn tertiary compact" @click="goToEditEventSubmission(sub.id)">
+                    Edit
+                  </button>
+                </li>
+              </ul>
+            </div>
+
+            <!-- Rejected event submissions -->
+            <div v-if="activeToolsView === 'rejected-events' && rejectedEvents.length" class="tools-results-block">
+              <h3 class="tiny-heading">Rejected Events</h3>
+              <ul class="tiny-list">
+                <li v-for="sub in rejectedEvents" :key="sub.id">
+                  <strong>{{ sub.submissionData?.name || 'Untitled event' }}</strong>
+                  <span class="muted tiny">· {{ merchantNameById(sub.merchantId) }}</span>
+                  <br />
+                  <span class="muted tiny">
+                    Rejected on {{ formatDateTiny(sub.submittedAt) }}
+                    <span v-if="sub.rejectionMessage"> — Reason: {{ sub.rejectionMessage }}</span>
+                  </span>
+                </li>
+              </ul>
+            </div>
+
+            <!-- Empty states for event views -->
+            <div v-if="activeToolsView === 'pending-events' && !merchantToolsLoading && !pendingEvents.length"
+              class="muted tiny" style="margin-top: 0.5rem;">
+              No pending event submissions found for your restaurants.
+            </div>
+            <div v-if="activeToolsView === 'rejected-events' && !merchantToolsLoading && !rejectedEvents.length"
+              class="muted tiny" style="margin-top: 0.5rem;">
+              No rejected event submissions found for your restaurants.
             </div>
 
             <!-- Redemption insights summary -->
@@ -590,6 +667,33 @@
                     See how many times coupons from your restaurants have been redeemed.
                   </span>
                 </li>
+
+                <!-- Divider -->
+                <li class="link-divider"><span>Events</span></li>
+
+                <!-- Submit Event -->
+                <li class="link-row clickable" @click="goToEventSubmissions">
+                  <span class="link-label"><i class="pi pi-calendar-plus icon-spacing-sm"></i>Submit a New Event</span>
+                  <span class="link-helper">
+                    Propose an event for your restaurant. The Foodie Group will review and approve it.
+                  </span>
+                </li>
+
+                <!-- Pending Events -->
+                <li class="link-row clickable" @click="loadPendingEvents">
+                  <span class="link-label"><i class="pi pi-clock icon-spacing-sm"></i>View Pending Event Submissions</span>
+                  <span class="link-helper">
+                    Review and edit event submissions awaiting Foodie Group approval.
+                  </span>
+                </li>
+
+                <!-- Rejected Events -->
+                <li class="link-row clickable" @click="loadRejectedEvents">
+                  <span class="link-label"><i class="pi pi-times-circle icon-spacing-sm"></i>View Rejected Events</span>
+                  <span class="link-helper">
+                    Review event submissions that were not approved and see the reason.
+                  </span>
+                </li>
               </ul>
 
               <p v-if="merchantToolsLoading" class="muted tiny" style="margin-top: 0.75rem;">
@@ -645,6 +749,56 @@
                     </span>
                   </li>
                 </ul>
+              </div>
+
+              <!-- Pending event submissions -->
+              <div v-if="activeToolsView === 'pending-events' && pendingEvents.length" class="tools-results-block">
+                <h3 class="tiny-heading">Pending Event Submissions</h3>
+                <ul class="tiny-list">
+                  <li v-for="sub in pendingEvents" :key="sub.id" class="pending-row">
+                    <div>
+                      <strong>{{ sub.submissionData?.name || 'Untitled event' }}</strong>
+                      <span class="muted tiny">
+                        · {{ sub.merchantName || merchantNameById(sub.merchantId) }}
+                      </span>
+                      <br />
+                      <span class="muted tiny">
+                        Submitted {{ formatDateTiny(sub.submittedAt) }}
+                        <span v-if="sub.updatedAt"> · Edited {{ formatDateTiny(sub.updatedAt) }}</span>
+                      </span>
+                    </div>
+                    <span class="badge badge-pending">Pending</span>
+                    <button class="btn tertiary compact" @click="goToEditEventSubmission(sub.id)">
+                      Edit
+                    </button>
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Rejected event submissions -->
+              <div v-if="activeToolsView === 'rejected-events' && rejectedEvents.length" class="tools-results-block">
+                <h3 class="tiny-heading">Rejected Events</h3>
+                <ul class="tiny-list">
+                  <li v-for="sub in rejectedEvents" :key="sub.id">
+                    <strong>{{ sub.submissionData?.name || 'Untitled event' }}</strong>
+                    <span class="muted tiny">· {{ merchantNameById(sub.merchantId) }}</span>
+                    <br />
+                    <span class="muted tiny">
+                      Rejected on {{ formatDateTiny(sub.submittedAt) }}
+                      <span v-if="sub.rejectionMessage"> — Reason: {{ sub.rejectionMessage }}</span>
+                    </span>
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Empty states for event views -->
+              <div v-if="activeToolsView === 'pending-events' && !merchantToolsLoading && !pendingEvents.length"
+                class="muted tiny" style="margin-top: 0.5rem;">
+                No pending event submissions found for your restaurants.
+              </div>
+              <div v-if="activeToolsView === 'rejected-events' && !merchantToolsLoading && !rejectedEvents.length"
+                class="muted tiny" style="margin-top: 0.5rem;">
+                No rejected event submissions found for your restaurants.
               </div>
 
               <div v-if="activeToolsView === 'insights' && redemptionInsights.length" class="tools-results-block">
@@ -818,6 +972,8 @@ export default {
       approvedCoupons: [],
       pendingCoupons: [],
       rejectedCoupons: [],
+      pendingEvents: [],
+      rejectedEvents: [],
       redemptionInsights: [],
       selectedCouponId: null,
       redemptionDetails: [],
@@ -1145,7 +1301,7 @@ export default {
       this.detailsLoading = false;
       this.detailsError = null;
       this.exportingDetails = false;
-      const lists = { approved: 'approvedCoupons', pending: 'pendingCoupons', rejected: 'rejectedCoupons', insights: 'redemptionInsights' };
+      const lists = { approved: 'approvedCoupons', pending: 'pendingCoupons', rejected: 'rejectedCoupons', insights: 'redemptionInsights', 'pending-events': 'pendingEvents', 'rejected-events': 'rejectedEvents' };
       for (const [key, prop] of Object.entries(lists)) {
         if (key !== view) this[prop] = [];
       }
@@ -1277,6 +1433,80 @@ export default {
 
     goToEditSubmission(submissionId) {
       this.$router.push({ name: 'EditCouponSubmission', params: { id: submissionId } });
+    },
+
+    goToEventSubmissions() {
+      this.$router.push({ name: 'EventSubmissions' });
+    },
+
+    goToEditEventSubmission(submissionId) {
+      this.$router.push({ name: 'EditEventSubmission', params: { id: submissionId } });
+    },
+
+    async loadPendingEvents() {
+      if (!this.merchants.length) {
+        this.activeToolsView = 'pending-events';
+        this.merchantToolsError = 'You do not have any restaurants linked to this account yet.';
+        this.pendingEvents = [];
+        return;
+      }
+
+      this.resetMerchantToolsState('pending-events');
+      this.merchantToolsLoading = true;
+
+      try {
+        const token = await getAccessToken();
+        const res = await fetch('/api/v1/event-submissions/by-merchant?state=pending', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error(`Status ${res.status}`);
+        const list = await res.json();
+        this.pendingEvents = (Array.isArray(list) ? list : []).map((s) => ({
+          ...s,
+          merchantId:     s.merchantId ?? s.merchant_id,
+          submittedAt:    s.submittedAt ?? s.submitted_at,
+          updatedAt:      s.updatedAt ?? s.updated_at,
+          submissionData: s.submissionData ?? s.submission_data,
+        }));
+      } catch (err) {
+        console.error('Error loading pending events', err);
+        this.merchantToolsError = 'Could not load pending event submissions.';
+      } finally {
+        this.merchantToolsLoading = false;
+      }
+    },
+
+    async loadRejectedEvents() {
+      if (!this.merchants.length) {
+        this.activeToolsView = 'rejected-events';
+        this.merchantToolsError = 'You do not have any restaurants linked to this account yet.';
+        this.rejectedEvents = [];
+        return;
+      }
+
+      this.resetMerchantToolsState('rejected-events');
+      this.merchantToolsLoading = true;
+
+      try {
+        const token = await getAccessToken();
+        const res = await fetch('/api/v1/event-submissions/by-merchant?state=rejected', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error(`Status ${res.status}`);
+        const list = await res.json();
+        this.rejectedEvents = (Array.isArray(list) ? list : []).map((s) => ({
+          ...s,
+          merchantId:       s.merchantId ?? s.merchant_id,
+          submittedAt:      s.submittedAt ?? s.submitted_at,
+          submissionData:   s.submissionData ?? s.submission_data,
+          rejectionMessage: s.rejectionMessage ?? s.rejection_message,
+        }));
+      } catch (err) {
+        console.error('Error loading rejected events', err);
+        this.merchantToolsError = 'Could not load rejected event submissions.';
+      } finally {
+        this.merchantToolsLoading = false;
+      }
     },
 
     async loadRedemptionInsights() {
@@ -1758,6 +1988,33 @@ export default {
   list-style: none;
   padding: 0;
   margin-top: var(--spacing-lg);
+}
+
+.link-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-sm) 0 var(--spacing-xs);
+  background: none !important;
+  box-shadow: none !important;
+  margin-bottom: 0 !important;
+}
+
+.link-divider::before,
+.link-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border-light);
+}
+
+.link-divider span {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
 }
 
 .link-list li {
