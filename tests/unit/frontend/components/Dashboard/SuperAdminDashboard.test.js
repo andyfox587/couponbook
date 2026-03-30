@@ -70,9 +70,10 @@ function mockDashboardFetch(url) {
           coupons: 8,
           couponSubmissions: { pending: 1 },
           purchases: { paid: 5 },
+          events: { total: 7, upcoming: 3 },
         },
         paymentHealth: { unprocessedEvents: 0, failedEvents: 0 },
-        trends: { last30Days: { signups: 2, purchases: 3 } },
+        trends: { last30Days: { signups: 2, purchases: 3, events: 4 } },
         revenue: { grossCents: 12000 },
       }),
     });
@@ -352,6 +353,82 @@ describe('SuperAdminDashboard', () => {
 
     expect(wrapper.text()).toContain('None yet');
     expect(wrapper.text()).toContain('Top Foodie Group (30d)');
+  });
+
+  it('renders the event stats cards in platform overview', async () => {
+    store.state.auth.isAuthenticated = true;
+    mockGetAccessToken.mockResolvedValue('test-token');
+    global.fetch.mockImplementation(mockDashboardFetch);
+
+    wrapper = mount(SuperAdminDashboard, {
+      global: {
+        plugins: [store, router],
+      },
+    });
+
+    await wrapper.vm.$nextTick();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain('Total Events');
+    expect(wrapper.text()).toContain('Upcoming Events');
+    expect(wrapper.text()).toContain('Recent Events (30d)');
+  });
+
+  it('navigates to events tab when any event stat card is clicked', async () => {
+    store.state.auth.isAuthenticated = true;
+    mockGetAccessToken.mockResolvedValue('test-token');
+    global.fetch.mockImplementation(mockDashboardFetch);
+
+    wrapper = mount(SuperAdminDashboard, {
+      global: {
+        plugins: [store, router],
+      },
+    });
+
+    await wrapper.vm.$nextTick();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await wrapper.vm.$nextTick();
+
+    const totalEventsCard = wrapper
+      .findAll('.stat-card.clickable')
+      .find((card) => card.text().includes('Total Events'));
+
+    expect(totalEventsCard).toBeTruthy();
+    await totalEventsCard.trigger('click');
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.vm.activeTab).toBe('events');
+  });
+
+  it('displays correct event counts from overview data', async () => {
+    store.state.auth.isAuthenticated = true;
+    mockGetAccessToken.mockResolvedValue('test-token');
+    global.fetch.mockImplementation(mockDashboardFetch);
+
+    wrapper = mount(SuperAdminDashboard, {
+      global: {
+        plugins: [store, router],
+      },
+    });
+
+    await wrapper.vm.$nextTick();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await wrapper.vm.$nextTick();
+
+    const totalEventsCard = wrapper
+      .findAll('.stat-card')
+      .find((card) => card.text().includes('Total Events'));
+    const upcomingEventsCard = wrapper
+      .findAll('.stat-card')
+      .find((card) => card.text().includes('Upcoming Events'));
+    const recentEventsCard = wrapper
+      .findAll('.stat-card')
+      .find((card) => card.text().includes('Recent Events (30d)'));
+
+    expect(totalEventsCard?.text()).toContain('7');
+    expect(upcomingEventsCard?.text()).toContain('3');
+    expect(recentEventsCard?.text()).toContain('4');
   });
 
   it('does not crash the page when redemption overview fails', async () => {

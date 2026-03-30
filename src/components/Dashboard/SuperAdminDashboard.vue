@@ -121,6 +121,21 @@
               <span class="stat-value">{{ overview.trends?.last30Days?.purchases || 0 }}</span>
               <span class="stat-hint">Click to view payments</span>
             </div>
+            <div class="stat-card clickable" @click="goToTab('events')" title="View all events">
+              <span class="stat-label">Total Events</span>
+              <span class="stat-value">{{ overview.counts?.events?.total || 0 }}</span>
+              <span class="stat-hint">Click to manage</span>
+            </div>
+            <div class="stat-card clickable" @click="goToTab('events')" title="View upcoming events">
+              <span class="stat-label">Upcoming Events</span>
+              <span class="stat-value highlight-success">{{ overview.counts?.events?.upcoming || 0 }}</span>
+              <span class="stat-hint">Click to manage</span>
+            </div>
+            <div class="stat-card clickable" @click="goToTab('events')" title="View recent events">
+              <span class="stat-label">Recent Events (30d)</span>
+              <span class="stat-value">{{ overview.trends?.last30Days?.events || 0 }}</span>
+              <span class="stat-hint">Click to manage</span>
+            </div>
           </div>
 
           <div v-if="redemptionOverviewError" class="error-state">{{ redemptionOverviewError }}</div>
@@ -566,51 +581,112 @@
 
         <!-- ── Events Tab ──────────────────────────────────────── -->
         <section v-if="activeTab === 'events'" class="dashboard-section">
-          <h2>Event Attendee Management</h2>
+          <h2>Event Operations</h2>
 
-          <div class="section-actions">
-            <input
-              v-model.trim="eventsSearch"
-              type="text"
-              placeholder="Search by event, merchant, or group…"
-              class="search-input"
-              @keyup.enter="loadAdminEvents"
-            />
-            <button class="btn secondary" @click="loadAdminEvents">Search</button>
+          <!-- Recent RSVPs panel -->
+          <div class="coupon-redemptions-panel">
+            <h3>Recent RSVPs (Last 30 Days)</h3>
+            <div v-if="recentRsvpsLoading" class="loading-state">Loading RSVPs…</div>
+            <div v-else-if="recentRsvpsError" class="error-state">{{ recentRsvpsError }}</div>
+            <div v-else-if="recentRsvps.length" class="data-table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Event</th>
+                    <th>Merchant</th>
+                    <th>Foodie Group</th>
+                    <th>Customer</th>
+                    <th>Party</th>
+                    <th>Status</th>
+                    <th>RSVPed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="r in recentRsvps" :key="r.id">
+                    <td>{{ r.eventName }}</td>
+                    <td>{{ r.merchantName }}</td>
+                    <td>{{ r.groupName }}</td>
+                    <td>{{ r.customerEmail }}</td>
+                    <td>{{ r.attendees }}</td>
+                    <td><span :class="['status-badge', r.status]">{{ r.status }}</span></td>
+                    <td>{{ formatDate(r.createdAt) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div v-else class="empty-state">No RSVPs in the last 30 days.</div>
           </div>
 
-          <div v-if="eventsLoading" class="loading-state">Loading events…</div>
-          <div v-else-if="eventsError" class="error-state">{{ eventsError }}</div>
-          <div v-else-if="!adminEvents.length" class="empty-state">No events found.</div>
+          <!-- Sub-tabs -->
+          <nav class="sub-tab-nav">
+            <button :class="['sub-tab-btn', { active: eventsTabView === 'published' }]" @click="switchEventsTabView('published')">
+              Published Events
+            </button>
+            <button :class="['sub-tab-btn', { active: eventsTabView === 'pending' }]" @click="switchEventsTabView('pending')">
+              Pending Submissions
+            </button>
+            <button :class="['sub-tab-btn', { active: eventsTabView === 'rejected' }]" @click="switchEventsTabView('rejected')">
+              Rejected Submissions
+            </button>
+          </nav>
 
-          <div v-else>
-            <ul class="insights-list">
-              <li v-for="evt in adminEvents" :key="evt.eventId" class="insight-row">
-                <div class="insight-copy">
-                  <strong>{{ evt.eventName }}</strong>
-                  <div class="muted tiny">{{ evt.merchantName }} · {{ evt.groupName }}</div>
-                  <div class="muted tiny">
-                    {{ evt.confirmedRsvps }} confirmed · {{ evt.waitlistCount }} waitlisted
-                    <span v-if="evt.startDatetime"> · {{ formatDate(evt.startDatetime) }}</span>
-                    <span :class="['status-badge', evt.status]"> {{ evt.status }}</span>
-                  </div>
-                </div>
-                <button class="btn tertiary compact" @click="loadAdminEventAttendees(evt.eventId)">
-                  {{ selectedAdminEventId === evt.eventId ? 'Refresh' : 'View attendees' }}
-                </button>
-              </li>
-            </ul>
+          <!-- Published Events Sub-Tab -->
+          <div v-if="eventsTabView === 'published'">
+            <div class="section-actions">
+              <input
+                v-model.trim="eventsSearch"
+                type="text"
+                placeholder="Search by event, merchant, or group…"
+                class="search-input"
+                @keyup.enter="loadAdminEvents"
+              />
+              <button class="btn secondary" @click="loadAdminEvents">Search</button>
+            </div>
+            <div v-if="eventsLoading" class="loading-state">Loading events…</div>
+            <div v-else-if="eventsError" class="error-state">{{ eventsError }}</div>
+            <div v-else-if="!adminEvents.length" class="empty-state">No published events found.</div>
+            <div v-else class="data-table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Event</th>
+                    <th>Merchant</th>
+                    <th>Group</th>
+                    <th>Date</th>
+                    <th>Confirmed</th>
+                    <th>Waitlisted</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="evt in adminEvents" :key="evt.eventId">
+                    <td>{{ evt.eventName }}</td>
+                    <td>{{ evt.merchantName }}</td>
+                    <td>{{ evt.groupName }}</td>
+                    <td>{{ evt.startDatetime ? formatDate(evt.startDatetime) : '—' }}</td>
+                    <td>{{ evt.confirmedRsvps }}</td>
+                    <td>{{ evt.waitlistCount }}</td>
+                    <td><span :class="['status-badge', evt.status]">{{ evt.status }}</span></td>
+                    <td class="action-cell">
+                      <button class="btn compact tertiary" @click="loadAdminEventAttendees(evt.eventId)">
+                        {{ selectedAdminEventId === evt.eventId ? 'Refresh' : 'Attendees' }}
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
 
+            <!-- Attendee drill-down panel -->
             <div v-if="selectedAdminEventId" class="coupon-redemptions-panel" style="margin-top: var(--spacing-lg);">
               <div class="details-header">
                 <strong>{{ (adminEvents.find(e => e.eventId === selectedAdminEventId) || {}).eventName || 'Event' }}</strong>
                 <span class="muted tiny">{{ adminEventAttendees.length }} attendee{{ adminEventAttendees.length === 1 ? '' : 's' }}</span>
               </div>
-
               <div v-if="adminAttendeesLoading" class="loading-state">Loading attendees…</div>
               <div v-else-if="adminAttendeesError" class="error-state">{{ adminAttendeesError }}</div>
-
-              <div v-else-if="adminEventAttendees.length" class="data-table-container">
+              <div v-else-if="adminEventAttendees.length" class="data-table-wrap">
                 <table class="data-table">
                   <thead>
                     <tr>
@@ -639,8 +715,69 @@
                   </tbody>
                 </table>
               </div>
-
               <div v-else class="empty-state">No attendees for this event.</div>
+            </div>
+          </div>
+
+          <!-- Pending Submissions Sub-Tab -->
+          <div v-else-if="eventsTabView === 'pending'">
+            <div v-if="adminEventSubsLoading" class="loading-state">Loading…</div>
+            <div v-else-if="adminEventSubsError" class="error-state">{{ adminEventSubsError }}</div>
+            <div v-else-if="!adminEventSubsPending.length" class="empty-state">No pending event submissions.</div>
+            <div v-else class="data-table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Event Name</th>
+                    <th>Merchant</th>
+                    <th>Group</th>
+                    <th>Start Date</th>
+                    <th>Submitted</th>
+                    <th>Last Edited</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="sub in adminEventSubsPending" :key="sub.id">
+                    <td>{{ sub.submissionData?.name || '—' }}</td>
+                    <td>{{ sub.merchantName || '—' }}</td>
+                    <td>{{ sub.groupName || '—' }}</td>
+                    <td>{{ sub.submissionData?.start_datetime ? formatDate(sub.submissionData.start_datetime) : '—' }}</td>
+                    <td>{{ formatDate(sub.submittedAt) }}</td>
+                    <td>{{ sub.updatedAt ? formatDate(sub.updatedAt) : '—' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Rejected Submissions Sub-Tab -->
+          <div v-else-if="eventsTabView === 'rejected'">
+            <div v-if="adminEventSubsLoading" class="loading-state">Loading…</div>
+            <div v-else-if="adminEventSubsError" class="error-state">{{ adminEventSubsError }}</div>
+            <div v-else-if="!adminEventSubsRejected.length" class="empty-state">No rejected event submissions.</div>
+            <div v-else class="data-table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Event Name</th>
+                    <th>Merchant</th>
+                    <th>Group</th>
+                    <th>Submitted</th>
+                    <th>Reviewed</th>
+                    <th>Rejection Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="sub in adminEventSubsRejected" :key="sub.id">
+                    <td>{{ sub.submissionData?.name || '—' }}</td>
+                    <td>{{ sub.merchantName || '—' }}</td>
+                    <td>{{ sub.groupName || '—' }}</td>
+                    <td>{{ formatDate(sub.submittedAt) }}</td>
+                    <td>{{ sub.reviewedAt ? formatDate(sub.reviewedAt) : '—' }}</td>
+                    <td>{{ sub.rejectionMessage || '—' }}</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </section>
@@ -1213,6 +1350,18 @@ export default {
       adminEventAttendees: [],
       adminAttendeesLoading: false,
       adminAttendeesError: null,
+      eventsTabView: 'published',
+
+      // Event submissions sub-tabs
+      adminEventSubsPending: [],
+      adminEventSubsRejected: [],
+      adminEventSubsLoading: false,
+      adminEventSubsError: null,
+
+      // Recent RSVPs panel
+      recentRsvps: [],
+      recentRsvpsLoading: false,
+      recentRsvpsError: null,
     };
   },
 
@@ -1304,6 +1453,9 @@ export default {
           break;
         case "coupons":
           await this.loadCouponsTab();
+          break;
+        case "events":
+          await Promise.all([this.loadAdminEvents(), this.loadRecentRsvps(), this.loadAdminEventSubmissions()]);
           break;
       }
     },
@@ -1888,7 +2040,7 @@ export default {
       } else if (tabId === 'payments' && this.purchases.length === 0) {
         this.loadPurchases();
       } else if (tabId === 'events' && this.adminEvents.length === 0) {
-        this.loadAdminEvents();
+        Promise.all([this.loadAdminEvents(), this.loadRecentRsvps(), this.loadAdminEventSubmissions()]);
       }
     },
 
@@ -2137,6 +2289,52 @@ export default {
       }
     },
 
+    async switchEventsTabView(view) {
+      this.eventsTabView = view;
+      if (view === 'published' && this.adminEvents.length === 0) {
+        await this.loadAdminEvents();
+      } else if ((view === 'pending' || view === 'rejected') && this.adminEventSubsPending.length === 0 && this.adminEventSubsRejected.length === 0) {
+        await this.loadAdminEventSubmissions();
+      }
+    },
+
+    async loadAdminEventSubmissions() {
+      this.adminEventSubsLoading = true;
+      this.adminEventSubsError = null;
+      try {
+        const headers = await this.getAuthHeaders();
+        const [pendingRes, rejectedRes] = await Promise.all([
+          fetch(`${API_BASE}/admin/event-submissions?state=pending`, { headers }),
+          fetch(`${API_BASE}/admin/event-submissions?state=rejected`, { headers }),
+        ]);
+        if (!pendingRes.ok) throw new Error(`Failed to load pending event submissions: ${pendingRes.status}`);
+        if (!rejectedRes.ok) throw new Error(`Failed to load rejected event submissions: ${rejectedRes.status}`);
+        this.adminEventSubsPending = await pendingRes.json();
+        this.adminEventSubsRejected = await rejectedRes.json();
+      } catch (err) {
+        console.error('loadAdminEventSubmissions error:', err);
+        this.adminEventSubsError = err.message || 'Could not load event submissions.';
+      } finally {
+        this.adminEventSubsLoading = false;
+      }
+    },
+
+    async loadRecentRsvps() {
+      this.recentRsvpsLoading = true;
+      this.recentRsvpsError = null;
+      try {
+        const headers = await this.getAuthHeaders();
+        const res = await fetch(`${API_BASE}/admin/rsvps/recent`, { headers });
+        if (!res.ok) throw new Error(`Failed to load recent RSVPs: ${res.status}`);
+        this.recentRsvps = await res.json();
+      } catch (err) {
+        console.error('loadRecentRsvps error:', err);
+        this.recentRsvpsError = err.message || 'Could not load recent RSVPs.';
+      } finally {
+        this.recentRsvpsLoading = false;
+      }
+    },
+
     async loadAdminEventAttendees(eventId) {
       this.selectedAdminEventId = eventId;
       this.adminAttendeesLoading = true;
@@ -2361,6 +2559,7 @@ export default {
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-auto-flow: dense;
   gap: var(--spacing-md);
   margin-bottom: var(--spacing-xl);
 }
@@ -2845,6 +3044,34 @@ code {
   color: var(--color-text-muted);
 }
 
+/* Event status badges */
+.status-badge.published {
+  background: var(--color-success-light, #d4edda);
+  color: var(--color-success, #28a745);
+}
+
+/* RSVP status badges */
+.status-badge.going,
+.status-badge.checked_in {
+  background: var(--color-success-light, #d4edda);
+  color: var(--color-success, #28a745);
+}
+
+.status-badge.waitlist {
+  background: rgba(255, 193, 7, 0.15);
+  color: var(--color-warning, #856404);
+}
+
+.status-badge.cancelled {
+  background: var(--color-error-bg, rgba(244, 67, 54, 0.1));
+  color: var(--color-error, #dc3545);
+}
+
+.status-badge.pending {
+  background: rgba(33, 150, 243, 0.1);
+  color: var(--color-info, #2196F3);
+}
+
 /* Compact search bar for modals */
 .search-bar.compact {
   margin-bottom: var(--spacing-md);
@@ -2870,6 +3097,13 @@ code {
 
 .coupon-redemptions-panel {
   margin-bottom: var(--spacing-xl);
+}
+
+.details-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
 }
 
 .sub-tab-btn {

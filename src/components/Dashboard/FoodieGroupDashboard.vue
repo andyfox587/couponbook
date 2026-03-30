@@ -459,9 +459,10 @@
         </div>
 
         <div id="active-coupons" class="kanban-column active">
-          <h2>Active Coupons</h2>
+          <h2>Active</h2>
           <div class="column-content">
             <div class="active-coupons card">
+              <h3>Coupons</h3>
               <p v-if="activeLoading" class="muted tiny">
                 Loading active coupons…
               </p>
@@ -492,6 +493,37 @@
                 </li>
                 <li v-if="activeCoupons.length === 0" class="muted tiny">
                   No active coupons for this group yet.
+                </li>
+              </ul>
+            </div>
+
+            <div id="active-event-submissions" class="active-events card">
+              <h3>Events</h3>
+              <p v-if="activeEventsLoading" class="muted tiny">
+                Loading active events…
+              </p>
+              <p v-if="activeEventsError" class="tiny error-text">
+                {{ activeEventsError }}
+              </p>
+
+              <ul v-if="!activeEventsLoading && !activeEventsError">
+                <li v-for="e in activeEvents" :key="e.id" class="pending-submission-card">
+                  <div class="pending-card-header">
+                    <strong>{{ e.name }}</strong>
+                    <span v-if="e.visibility" class="badge badge-type">{{ e.visibility }}</span>
+                  </div>
+                  <div class="pending-card-meta muted tiny">
+                    Merchant: {{ e.merchantName }}<br />
+                    <span v-if="e.startDatetime">Starts: {{ formatDate(e.startDatetime) }}</span>
+                    <span v-if="e.location"> · {{ e.location }}</span>
+                    <span v-if="e.capacity"> · Capacity: {{ e.capacity }}</span>
+                  </div>
+                  <div class="muted tiny">
+                    RSVPs: {{ e.confirmedCount || 0 }}
+                  </div>
+                </li>
+                <li v-if="activeEvents.length === 0" class="muted tiny">
+                  No active events for this group yet.
                 </li>
               </ul>
             </div>
@@ -645,6 +677,11 @@ export default {
       pendingEventsError: null,
       reviewModalEvent: null,
 
+      // active (approved) events
+      activeEvents: [],
+      activeEventsLoading: false,
+      activeEventsError: null,
+
       // event overview analytics
       eventOverview: {
         rsvpsLast30Days: 0,
@@ -718,6 +755,7 @@ export default {
         this.loadGroupOverview(),
         this.loadRedemptionOverview(),
         this.loadPendingEvents(),
+        this.loadActiveEvents(),
         this.loadEventOverview(),
         this.loadManagedEvents(),
       ]);
@@ -785,6 +823,7 @@ export default {
           this.loadGroupOverview(),
           this.loadRedemptionOverview(),
           this.loadPendingEvents(),
+          this.loadActiveEvents(),
           this.loadEventOverview(),
           this.loadManagedEvents(),
         ]);
@@ -1178,6 +1217,45 @@ export default {
       }
     },
 
+    async loadActiveEvents() {
+      if (!this.groupId) return;
+
+      this.activeEventsLoading = true;
+      this.activeEventsError = null;
+      try {
+        const res = await fetch(
+          `${API_BASE}/events?group_id=${encodeURIComponent(this.groupId)}`,
+        );
+
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          throw new Error(errBody.error || `Failed to load active events (status ${res.status})`);
+        }
+
+        const list = await res.json();
+        if (!Array.isArray(list)) throw new Error('Unexpected response format from /events');
+
+        this.activeEvents = list.map((e) => ({
+          id: e.id,
+          name: e.name,
+          description: e.description,
+          startDatetime: e.startDatetime,
+          endDatetime: e.endDatetime,
+          location: e.location,
+          capacity: e.capacity,
+          visibility: e.visibility,
+          merchantName: e.merchantName,
+          confirmedCount: e.confirmedCount,
+        }));
+      } catch (err) {
+        console.error('[FoodieGroupDashboard] loadActiveEvents failed', err);
+        this.activeEventsError = err.message || 'Could not load active events.';
+        this.activeEvents = [];
+      } finally {
+        this.activeEventsLoading = false;
+      }
+    },
+
     async loadEventOverview() {
       if (this.notAuthorized || !this.groupId) return;
 
@@ -1251,11 +1329,11 @@ export default {
           return;
         }
 
-        await this.loadEventOverview();
+        await Promise.all([this.loadEventOverview(), this.loadActiveEvents()]);
       } catch (err) {
         if (!this.notAuthorized) {
           console.error('[FoodieGroupDashboard] approveEvent error', err);
-          await this.loadPendingEvents();
+          await Promise.all([this.loadPendingEvents(), this.loadActiveEvents()]);
         }
       }
     },

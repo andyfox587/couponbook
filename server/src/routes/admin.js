@@ -46,6 +46,9 @@ router.get('/overview', async (req, res, next) => {
       paymentEventsFailedResult,
       recentSignupsResult,
       recentPurchasesResult,
+      eventsTotalResult,
+      eventsUpcomingResult,
+      eventsRecentResult,
     ] = await Promise.all([
       // Total users (non-deleted)
       db.select({ count: count() }).from(schema.user).where(isNull(schema.user.deletedAt)),
@@ -82,6 +85,28 @@ router.get('/overview', async (req, res, next) => {
           gte(schema.purchase.purchasedAt, sql`NOW() - INTERVAL '30 days'`)
         )
       ),
+      // Total events (non-deleted, non-cancelled)
+      db.select({ count: count() }).from(schema.event).where(
+        and(
+          isNull(schema.event.deletedAt),
+          sql`${schema.event.status} != 'cancelled'`
+        )
+      ),
+      // Upcoming events (start in the future, non-deleted, non-cancelled)
+      db.select({ count: count() }).from(schema.event).where(
+        and(
+          isNull(schema.event.deletedAt),
+          sql`${schema.event.status} != 'cancelled'`,
+          gte(schema.event.startDatetime, sql`NOW()`)
+        )
+      ),
+      // Events created in last 30 days (non-deleted)
+      db.select({ count: count() }).from(schema.event).where(
+        and(
+          isNull(schema.event.deletedAt),
+          gte(schema.event.createdAt, sql`NOW() - INTERVAL '30 days'`)
+        )
+      ),
     ]);
 
     // Calculate gross revenue
@@ -109,6 +134,10 @@ router.get('/overview', async (req, res, next) => {
           pending: purchasesPendingResult[0]?.count ?? 0,
           refunded: purchasesRefundedResult[0]?.count ?? 0,
         },
+        events: {
+          total: eventsTotalResult[0]?.count ?? 0,
+          upcoming: eventsUpcomingResult[0]?.count ?? 0,
+        },
       },
       paymentHealth: {
         unprocessedEvents: paymentEventsUnprocessedResult[0]?.count ?? 0,
@@ -118,6 +147,7 @@ router.get('/overview', async (req, res, next) => {
         last30Days: {
           signups: recentSignupsResult[0]?.count ?? 0,
           purchases: recentPurchasesResult[0]?.count ?? 0,
+          events: eventsRecentResult[0]?.count ?? 0,
         },
       },
       revenue: {
@@ -1391,5 +1421,104 @@ async function logAdminAction(actorUserId, action, targetType, targetId, metadat
     });
   }
 }
+
+/**
+ * GET /api/v1/admin/event-submissions
+ * Platform-wide event submission list for super admins.
+ * Query: ?state=pending|approved|rejected (default: all non-deleted)
+ */
+router.get('/event-submissions', async (req, res, next) => {
+  try {
+    const { state } = req.query;
+    const limit  = Math.min(Math.max(Number(req.query.limit)  || 100, 1), 500);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+    const filters = [isNull(schema.eventSubmission.deletedAt)];
+    if (state) filters.push(eq(schema.eventSubmission.state, state));
+
+    const rows = await db
+      .select({
+        id:             schema.eventSubmission.id,
+        state:          schema.eventSubmission.state,
+        submittedAt:    schema.eventSubmission.submittedAt,
+        updatedAt:      schema.eventSubmission.updatedAt,
+        reviewedAt:     schema.eventSubmission.reviewedAt,
+        rejectionMessage: schema.eventSubmission.rejectionMessage,
+        submissionData: schema.eventSubmission.submissionData,
+        merchantName:   schema.merchant.name,
+        groupName:      schema.foodieGroup.name,
+      })
+      .from(schema.eventSubmission)
+      .leftJoin(schema.merchant, eq(schema.merchant.id, schema.eventSubmission.merchantId))
+      .leftJoin(schema.foodieGroup, eq(schema.foodieGroup.id, schema.eventSubmission.groupId))
+      .where(and(...filters))
+      .orderBy(desc(schema.eventSubmission.submittedAt))
+      .limit(limit)
+      .offset(offset);
+
+    res.json(rows);
+  } catch (err) {
+    console.error('📦  error in GET /admin/event-submissions', err);
+    next(err);
+  }
+});
+
+/**
+ * GET /api/v1/admin/rsvps/recent
+ * Recent RSVPs across all events (last 30 days by default).
+ */
+router.get('/rsvps/recent', async (req, res, next) => {
+  try {
+    const days   = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
+    const limit  = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    const rows = await db
+      .select({
+        id:            schema.eventRsvp.id,
+        eventId:       schema.eventRsvp.eventId,
+        eventName:     schema.event.name,
+        merchantName:  schema.merchant.name,
+        groupName:     schema.foodieGroup.name,
+        attendees:     schema.eventRsvp.attendees,
+        status:        schema.eventRsvp.status,
+        userName:      schema.user.name,
+        userEmail:     schema.user.email,
+        guestName:     schema.eventRsvp.guestName,
+        guestEmail:    schema.eventRsvp.guestEmail,
+        createdAt:     schema.eventRsvp.createdAt,
+      })
+      .from(schema.eventRsvp)
+      .innerJoin(schema.event, eq(schema.event.id, schema.eventRsvp.eventId))
+      .innerJoin(schema.merchant, eq(schema.merchant.id, schema.event.merchantId))
+      .innerJoin(schema.foodieGroup, eq(schema.foodieGroup.id, schema.event.groupId))
+      .leftJoin(schema.user, eq(schema.user.id, schema.eventRsvp.userId))
+      .where(
+        and(
+          isNull(schema.eventRsvp.deletedAt),
+          isNull(schema.event.deletedAt),
+          gte(schema.eventRsvp.createdAt, cutoff),
+        ),
+      )
+      .orderBy(desc(schema.eventRsvp.createdAt))
+      .limit(limit);
+
+    res.json(rows.map(r => ({
+      id:          r.id,
+      eventId:     r.eventId,
+      eventName:   r.eventName,
+      merchantName: r.merchantName,
+      groupName:   r.groupName,
+      attendees:   r.attendees,
+      status:      r.status,
+      customerName:  r.userName  || r.guestName  || '—',
+      customerEmail: r.userEmail || r.guestEmail || '—',
+      createdAt:   r.createdAt,
+    })));
+  } catch (err) {
+    console.error('📦  error in GET /admin/rsvps/recent', err);
+    next(err);
+  }
+});
 
 export default router;
