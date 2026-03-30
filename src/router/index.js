@@ -28,10 +28,6 @@ const routes = [
     component: CouponBook
   },
   {
-    path: '/event-page',
-    redirect: '/events'
-  },
-  {
     path: '/events',
     name: 'EventPage',
     component: EventPage

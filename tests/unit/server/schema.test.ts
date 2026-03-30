@@ -88,9 +88,8 @@ describe('Drizzle Schema', () => {
   describe('Enum Types', () => {
     it('should have role enum with correct values', () => {
       expect(schema.role).toBeDefined();
-      // Enum values should be accessible
-      const roleValues = ['admin', 'merchant', 'customer'];
-      const validRoles = ['admin', 'merchant', 'customer'];
+      const roleValues = ['super_admin', 'merchant', 'customer', 'foodie_group_admin'];
+      const validRoles = ['super_admin', 'merchant', 'customer', 'foodie_group_admin'];
       roleValues.forEach((role) => {
         expect(validRoles).toContain(role);
       });
@@ -125,8 +124,8 @@ describe('Drizzle Schema', () => {
 
     it('should have attendanceStatus enum with correct values', () => {
       expect(schema.attendanceStatus).toBeDefined();
-      const statuses = ['going', 'waitlist', 'cancelled'];
-      const validStatuses = ['going', 'waitlist', 'cancelled'];
+      const statuses = ['going', 'waitlist', 'cancelled', 'checked_in', 'no_show'];
+      const validStatuses = ['going', 'waitlist', 'cancelled', 'checked_in', 'no_show'];
       statuses.forEach((status) => {
         expect(validStatuses).toContain(status);
       });

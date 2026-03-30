@@ -152,6 +152,7 @@ export async function canManageGroup(dbUser, groupId) {
 /**
  * canManageEvent:
  * Returns true if the user is a super admin OR the owner of the event's merchant.
+ * Use for write operations (attendee management, RSVP updates, etc.).
  */
 export async function canManageEvent(dbUser, eventId) {
   if (!dbUser || !eventId) return false;
@@ -166,6 +167,36 @@ export async function canManageEvent(dbUser, eventId) {
       .limit(1);
 
     return eventWithMerchant?.merchantOwnerId === dbUser.id;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * canViewEventStats:
+ * Returns true if the user is a super admin, the owner of the event's merchant,
+ * OR a foodie group admin for the group that hosts this event.
+ * Use for read-only aggregate stats (no PII exposed).
+ */
+export async function canViewEventStats(dbUser, eventId) {
+  if (!dbUser || !eventId) return false;
+  if (dbUser.role === 'super_admin') return true;
+
+  try {
+    const [eventRow] = await db
+      .select({ merchantOwnerId: schema.merchant.ownerId, groupId: schema.event.groupId })
+      .from(schema.event)
+      .innerJoin(schema.merchant, eq(schema.event.merchantId, schema.merchant.id))
+      .where(eq(schema.event.id, eventId))
+      .limit(1);
+
+    if (!eventRow) return false;
+    if (eventRow.merchantOwnerId === dbUser.id) return true;
+
+    if (eventRow.groupId) {
+      return canManageGroup(dbUser, eventRow.groupId);
+    }
+    return false;
   } catch {
     return false;
   }

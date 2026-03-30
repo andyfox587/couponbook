@@ -32,6 +32,32 @@ export function required() {
 }
 
 /**
+ * Like verifyJwt but does NOT reject unauthenticated requests.
+ * Sets req.user when a valid token is present, otherwise continues silently.
+ */
+export function optional() {
+  return async (req, res, next) => {
+    try {
+      const token = (req.headers.authorization || '').replace(/^Bearer /i, '');
+      if (!token) return next();
+
+      const decodedHead = jwt.decode(token, { complete: true });
+      if (!decodedHead) return next();
+
+      const pem = (await getPems())[decodedHead.header.kid];
+      if (!pem) return next();
+
+      jwt.verify(token, pem, { issuer }, (err, payload) => {
+        if (!err) req.user = payload;
+        next();
+      });
+    } catch {
+      next();
+    }
+  };
+}
+
+/**
  * Express middleware – verifies a Cognito-issued JWT.
  * On success sets req.user = decoded payload, else 401.
  */

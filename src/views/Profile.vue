@@ -309,6 +309,14 @@
                   Review event submissions that were not approved and see the reason.
                 </span>
               </li>
+
+              <!-- Event Attendees -->
+              <li class="link-row clickable" @click="loadEventInsights">
+                <span class="link-label"><i class="pi pi-users icon-spacing-sm"></i>Event Attendees</span>
+                <span class="link-helper">
+                  See who has RSVPed for your events and manage attendance.
+                </span>
+              </li>
             </ul>
 
             <!-- Status / errors -->
@@ -529,6 +537,80 @@
               class="muted tiny" style="margin-top: 0.5rem;">
               No redemptions recorded yet for coupons from your restaurants.
             </div>
+
+            <!-- Event attendees list -->
+            <div v-if="activeToolsView === 'event-attendees' && eventInsights.length" class="tools-results-block">
+              <h3 class="tiny-heading">Event Attendees</h3>
+              <ul class="insights-list">
+                <li v-for="row in eventInsights" :key="row.eventId" class="insight-row">
+                  <div class="insight-copy">
+                    <strong>{{ row.eventName }}</strong>
+                    <div class="muted tiny">{{ row.merchantName }}</div>
+                    <div class="muted tiny">
+                      {{ row.confirmedRsvps }} confirmed · {{ row.waitlistCount }} waitlisted
+                      <span v-if="row.startDatetime"> · {{ formatDateDateTime(row.startDatetime) }}</span>
+                    </div>
+                  </div>
+                  <button class="btn tertiary compact" @click="loadEventAttendeeDetails(row.eventId)">
+                    {{ selectedEventId === row.eventId ? 'Refresh' : 'View attendees' }}
+                  </button>
+                </li>
+              </ul>
+
+              <div v-if="selectedEventRow" class="redemption-details-block">
+                <div class="details-header">
+                  <div>
+                    <strong>{{ selectedEventRow.eventName }}</strong>
+                    <div class="muted tiny">{{ selectedEventRow.merchantName }}</div>
+                  </div>
+                  <span class="muted tiny">{{ eventAttendees.length }} attendee{{ eventAttendees.length === 1 ? '' : 's' }}</span>
+                </div>
+
+                <div class="details-actions">
+                  <button class="btn tertiary compact" @click="copyAttendeeEmails" :disabled="eventAttendeesLoading || !eventAttendees.length">
+                    Copy emails
+                  </button>
+                </div>
+
+                <p v-if="eventAttendeesLoading" class="muted tiny">Loading attendees…</p>
+                <p v-else-if="eventAttendeesError" class="tiny error-text">{{ eventAttendeesError }}</p>
+
+                <div v-else-if="eventAttendees.length" class="details-table-wrap">
+                  <table class="details-table">
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Email</th>
+                        <th>Party</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="a in eventAttendees" :key="a.id">
+                        <td>{{ a.userName || a.guestName || '—' }}</td>
+                        <td>{{ a.userEmail || a.guestEmail || '—' }}</td>
+                        <td>{{ a.attendees }}</td>
+                        <td>{{ a.status }}</td>
+                        <td class="table-actions">
+                          <button class="btn tertiary compact" :disabled="a.status !== 'waitlist'" @click="promoteAttendee(a)">Promote</button>
+                          <button class="btn tertiary compact" :disabled="a.status === 'cancelled'" @click="cancelAttendeeRsvp(a)">Cancel</button>
+                          <button class="btn tertiary compact" :disabled="a.status !== 'going'" @click="checkInAttendee(a)">Check-in</button>
+                          <button class="btn tertiary compact" :disabled="a.status !== 'going' && a.status !== 'checked_in'" @click="markNoShowAttendee(a)">No-show</button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <p v-else class="muted tiny">No attendees found for this event.</p>
+              </div>
+            </div>
+
+            <div v-if="activeToolsView === 'event-attendees' && !merchantToolsLoading && !eventInsights.length"
+              class="muted tiny" style="margin-top: 0.5rem;">
+              No events found for your restaurants yet.
+            </div>
           </section>
 
         </template>
@@ -692,6 +774,14 @@
                   <span class="link-label"><i class="pi pi-times-circle icon-spacing-sm"></i>View Rejected Events</span>
                   <span class="link-helper">
                     Review event submissions that were not approved and see the reason.
+                  </span>
+                </li>
+
+                <!-- Event Attendees -->
+                <li class="link-row clickable" @click="loadEventInsights">
+                  <span class="link-label"><i class="pi pi-users icon-spacing-sm"></i>Event Attendees</span>
+                  <span class="link-helper">
+                    See who has RSVPed for your events and manage attendance.
                   </span>
                 </li>
               </ul>
@@ -896,6 +986,80 @@
                 class="muted tiny" style="margin-top: 0.5rem;">
                 No redemptions recorded yet for coupons from your restaurants.
               </div>
+
+              <!-- Event attendees list -->
+              <div v-if="activeToolsView === 'event-attendees' && eventInsights.length" class="tools-results-block">
+                <h3 class="tiny-heading">Event Attendees</h3>
+                <ul class="insights-list">
+                  <li v-for="row in eventInsights" :key="row.eventId" class="insight-row">
+                    <div class="insight-copy">
+                      <strong>{{ row.eventName }}</strong>
+                      <div class="muted tiny">{{ row.merchantName }}</div>
+                      <div class="muted tiny">
+                        {{ row.confirmedRsvps }} confirmed · {{ row.waitlistCount }} waitlisted
+                        <span v-if="row.startDatetime"> · {{ formatDateDateTime(row.startDatetime) }}</span>
+                      </div>
+                    </div>
+                    <button class="btn tertiary compact" @click="loadEventAttendeeDetails(row.eventId)">
+                      {{ selectedEventId === row.eventId ? 'Refresh' : 'View attendees' }}
+                    </button>
+                  </li>
+                </ul>
+
+                <div v-if="selectedEventRow" class="redemption-details-block">
+                  <div class="details-header">
+                    <div>
+                      <strong>{{ selectedEventRow.eventName }}</strong>
+                      <div class="muted tiny">{{ selectedEventRow.merchantName }}</div>
+                    </div>
+                    <span class="muted tiny">{{ eventAttendees.length }} attendee{{ eventAttendees.length === 1 ? '' : 's' }}</span>
+                  </div>
+
+                  <div class="details-actions">
+                    <button class="btn tertiary compact" @click="copyAttendeeEmails" :disabled="eventAttendeesLoading || !eventAttendees.length">
+                      Copy emails
+                    </button>
+                  </div>
+
+                  <p v-if="eventAttendeesLoading" class="muted tiny">Loading attendees…</p>
+                  <p v-else-if="eventAttendeesError" class="tiny error-text">{{ eventAttendeesError }}</p>
+
+                  <div v-else-if="eventAttendees.length" class="details-table-wrap">
+                    <table class="details-table">
+                      <thead>
+                        <tr>
+                          <th>Name</th>
+                          <th>Email</th>
+                          <th>Party</th>
+                          <th>Status</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="a in eventAttendees" :key="a.id">
+                          <td>{{ a.userName || a.guestName || '—' }}</td>
+                          <td>{{ a.userEmail || a.guestEmail || '—' }}</td>
+                          <td>{{ a.attendees }}</td>
+                          <td>{{ a.status }}</td>
+                          <td class="table-actions">
+                            <button class="btn tertiary compact" :disabled="a.status !== 'waitlist'" @click="promoteAttendee(a)">Promote</button>
+                            <button class="btn tertiary compact" :disabled="a.status === 'cancelled'" @click="cancelAttendeeRsvp(a)">Cancel</button>
+                            <button class="btn tertiary compact" :disabled="a.status !== 'going'" @click="checkInAttendee(a)">Check-in</button>
+                            <button class="btn tertiary compact" :disabled="a.status !== 'going' && a.status !== 'checked_in'" @click="markNoShowAttendee(a)">No-show</button>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <p v-else class="muted tiny">No attendees found for this event.</p>
+                </div>
+              </div>
+
+              <div v-if="activeToolsView === 'event-attendees' && !merchantToolsLoading && !eventInsights.length"
+                class="muted tiny" style="margin-top: 0.5rem;">
+                No events found for your restaurants yet.
+              </div>
             </section>
           </template>
         </template>
@@ -981,9 +1145,15 @@ export default {
       detailsLoading: false,
       detailsError: null,
       exportingDetails: false,
+      // event attendee state
+      eventInsights: [],
+      selectedEventId: null,
+      eventAttendees: [],
+      eventAttendeesLoading: false,
+      eventAttendeesError: null,
       merchantToolsLoading: false,
       merchantToolsError: null,
-      activeToolsView: null, // 'approved' | 'rejected' | 'insights'
+      activeToolsView: null, // 'approved' | 'rejected' | 'insights' | 'event-attendees'
       merchantOverview: {
         redemptionsLast30Days: 0,
         topCoupon: null,
@@ -1040,6 +1210,10 @@ export default {
 
     selectedCouponRow() {
       return this.redemptionInsights.find((row) => row.couponId === this.selectedCouponId) || null;
+    },
+
+    selectedEventRow() {
+      return this.eventInsights.find((row) => row.eventId === this.selectedEventId) || null;
     },
 
     displayedRedemptionDetails() {
@@ -1301,7 +1475,11 @@ export default {
       this.detailsLoading = false;
       this.detailsError = null;
       this.exportingDetails = false;
-      const lists = { approved: 'approvedCoupons', pending: 'pendingCoupons', rejected: 'rejectedCoupons', insights: 'redemptionInsights', 'pending-events': 'pendingEvents', 'rejected-events': 'rejectedEvents' };
+      this.selectedEventId = null;
+      this.eventAttendees = [];
+      this.eventAttendeesLoading = false;
+      this.eventAttendeesError = null;
+      const lists = { approved: 'approvedCoupons', pending: 'pendingCoupons', rejected: 'rejectedCoupons', insights: 'redemptionInsights', 'pending-events': 'pendingEvents', 'rejected-events': 'rejectedEvents', 'event-attendees': 'eventInsights' };
       for (const [key, prop] of Object.entries(lists)) {
         if (key !== view) this[prop] = [];
       }
@@ -1506,6 +1684,133 @@ export default {
         this.merchantToolsError = 'Could not load rejected event submissions.';
       } finally {
         this.merchantToolsLoading = false;
+      }
+    },
+
+    async loadEventInsights() {
+      if (!this.merchants.length) {
+        this.activeToolsView = 'event-attendees';
+        this.merchantToolsError = 'You do not have any restaurants linked to this account yet.';
+        this.eventInsights = [];
+        return;
+      }
+
+      this.resetMerchantToolsState('event-attendees');
+      this.merchantToolsLoading = true;
+
+      try {
+        const token = await getAccessToken();
+        const res = await fetch('/api/v1/events/merchant-insights', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error(`Failed to load event insights, status ${res.status}`);
+        const rows = await res.json();
+        this.eventInsights = Array.isArray(rows) ? rows : [];
+      } catch (err) {
+        console.error('Error loading event insights', err);
+        this.merchantToolsError = 'Could not load event insights.';
+        this.eventInsights = [];
+      } finally {
+        this.merchantToolsLoading = false;
+      }
+    },
+
+    async loadEventAttendeeDetails(eventId) {
+      this.selectedEventId = eventId;
+      this.eventAttendeesLoading = true;
+      this.eventAttendeesError = null;
+      this.eventAttendees = [];
+
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(`/api/v1/events/${eventId}/attendees`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error(`Failed to load attendees, status ${res.status}`);
+        const rows = await res.json();
+        this.eventAttendees = Array.isArray(rows) ? rows : [];
+      } catch (err) {
+        console.error('Error loading event attendees', err);
+        this.eventAttendeesError = 'Could not load attendees.';
+      } finally {
+        this.eventAttendeesLoading = false;
+      }
+    },
+
+    async promoteAttendee(attendee) {
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(`/api/v1/events/${this.selectedEventId}/rsvp/${attendee.id}/promote`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `Failed to promote, status ${res.status}`);
+        }
+        await this.loadEventAttendeeDetails(this.selectedEventId);
+      } catch (err) {
+        this.eventAttendeesError = err.message || 'Could not promote attendee.';
+      }
+    },
+
+    async cancelAttendeeRsvp(attendee) {
+      try {
+        const res = await fetch(`/api/v1/events/${this.selectedEventId}/rsvp/${attendee.id}/cancel`, {
+          method: 'POST',
+        });
+        if (!res.ok) throw new Error(`Cancel failed, status ${res.status}`);
+        await this.loadEventAttendeeDetails(this.selectedEventId);
+      } catch (err) {
+        this.eventAttendeesError = err.message || 'Could not cancel attendee.';
+      }
+    },
+
+    async checkInAttendee(attendee) {
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(`/api/v1/events/${this.selectedEventId}/rsvp/${attendee.id}/status`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'checked_in' }),
+        });
+        if (!res.ok) throw new Error(`Check-in failed, status ${res.status}`);
+        await this.loadEventAttendeeDetails(this.selectedEventId);
+      } catch (err) {
+        this.eventAttendeesError = err.message || 'Could not check in attendee.';
+      }
+    },
+
+    async markNoShowAttendee(attendee) {
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(`/api/v1/events/${this.selectedEventId}/rsvp/${attendee.id}/status`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'no_show' }),
+        });
+        if (!res.ok) throw new Error(`No-show failed, status ${res.status}`);
+        await this.loadEventAttendeeDetails(this.selectedEventId);
+      } catch (err) {
+        this.eventAttendeesError = err.message || 'Could not mark no-show.';
+      }
+    },
+
+    async copyAttendeeEmails() {
+      const emails = this.eventAttendees
+        .map((a) => a.userEmail || a.guestEmail)
+        .filter(Boolean);
+
+      if (!emails.length) {
+        this.eventAttendeesError = 'No emails available to copy.';
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(emails.join('\n'));
+        this.eventAttendeesError = null;
+      } catch (err) {
+        this.eventAttendeesError = 'Could not copy emails to clipboard.';
       }
     },
 

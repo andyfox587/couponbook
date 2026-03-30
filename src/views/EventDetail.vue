@@ -55,6 +55,7 @@
               <div class="capacity-bar-fill" :style="{ width: capacityPercent + '%' }"></div>
             </div>
             <span class="capacity-label">{{ confirmedCount }} / {{ evt.capacity }} spots filled</span>
+            <span class="capacity-sub-label">{{ capacityStateLabel }}</span>
           </div>
 
           <div v-if="evt.inviteOnly" class="invite-badge">Invite Only</div>
@@ -63,7 +64,14 @@
 
         <!-- RSVP Panel -->
         <div class="rsvp-panel" v-if="!evt.inviteOnly">
-          <EventRSVP :event="evt" @rsvp-submitted="onRsvpSubmitted" @rsvp-cancelled="onRsvpCancelled" />
+          <EventRSVP
+            :event="evt"
+            :is-authenticated="isAuthenticated"
+            :has-membership="hasMembership"
+            @rsvp-submitted="onRsvpSubmitted"
+            @rsvp-cancelled="onRsvpCancelled"
+            @login-requested="onLoginRequested"
+          />
         </div>
       </div>
 
@@ -80,6 +88,7 @@
 <script>
 import EventRSVP from '@/components/Events/EventRSVP.vue'
 import { getEvent, getEventBySlug } from '@/services/eventService'
+import { getAccessToken } from '@/services/authService'
 
 export default {
   name: 'EventDetail',
@@ -95,10 +104,15 @@ export default {
       evt: null,
       loading: true,
       error: null,
+      hasMembership: false,
     }
   },
 
   computed: {
+    isAuthenticated() {
+      return this.$store?.getters['auth/isAuthenticated'] ?? false
+    },
+
     confirmedCount() {
       return Number(this.evt?.confirmedCount) || 0
     },
@@ -106,6 +120,18 @@ export default {
     capacityPercent() {
       if (!this.evt?.capacity || this.evt.capacity <= 0) return 0
       return Math.min(100, Math.round((this.confirmedCount / this.evt.capacity) * 100))
+    },
+
+    remainingSpots() {
+      if (!this.evt?.capacity || this.evt.capacity <= 0) return null
+      return Math.max(0, this.evt.capacity - this.confirmedCount)
+    },
+
+    capacityStateLabel() {
+      if (this.remainingSpots === null) return ''
+      if (this.remainingSpots === 0) return 'Event is at capacity. New RSVPs will join waitlist.'
+      if (this.remainingSpots === 1) return '1 seat remaining.'
+      return `${this.remainingSpots} seats remaining.`
     },
 
     priceLabel() {
@@ -125,6 +151,25 @@ export default {
     await this.load()
   },
 
+  watch: {
+    id() {
+      this.load()
+    },
+    slug() {
+      this.load()
+    },
+    '$route.query.member_token'() {
+      this.load()
+    },
+    '$route.query.token'() {
+      this.load()
+    },
+    isAuthenticated(val) {
+      if (val) this.fetchMembership()
+      else this.hasMembership = false
+    },
+  },
+
   methods: {
     async load() {
       this.loading = true
@@ -138,6 +183,7 @@ export default {
         } else {
           this.error = 'No event identifier provided.'
         }
+        await this.fetchMembership()
       } catch (err) {
         console.error('[EventDetail] failed to load event', err)
         this.error = 'Event not found or unavailable.'
@@ -154,12 +200,34 @@ export default {
       })
     },
 
+    async fetchMembership() {
+      this.hasMembership = false
+      if (!this.evt?.groupId || this.evt.visibility !== 'members_only') return
+      try {
+        const token = await getAccessToken()
+        if (!token) return
+        const res = await fetch(`/api/v1/groups/${this.evt.groupId}/access`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (res.ok) {
+          const data = await res.json()
+          this.hasMembership = !!data.hasAccess
+        }
+      } catch (e) {
+        console.error('[EventDetail] membership check failed', e)
+      }
+    },
+
     onRsvpSubmitted() {
       this.load()
     },
 
     onRsvpCancelled() {
       this.load()
+    },
+
+    onLoginRequested() {
+      this.$store?.dispatch('auth/login')
     },
   },
 }
@@ -270,6 +338,13 @@ export default {
 .capacity-label {
   font-size: var(--font-size-sm);
   color: var(--color-text-muted);
+}
+
+.capacity-sub-label {
+  display: block;
+  margin-top: var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
 }
 
 .invite-badge, .members-badge {

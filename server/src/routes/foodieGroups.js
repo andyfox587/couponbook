@@ -260,6 +260,7 @@ router.get('/:groupId/redemption-overview', auth(), resolveLocalUser, async (req
 // Return lightweight event RSVP/attendance analytics for foodie group admins
 router.get('/:groupId/event-overview', auth(), resolveLocalUser, async (req, res, next) => {
   const { groupId } = req.params;
+  const days = Number(req.query.days) > 0 ? Number(req.query.days) : 30;
   console.log('📦  GET /api/v1/groups/:groupId/event-overview', { groupId });
 
   try {
@@ -268,7 +269,7 @@ router.get('/:groupId/event-overview', auth(), resolveLocalUser, async (req, res
       return res.status(403).json({ error: 'Not authorized to view this group\'s analytics' });
     }
 
-    const overview = await getFoodieGroupEventOverview(groupId);
+    const overview = await getFoodieGroupEventOverview(groupId, days);
     res.json(overview);
   } catch (err) {
     console.error('📦  error in GET /groups/:groupId/event-overview', err);

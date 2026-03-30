@@ -41,7 +41,7 @@ describe('Header', () => {
       { path: '/', component: { template: '<div>Home</div>' } },
       { path: '/coupon-book', component: { template: '<div>Coupons</div>' } },
       { path: '/foodie-groups', component: { template: '<div>Groups</div>' } },
-      { path: '/event-page', component: { template: '<div>Events</div>' } },
+      { path: '/events', component: { template: '<div>Events</div>' } },
       { path: '/profile', component: { template: '<div>Profile</div>' } },
     ]);
 

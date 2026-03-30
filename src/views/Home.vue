@@ -8,7 +8,7 @@
         <p>Your digital catalog to exclusive local restaurant deals & events</p>
         <div class="cta-buttons">
           <router-link class="btn primary" to="/coupon-book">Browse Coupons</router-link>
-          <router-link class="btn tertiary" to="/event-page">Browse Events</router-link>
+          <router-link class="btn tertiary" to="/events">Browse Events</router-link>
           <router-link class="btn secondary" to="/foodie-groups">Join Foodie Groups</router-link>
         </div>
       </div>
@@ -33,66 +33,12 @@
       </div>
     </section>
 
-    <!-- Featured Events Section -->
-    <section v-if="false" class="featured-events">
-      <h2>Upcoming Events</h2>
-
-      <!-- Overlay toggled here -->
-      <OverlayBlock :is-dimmed="!eventsEnabled" title="Events are coming soon!"
-        message="We’re rolling this feature out. Want early access or a heads-up when it’s live?" cta-text="Notify Me"
-        @cta="goNotify">
-        <EventList :events="featuredEvents" />
-      </OverlayBlock>
-    </section>
   </div>
 </template>
 
 <script>
-import EventList from '@/components/Events/EventList.vue'
-import OverlayBlock from '@/components/Common/OverlayBlock.vue'
-
 export default {
   name: 'AppHome',
-  components: { EventList, OverlayBlock },
-  data() {
-    return {
-      eventsEnabled: false, // flip to true when you enable events on the homepage
-      featuredEvents: [
-        {
-          id: 1,
-          name: 'Taco Tuesday Extravaganza',
-          description: 'Join us for an evening of delicious tacos and great company.',
-          event_date: new Date().toISOString(),
-          merchantName: 'Taco Shack',
-          merchantLogo: require('@/assets/logo.png'),
-          location: 'Downtown Plaza'
-        },
-        {
-          id: 2,
-          name: 'Sushi Sunday',
-          description: 'Enjoy fresh sushi and sashimi served by expert chefs.',
-          event_date: new Date(Date.now() + 86400000).toISOString(),
-          merchantName: 'Sushi World',
-          merchantLogo: require('@/assets/sushi.png'),
-          location: 'City Center'
-        },
-        {
-          id: 3,
-          name: 'Burger Bonanza',
-          description: 'Indulge in gourmet burgers with unique toppings.',
-          event_date: new Date(Date.now() + 2 * 86400000).toISOString(),
-          merchantName: 'Burger Hub',
-          merchantLogo: require('@/assets/image2.png'),
-          location: 'Main Street'
-        }
-      ]
-    }
-  },
-  methods: {
-    goNotify() {
-      this.$router.push({ name: 'Contact', query: { topic: 'events-early-access' } })
-    }
-  }
 }
 </script>
 
@@ -235,29 +181,6 @@ export default {
   margin: 0;
 }
 
-/* Featured Events Section */
-.featured-events {
-  padding: var(--spacing-2xl);
-  background: var(--surface-2);
-  text-align: center;
-
-  /* Light-mode variables for OverlayBlock */
-  --overlay-veil-bg: var(--color-bg-overlay);
-  --overlay-card-bg: var(--color-bg-primary);
-  --overlay-card-fg: var(--color-slate);
-  --overlay-card-border: rgba(56, 66, 76, 0.15);
-  --overlay-radius: var(--radius-lg);
-  --overlay-shadow: var(--shadow-lg);
-  --overlay-btn-bg: var(--color-primary-light);
-  --overlay-btn-bg-hover: var(--color-primary-hover);
-  --overlay-btn-fg: var(--color-text-inverse);
-}
-
-.featured-events h2 {
-  font-size: var(--font-size-5xl);
-  margin-bottom: var(--spacing-2xl);
-}
-
 /* Responsive Adjustments */
 @media (max-width: 768px) {
   .hero h1 {
@@ -268,8 +191,7 @@ export default {
     font-size: var(--font-size-xl);
   }
 
-  .features h2,
-  .featured-events h2 {
+  .features h2 {
     font-size: var(--font-size-4xl);
   }
 

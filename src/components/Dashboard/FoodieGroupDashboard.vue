@@ -225,6 +225,34 @@
         </div>
       </section>
 
+      <section class="dashboard-section event-attendee-management" v-if="groupLoaded">
+        <h2>Event Performance</h2>
+        <p class="muted tiny">Select an event to view aggregate performance statistics.</p>
+
+        <div class="event-manager-controls">
+          <select v-model="selectedEventId" @change="onSelectedEventChange">
+            <option value="">Select an event</option>
+            <option v-for="evt in managedEvents" :key="evt.id" :value="evt.id">
+              {{ evt.name }}
+            </option>
+          </select>
+        </div>
+
+        <p v-if="attendeesError" class="tiny error-text">{{ attendeesError }}</p>
+        <p v-if="attendeesLoading" class="muted tiny">Loading event stats...</p>
+
+        <div v-if="selectedEventStats" class="stats-grid event-stats-grid">
+          <div class="stat-card"><span class="stat-label">Total RSVPs</span><span class="stat-value">{{ selectedEventStats.totalRsvps }}</span></div>
+          <div class="stat-card"><span class="stat-label">Confirmed Seats</span><span class="stat-value">{{ selectedEventStats.confirmedSeats }}</span></div>
+          <div class="stat-card"><span class="stat-label">Waitlist</span><span class="stat-value">{{ selectedEventStats.waitlistCount }}</span></div>
+          <div class="stat-card"><span class="stat-label">Cancellations</span><span class="stat-value">{{ selectedEventStats.cancellations }}</span></div>
+          <div class="stat-card"><span class="stat-label">Checked-ins</span><span class="stat-value">{{ selectedEventStats.checkedIns }}</span></div>
+          <div class="stat-card"><span class="stat-label">No-shows</span><span class="stat-value">{{ selectedEventStats.noShows }}</span></div>
+          <div class="stat-card"><span class="stat-label">Attendance Rate</span><span class="stat-value">{{ formatPercent(selectedEventStats.attendanceRate) }}</span></div>
+          <div class="stat-card"><span class="stat-label">Capacity Fill %</span><span class="stat-value">{{ formatPercent(selectedEventStats.capacityFillPercent) }}</span></div>
+        </div>
+      </section>
+
       <!-- Edit Group Section -->
       <section class="dashboard-section edit-group" v-if="groupLoaded">
         <h2>Edit Group Details</h2>
@@ -539,6 +567,10 @@
 import { mapGetters } from "vuex";
 import { getAccessToken, signIn } from "@/services/authService";
 import Modal from "@/components/Common/Modal.vue";
+import {
+  listEvents,
+  getEventStats,
+} from "@/services/eventService";
 
 const API_BASE = "/api/v1";
 
@@ -622,6 +654,12 @@ export default {
       eventOverviewLoading: false,
       eventOverviewError: null,
 
+      managedEvents: [],
+      selectedEventId: '',
+      attendeesLoading: false,
+      attendeesError: null,
+      selectedEventStats: null,
+
       // authorization gate
       authChecked: false,
       notAuthorized: false,
@@ -639,6 +677,7 @@ export default {
       }
       return null;
     },
+
   },
 
   watch: {
@@ -680,6 +719,7 @@ export default {
         this.loadRedemptionOverview(),
         this.loadPendingEvents(),
         this.loadEventOverview(),
+        this.loadManagedEvents(),
       ]);
     } finally {
       this.authChecked = true;
@@ -746,6 +786,7 @@ export default {
           this.loadRedemptionOverview(),
           this.loadPendingEvents(),
           this.loadEventOverview(),
+          this.loadManagedEvents(),
         ]);
       }
       this.authChecked = true;
@@ -1626,6 +1667,52 @@ export default {
         this.savingPrice = false;
       }
     },
+
+    formatPercent(value) {
+      if (value === null || value === undefined) return '—';
+      return `${Math.round(Number(value) * 100)}%`;
+    },
+
+    async loadManagedEvents() {
+      if (this.notAuthorized || !this.groupId) return;
+      try {
+        this.managedEvents = await listEvents({ group_id: this.groupId });
+        if (!this.selectedEventId && this.managedEvents.length > 0) {
+          this.selectedEventId = this.managedEvents[0].id;
+          await this.loadSelectedEventData();
+        } else if (this.selectedEventId) {
+          const stillExists = this.managedEvents.some((evt) => evt.id === this.selectedEventId);
+          if (!stillExists) {
+            this.selectedEventId = '';
+            this.selectedEventStats = null;
+          }
+        }
+      } catch (err) {
+        console.error('[FoodieGroupDashboard] loadManagedEvents error', err);
+      }
+    },
+
+    async onSelectedEventChange() {
+      await this.loadSelectedEventData();
+    },
+
+    async loadSelectedEventData() {
+      if (!this.selectedEventId) {
+        this.selectedEventStats = null;
+        return;
+      }
+      this.attendeesLoading = true;
+      this.attendeesError = null;
+      try {
+        this.selectedEventStats = await getEventStats(this.selectedEventId);
+      } catch (err) {
+        console.error('[FoodieGroupDashboard] loadSelectedEventData error', err);
+        this.attendeesError = err.message || 'Could not load event stats.';
+      } finally {
+        this.attendeesLoading = false;
+      }
+    },
+
   },
 };
 </script>
@@ -2147,6 +2234,33 @@ textarea:focus {
   text-align: center;
   color: var(--color-error);
   padding: var(--spacing-xl);
+}
+
+.event-manager-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--spacing-sm);
+  margin: var(--spacing-md) 0;
+}
+
+.event-manager-controls select,
+.event-manager-controls input {
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+}
+
+.event-stats-grid {
+  margin-top: var(--spacing-md);
+}
+
+.table-actions {
+  display: flex;
+  gap: var(--spacing-xs);
+  flex-wrap: wrap;
 }
 
 .pending-submission-card {

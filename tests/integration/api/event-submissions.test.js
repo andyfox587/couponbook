@@ -24,6 +24,11 @@ vi.mock('../../../server/src/middleware/auth.js', () => ({
     req.user = { sub: token };
     return next();
   },
+  optional: () => (req, res, next) => {
+    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (token) req.user = { sub: token };
+    return next();
+  },
 }));
 
 // ─────────────────────────────────────────────────────────
@@ -696,7 +701,103 @@ const [promoted] = await db
     });
   });
 
-  // ─── 9. Image upload endpoints ──────────────────────────
+  // ─── 9. Attendee management and event stats ───────────────
+
+  describe('attendee management and stats', () => {
+    it('manager can mark checked-in and no-show', async () => {
+      const group = await seedHelpers.createFoodieGroup(db);
+      const adminUser = await seedHelpers.createUser(db, {
+        role: 'super_admin',
+        cognitoSub: `mgr-admin-${Date.now()}`,
+        email: `mgr-admin-${Date.now()}@example.com`,
+      });
+      const merchantUser = await seedHelpers.createUser(db, {
+        role: 'merchant',
+        cognitoSub: `mgr-merch-${Date.now()}`,
+        email: `mgr-merch-${Date.now()}@example.com`,
+      });
+      const m = await seedHelpers.createMerchant(db, merchantUser.id);
+      await seedHelpers.createMembership(db, adminUser.id, group.id, { role: 'foodie_group_admin' });
+
+      const createRes = await request(app)
+        .post('/api/v1/event-submissions')
+        .set('Authorization', `Bearer ${merchantUser.cognitoSub}`)
+        .send({ group_id: group.id, merchant_id: m.id, submission_data: validSubmissionData() });
+      const approveRes = await request(app)
+        .put(`/api/v1/event-submissions/${createRes.body.id}`)
+        .set('Authorization', `Bearer ${adminUser.cognitoSub}`)
+        .send({ state: 'approved' });
+      const e = approveRes.body.event;
+
+      const attendee = await request(app)
+        .post(`/api/v1/events/${e.id}/rsvp`)
+        .send({ attendees: 1, guest_name: 'Checkin Guest', guest_email: 'checkin@example.com' });
+      expect(attendee.status).toBe(201);
+
+      const checkedInRes = await request(app)
+        .patch(`/api/v1/events/${e.id}/rsvp/${attendee.body.id}/status`)
+        .set('Authorization', `Bearer ${merchantUser.cognitoSub}`)
+        .send({ status: 'checked_in' });
+      expect(checkedInRes.status).toBe(200);
+      expect(checkedInRes.body.status).toBe('checked_in');
+
+      const noShowRes = await request(app)
+        .patch(`/api/v1/events/${e.id}/rsvp/${attendee.body.id}/status`)
+        .set('Authorization', `Bearer ${merchantUser.cognitoSub}`)
+        .send({ status: 'no_show' });
+      expect(noShowRes.status).toBe(200);
+      expect(noShowRes.body.status).toBe('no_show');
+    });
+
+    it('manager can fetch per-event stats summary', async () => {
+      const group = await seedHelpers.createFoodieGroup(db);
+      const adminUser = await seedHelpers.createUser(db, {
+        role: 'super_admin',
+        cognitoSub: `stats-admin-${Date.now()}`,
+        email: `stats-admin-${Date.now()}@example.com`,
+      });
+      const merchantUser = await seedHelpers.createUser(db, {
+        role: 'merchant',
+        cognitoSub: `stats-merch-${Date.now()}`,
+        email: `stats-merch-${Date.now()}@example.com`,
+      });
+      const m = await seedHelpers.createMerchant(db, merchantUser.id);
+      await seedHelpers.createMembership(db, adminUser.id, group.id, { role: 'foodie_group_admin' });
+
+      const createRes = await request(app)
+        .post('/api/v1/event-submissions')
+        .set('Authorization', `Bearer ${merchantUser.cognitoSub}`)
+        .send({ group_id: group.id, merchant_id: m.id, submission_data: validSubmissionData({ capacity: 3, max_tickets_per_guest: 3 }) });
+      const approveRes = await request(app)
+        .put(`/api/v1/event-submissions/${createRes.body.id}`)
+        .set('Authorization', `Bearer ${adminUser.cognitoSub}`)
+        .send({ state: 'approved' });
+      const e = approveRes.body.event;
+
+      const going = await request(app)
+        .post(`/api/v1/events/${e.id}/rsvp`)
+        .send({ attendees: 1, guest_name: 'Going', guest_email: 'going@example.com' });
+      const waitlist = await request(app)
+        .post(`/api/v1/events/${e.id}/rsvp`)
+        .send({ attendees: 3, guest_name: 'Wait', guest_email: 'wait@example.com' });
+      expect(waitlist.body.status).toBe('waitlist');
+
+      await request(app)
+        .patch(`/api/v1/events/${e.id}/rsvp/${going.body.id}/status`)
+        .set('Authorization', `Bearer ${merchantUser.cognitoSub}`)
+        .send({ status: 'checked_in' });
+
+      const statsRes = await request(app)
+        .get(`/api/v1/events/${e.id}/stats`)
+        .set('Authorization', `Bearer ${merchantUser.cognitoSub}`);
+      expect(statsRes.status).toBe(200);
+      expect(statsRes.body.confirmedSeats).toBeGreaterThanOrEqual(1);
+      expect(statsRes.body.waitlistCount).toBeGreaterThanOrEqual(3);
+      expect(statsRes.body.checkedIns).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  // ─── 10. Image upload endpoints ──────────────────────────
 
   describe('image upload endpoints', () => {
     // In the test environment AWS_S3_EVENT_IMAGE_BUCKET is not set,
@@ -841,7 +942,7 @@ const [promoted] = await db
     });
   });
 
-  // ─── 10. Coupon regression smoke check ───────────────────
+  // ─── 11. Coupon regression smoke check ───────────────────
 
   describe('coupon regression smoke check', () => {
     it('coupon submission still works alongside event routes', async () => {

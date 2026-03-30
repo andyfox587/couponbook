@@ -10,8 +10,9 @@ async function authHeaders() {
 
 // ── Live events ──────────────────────────────────────────────────
 
-export async function listEvents() {
-  const res = await fetch(`${API_BASE}/events`)
+export async function listEvents(params = {}) {
+  const qs = new URLSearchParams(params).toString()
+  const res = await fetch(`${API_BASE}/events${qs ? `?${qs}` : ''}`)
   if (!res.ok) throw new Error(`Failed to load events: ${res.status}`)
   return res.json()
 }
@@ -58,9 +59,10 @@ export async function deleteEvent(id) {
 // ── RSVP ────────────────────────────────────────────────────────
 
 export async function createRsvp(eventId, data) {
+  const headers = { ...(await authHeaders()), 'Content-Type': 'application/json' }
   const res = await fetch(`${API_BASE}/events/${eventId}/rsvp`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(data),
   })
   if (!res.ok) {
@@ -82,6 +84,57 @@ export async function getAttendees(eventId) {
   const headers = await authHeaders()
   const res = await fetch(`${API_BASE}/events/${eventId}/attendees`, { headers })
   if (!res.ok) throw new Error(`Failed to load attendees: ${res.status}`)
+  return res.json()
+}
+
+export async function promoteRsvp(eventId, rsvpId) {
+  const headers = await authHeaders()
+  const res = await fetch(`${API_BASE}/events/${eventId}/rsvp/${rsvpId}/promote`, {
+    method: 'POST',
+    headers,
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `Failed to promote RSVP: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function updateRsvpStatus(eventId, rsvpId, status) {
+  const headers = { ...(await authHeaders()), 'Content-Type': 'application/json' }
+  const res = await fetch(`${API_BASE}/events/${eventId}/rsvp/${rsvpId}/status`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ status }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `Failed to update RSVP status: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function getEventStats(eventId) {
+  const headers = await authHeaders()
+  const res = await fetch(`${API_BASE}/events/${eventId}/stats`, { headers })
+  if (!res.ok) throw new Error(`Failed to load event stats: ${res.status}`)
+  return res.json()
+}
+
+// ── Merchant / admin analytics ───────────────────────────────────
+
+export async function getMerchantEventInsights() {
+  const headers = await authHeaders()
+  const res = await fetch(`${API_BASE}/events/merchant-insights`, { headers })
+  if (!res.ok) throw new Error(`Failed to load event insights: ${res.status}`)
+  return res.json()
+}
+
+export async function getAdminEvents(params = {}) {
+  const headers = await authHeaders()
+  const qs = new URLSearchParams(params).toString()
+  const res = await fetch(`${API_BASE}/admin/events${qs ? `?${qs}` : ''}`, { headers })
+  if (!res.ok) throw new Error(`Failed to load admin events: ${res.status}`)
   return res.json()
 }
 

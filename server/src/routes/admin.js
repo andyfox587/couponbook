@@ -1205,6 +1205,68 @@ router.get('/purchases', async (req, res, next) => {
 });
 
 /**
+ * GET /api/v1/admin/events
+ * Platform-wide event list with per-event RSVP counts. Super admin only.
+ */
+router.get('/events', async (req, res, next) => {
+  try {
+    const search = String(req.query.search || '').trim();
+    const limit  = Math.min(Math.max(Number(req.query.limit)  || 100, 1), 500);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+    const filters = [isNull(schema.event.deletedAt)];
+    if (search) {
+      filters.push(
+        or(
+          ilike(schema.event.name, `%${search}%`),
+          ilike(schema.merchant.name, `%${search}%`),
+          ilike(schema.foodieGroup.name, `%${search}%`),
+        ),
+      );
+    }
+
+    const rows = await db
+      .select({
+        eventId:       schema.event.id,
+        eventName:     schema.event.name,
+        merchantName:  schema.merchant.name,
+        groupName:     schema.foodieGroup.name,
+        startDatetime: schema.event.startDatetime,
+        status:        schema.event.status,
+        capacity:      schema.event.capacity,
+        confirmedRsvps: sql`COALESCE(SUM(CASE WHEN ${schema.eventRsvp.status}::text IN ('going','checked_in') THEN ${schema.eventRsvp.attendees} ELSE 0 END), 0)`.as('confirmed_rsvps'),
+        waitlistCount:  sql`COALESCE(SUM(CASE WHEN ${schema.eventRsvp.status}::text = 'waitlist' THEN ${schema.eventRsvp.attendees} ELSE 0 END), 0)`.as('waitlist_count'),
+        totalRsvps:     sql`COALESCE(SUM(CASE WHEN ${schema.eventRsvp.status}::text != 'cancelled' THEN ${schema.eventRsvp.attendees} ELSE 0 END), 0)`.as('total_rsvps'),
+      })
+      .from(schema.event)
+      .innerJoin(schema.merchant, eq(schema.event.merchantId, schema.merchant.id))
+      .innerJoin(schema.foodieGroup, eq(schema.event.groupId, schema.foodieGroup.id))
+      .leftJoin(schema.eventRsvp, and(eq(schema.eventRsvp.eventId, schema.event.id), isNull(schema.eventRsvp.deletedAt)))
+      .where(and(...filters))
+      .groupBy(schema.event.id, schema.event.name, schema.merchant.name, schema.foodieGroup.name, schema.event.startDatetime, schema.event.status, schema.event.capacity)
+      .orderBy(desc(schema.event.startDatetime))
+      .limit(limit)
+      .offset(offset);
+
+    res.json(rows.map(r => ({
+      eventId:        r.eventId,
+      eventName:      r.eventName,
+      merchantName:   r.merchantName,
+      groupName:      r.groupName,
+      startDatetime:  r.startDatetime,
+      status:         r.status,
+      capacity:       Number(r.capacity),
+      confirmedRsvps: Number(r.confirmedRsvps),
+      waitlistCount:  Number(r.waitlistCount),
+      totalRsvps:     Number(r.totalRsvps),
+    })));
+  } catch (err) {
+    console.error('📦  error in GET /admin/events', err);
+    next(err);
+  }
+});
+
+/**
  * GET /api/v1/admin/payment-events
  * List payment events for webhook health monitoring
  */

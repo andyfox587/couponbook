@@ -31,6 +31,7 @@ async function runMigrations(pg) {
   const migration10 = readFileSync(join(drizzleDir, '0010_expand_event_schema.sql'), 'utf-8');
   const migration11 = readFileSync(join(drizzleDir, '0011_expand_event_rsvp.sql'), 'utf-8');
   const migration12 = readFileSync(join(drizzleDir, '0012_expand_event_submission.sql'), 'utf-8');
+  const migration13 = readFileSync(join(drizzleDir, '0013_expand_attendance_status.sql'), 'utf-8');
   
   // Split by statement breakpoint and execute each statement
   const statements0 = migration0.split('--> statement-breakpoint').map(s => s.trim()).filter(Boolean);
@@ -212,6 +213,19 @@ async function runMigrations(pg) {
     });
   for (const stmt of stmts12) {
     try { await pg.exec(stmt); } catch (_) { /* continue */ }
+  }
+
+  // Migration 13: attendance status expansion
+  try {
+    await pg.exec(migration13);
+  } catch (e) {
+    const stmts13 = migration13
+      .split(';')
+      .map(s => s.trim())
+      .filter(Boolean);
+    for (const stmt of stmts13) {
+      try { await pg.exec(stmt); } catch (_) { /* continue */ }
+    }
   }
 
   // Add the unique constraint on coupon_redemption that may not be in migrations

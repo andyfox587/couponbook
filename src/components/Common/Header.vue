@@ -16,7 +16,7 @@
           <li><router-link to="/"><i class="pi pi-home icon-spacing-sm"></i>Home</router-link></li>
           <li><router-link to="/coupon-book"><i class="pi pi-ticket icon-spacing-sm"></i>Local Coupons</router-link></li>
           <li><router-link to="/foodie-groups"><i class="pi pi-users icon-spacing-sm"></i>Foodie Groups</router-link></li>
-          <li><router-link to="/event-page"><i class="pi pi-calendar icon-spacing-sm"></i>Events</router-link></li>
+          <li><router-link to="/events"><i class="pi pi-calendar icon-spacing-sm"></i>Events</router-link></li>
           <li v-if="!isAuthenticated">
             <button @click="login" class="auth-btn">
               <i class="pi pi-sign-in icon-spacing-sm"></i>Sign In

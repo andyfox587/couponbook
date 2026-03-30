@@ -90,14 +90,12 @@
         </div>
       </section>
 
-      <!-- Events Section Wrapped with OverlayBlock -->
-      <section v-if="false" class="events-section section-card">
-        <OverlayBlock :is-dimmed="true" title="Events are coming soon!"
-          message="Our events feature is in preview and will be unlocked soon for Foodie Groups." cta-text="Notify Me"
-          @cta="alert('You’ll be notified when events are live!')">
-          <h2>Group Events</h2>
-          <EventList :events="events" :hasAccess="hasPurchasedCouponBook" />
-        </OverlayBlock>
+      <section class="events-section section-card">
+        <h2>Group Events</h2>
+        <p v-if="loadingEvents">Loading events...</p>
+        <p v-else-if="eventError" class="error">{{ eventError }}</p>
+        <p v-else-if="events.length === 0" class="muted">No upcoming events published for this group yet.</p>
+        <EventList v-else :events="events" />
       </section>
 
       <!-- Map Section -->
@@ -115,14 +113,14 @@
 import CouponList from '@/components/Coupons/CouponList.vue';
 import EventList from '@/components/Events/EventList.vue';
 import SidebarFilters from '@/components/Coupons/SidebarFilters.vue';
-import OverlayBlock from '@/components/Common/OverlayBlock.vue';
 import { mapGetters } from 'vuex';
 import { signIn, getAccessToken } from '@/services/authService';
 import { ensureCouponsHaveCuisine } from '@/utils/helpers';
+import { listEvents } from '@/services/eventService';
 
 export default {
   name: 'FoodieGroupView',
-  components: { CouponList, EventList, OverlayBlock, SidebarFilters },
+  components: { CouponList, EventList, SidebarFilters },
 
   data() {
     return {
@@ -131,6 +129,9 @@ export default {
       coupons: [],
       loadingCoupons: true,
       couponError: null,
+      events: [],
+      loadingEvents: true,
+      eventError: null,
       // Stripe checkout state
       groupPrice: null,
       groupPriceDisplay: '$9.99',
@@ -139,38 +140,6 @@ export default {
       promoCode: '',
       promoLoading: false,
       promoError: null,
-      events: [
-        {
-          id: 1,
-          name: 'Wine Tasting Night',
-          description: 'Sample a curated selection of fine wines paired with gourmet appetizers.',
-          event_date: '2025-06-21T18:00:00',
-          merchantLogo: '/logo.png',
-          merchantName: 'The Vineyard Bistro',
-          location: 'Downtown',
-          showRSVP: false
-        },
-        {
-          id: 2,
-          name: 'Sushi Rolling Workshop',
-          description: 'Learn the art of sushi making with hands-on instruction from expert chefs.',
-          event_date: '2025-07-15T10:00:00',
-          merchantLogo: '/logo.png',
-          merchantName: 'Sushi Delight',
-          location: 'Uptown',
-          showRSVP: false
-        },
-        {
-          id: 3,
-          name: 'Burger Bonanza',
-          description: 'Enjoy an evening of gourmet burgers and creative sides, with live cooking demos.',
-          event_date: '2025-08-05T09:00:00',
-          merchantLogo: '/logo.png',
-          merchantName: 'Burger Hub',
-          location: 'Midtown',
-          showRSVP: false
-        }
-      ],
       filters: {
         keyword: '',
         activeOnly: false,
@@ -332,6 +301,7 @@ export default {
 
         // 2) Now fetch coupons, price, and access using the UUID
         this.fetchCoupons(groupId);
+        this.fetchEvents(groupId);
         this.fetchPrice(idOrSlug); // Price endpoint already supports slug
 
         if (this.isAuthenticated) {
@@ -363,6 +333,20 @@ export default {
         if (this.isAuthenticated) {
           this.fetchRedemptionsMe();
         }
+      }
+    },
+
+    async fetchEvents(groupId) {
+      this.loadingEvents = true;
+      this.eventError = null;
+      try {
+        this.events = await listEvents({ group_id: groupId });
+      } catch (err) {
+        console.error('Failed to load events', err);
+        this.eventError = 'Failed to load group events.';
+        this.events = [];
+      } finally {
+        this.loadingEvents = false;
       }
     },
 

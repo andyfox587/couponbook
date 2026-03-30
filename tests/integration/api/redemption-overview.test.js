@@ -18,6 +18,11 @@ vi.mock('../../../server/src/middleware/auth.js', () => ({
     req.user = { sub: token, email: `${token}@example.com` };
     return next();
   },
+  optional: () => (req, res, next) => {
+    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (token) req.user = { sub: token, email: `${token}@example.com` };
+    return next();
+  },
 }));
 
 vi.mock('../../../server/src/config/stripe.js', () => ({

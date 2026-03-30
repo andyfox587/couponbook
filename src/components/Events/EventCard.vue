@@ -42,21 +42,18 @@
         <span class="capacity-label">{{ confirmedCount }} / {{ event.capacity }} spots filled</span>
       </div>
 
+      <div class="access-badges">
+        <span v-if="event.inviteOnly" class="invite-badge">Invite Only</span>
+        <span v-else-if="event.visibility === 'members_only'" class="members-badge">Members Only</span>
+      </div>
+
       <div class="card-actions">
         <router-link
           :to="event.slug ? `/e/${event.slug}` : `/events/${event.id}`"
           class="btn primary"
         >
-          View Details
+          {{ event.inviteOnly ? 'View Access Details' : 'View Details & RSVP' }}
         </router-link>
-        <button
-          v-if="!event.inviteOnly"
-          class="btn secondary"
-          @click="$emit('rsvp', event)"
-        >
-          RSVP
-        </button>
-        <span v-else class="invite-badge">Invite Only</span>
       </div>
     </div>
   </div>
@@ -69,9 +66,6 @@ export default {
   props: {
     event: { type: Object, required: true },
   },
-
-  emits: ['rsvp'],
-
   computed: {
     cardImage() {
       return this.event.bannerImageUrl || this.event.coverImageUrl || null
@@ -251,6 +245,13 @@ export default {
   align-items: center;
 }
 
+.access-badges {
+  margin-top: auto;
+  margin-bottom: var(--spacing-sm);
+  display: flex;
+  gap: var(--spacing-xs);
+}
+
 .btn {
   padding: var(--spacing-xs) var(--spacing-md);
   border-radius: var(--radius-full);
@@ -268,15 +269,23 @@ export default {
 
 .btn.primary { background: var(--color-primary); color: var(--color-text-on-primary); }
 .btn.primary:hover { background: var(--color-primary-hover); }
-.btn.secondary { background: var(--color-secondary); color: var(--color-text-on-secondary); }
-.btn.secondary:hover { background: var(--color-secondary-hover); }
 
-.invite-badge {
+.invite-badge,
+.members-badge {
   font-size: var(--font-size-xs);
-  background: var(--color-error-light);
-  color: var(--color-error);
   padding: var(--spacing-xs) var(--spacing-sm);
   border-radius: var(--radius-full);
   font-weight: var(--font-weight-medium);
+}
+
+.invite-badge {
+  background: var(--color-error-light);
+  color: var(--color-error);
+}
+
+.members-badge {
+  background: var(--color-primary);
+  color: var(--color-text-on-primary);
+  opacity: 0.9;
 }
 </style>

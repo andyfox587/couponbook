@@ -1,10 +1,11 @@
 // server/src/routes/events.js
 import express from 'express';
 import { db } from '../db.js';
-import { event, eventRsvp, merchant, user } from '../schema.js';
-import { eq, and, isNull, asc, sql } from 'drizzle-orm';
+import { event, eventRsvp, merchant, user, purchase } from '../schema.js';
+import { eq, and, isNull, asc, desc, sql, or } from 'drizzle-orm';
 import auth from '../middleware/auth.js';
-import { resolveLocalUser, canManageEvent } from '../authz/index.js';
+import { optional as optionalAuth } from '../middleware/auth.js';
+import { resolveLocalUser, canManageEvent, canViewEventStats, hasEntitlement } from '../authz/index.js';
 
 const router = express.Router();
 
@@ -15,6 +16,12 @@ const router = express.Router();
 // GET /api/v1/events — published, non-deleted
 router.get('/', async (req, res, next) => {
   try {
+    const groupId = String(req.query.group_id || '').trim() || null;
+    const filters = [eq(event.status, 'published'), isNull(event.deletedAt)];
+    if (groupId) {
+      filters.push(eq(event.groupId, groupId));
+    }
+
     const events = await db
       .select({
         id:              event.id,
@@ -38,13 +45,53 @@ router.get('/', async (req, res, next) => {
         createdAt:       event.createdAt,
         merchantName:    merchant.name,
         merchantLogoUrl: merchant.logoUrl,
-        confirmedCount:  sql`(SELECT COALESCE(SUM(er.attendees), 0) FROM event_rsvp er WHERE er.event_id = ${event.id} AND er.status = 'going' AND er.deleted_at IS NULL)`,
+        confirmedCount:  sql`(SELECT COALESCE(SUM(er.attendees), 0) FROM event_rsvp er WHERE er.event_id = ${event.id} AND er.status::text IN ('going', 'checked_in') AND er.deleted_at IS NULL)`,
       })
       .from(event)
       .leftJoin(merchant, eq(event.merchantId, merchant.id))
-      .where(and(eq(event.status, 'published'), isNull(event.deletedAt)));
+      .where(and(...filters));
 
     res.json(events);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/v1/events/merchant-insights — per-event RSVP summary for the merchant's events
+// MUST be before /:id
+router.get('/merchant-insights', auth(), resolveLocalUser, async (req, res, next) => {
+  try {
+    const dbUser = req.dbUser;
+    const rows = await db
+      .select({
+        eventId:       event.id,
+        eventName:     event.name,
+        merchantName:  merchant.name,
+        startDatetime: event.startDatetime,
+        status:        event.status,
+        capacity:      event.capacity,
+        confirmedRsvps: sql`COALESCE(SUM(CASE WHEN ${eventRsvp.status}::text IN ('going','checked_in') THEN ${eventRsvp.attendees} ELSE 0 END), 0)`.as('confirmed_rsvps'),
+        waitlistCount:  sql`COALESCE(SUM(CASE WHEN ${eventRsvp.status}::text = 'waitlist' THEN ${eventRsvp.attendees} ELSE 0 END), 0)`.as('waitlist_count'),
+        totalRsvps:     sql`COALESCE(SUM(CASE WHEN ${eventRsvp.status}::text != 'cancelled' THEN ${eventRsvp.attendees} ELSE 0 END), 0)`.as('total_rsvps'),
+      })
+      .from(event)
+      .innerJoin(merchant, eq(event.merchantId, merchant.id))
+      .leftJoin(eventRsvp, and(eq(eventRsvp.eventId, event.id), isNull(eventRsvp.deletedAt)))
+      .where(and(eq(merchant.ownerId, dbUser.id), isNull(event.deletedAt)))
+      .groupBy(event.id, event.name, merchant.name, event.startDatetime, event.status, event.capacity)
+      .orderBy(desc(event.startDatetime));
+
+    res.json(rows.map(r => ({
+      eventId:       r.eventId,
+      eventName:     r.eventName,
+      merchantName:  r.merchantName,
+      startDatetime: r.startDatetime,
+      status:        r.status,
+      capacity:      Number(r.capacity),
+      confirmedRsvps: Number(r.confirmedRsvps),
+      waitlistCount:  Number(r.waitlistCount),
+      totalRsvps:     Number(r.totalRsvps),
+    })));
   } catch (err) {
     next(err);
   }
@@ -110,7 +157,7 @@ router.get('/slug/:slug', async (req, res, next) => {
         createdAt:       event.createdAt,
         merchantName:    merchant.name,
         merchantLogoUrl: merchant.logoUrl,
-        confirmedCount:  sql`(SELECT COALESCE(SUM(er.attendees), 0) FROM event_rsvp er WHERE er.event_id = ${event.id} AND er.status = 'going' AND er.deleted_at IS NULL)`,
+        confirmedCount:  sql`(SELECT COALESCE(SUM(er.attendees), 0) FROM event_rsvp er WHERE er.event_id = ${event.id} AND er.status::text IN ('going', 'checked_in') AND er.deleted_at IS NULL)`,
       })
       .from(event)
       .leftJoin(merchant, eq(event.merchantId, merchant.id))
@@ -166,7 +213,7 @@ router.get('/:id', async (req, res, next) => {
         createdAt:       event.createdAt,
         merchantName:    merchant.name,
         merchantLogoUrl: merchant.logoUrl,
-        confirmedCount:  sql`(SELECT COALESCE(SUM(er.attendees), 0) FROM event_rsvp er WHERE er.event_id = ${event.id} AND er.status = 'going' AND er.deleted_at IS NULL)`,
+        confirmedCount:  sql`(SELECT COALESCE(SUM(er.attendees), 0) FROM event_rsvp er WHERE er.event_id = ${event.id} AND er.status::text IN ('going', 'checked_in') AND er.deleted_at IS NULL)`,
       })
       .from(event)
       .leftJoin(merchant, eq(event.merchantId, merchant.id))
@@ -262,12 +309,22 @@ router.delete('/:id', auth(), resolveLocalUser, async (req, res, next) => {
 // ────────────────────────────────────────────────────────────────
 
 // POST /api/v1/events/:id/rsvp
-router.post('/:id/rsvp', async (req, res, next) => {
+router.post('/:id/rsvp', optionalAuth(), async (req, res, next) => {
   const eventId = req.params.id;
   try {
-    // Load event
+    // Load event (select only needed columns to avoid schema mismatches)
     const [foundEvent] = await db
-      .select()
+      .select({
+        id:                 event.id,
+        groupId:            event.groupId,
+        name:               event.name,
+        capacity:           event.capacity,
+        status:             event.status,
+        visibility:         event.visibility,
+        maxTicketsPerGuest: event.maxTicketsPerGuest,
+        inviteOnly:         event.inviteOnly,
+        isFree:             event.isFree,
+      })
       .from(event)
       .where(and(eq(event.id, eventId), isNull(event.deletedAt)));
     if (!foundEvent) return res.status(404).json({ message: 'Event not found' });
@@ -279,25 +336,39 @@ router.post('/:id/rsvp', async (req, res, next) => {
       return res.status(403).json({ error: 'This event is invite-only and cannot be booked' });
     }
 
-    const { attendees = 1, guest_name, guest_email, user_id } = req.body;
+    // Resolve authenticated user from verified JWT (set by optionalAuth)
+    let resolvedUserId = null;
+    let dbUser = null;
+    if (req.user?.sub) {
+      const [tokenUser] = await db
+        .select({ id: user.id, role: user.role })
+        .from(user)
+        .where(eq(user.cognitoSub, req.user.sub))
+        .limit(1);
+      if (tokenUser) {
+        resolvedUserId = tokenUser.id;
+        dbUser = tokenUser;
+      }
+    }
+
+    // Members-only events require authentication + coupon book purchase
+    if (foundEvent.visibility === 'members_only') {
+      if (!resolvedUserId) {
+        return res.status(401).json({ error: 'You must be signed in to RSVP for this members-only event' });
+      }
+      const entitled = await hasEntitlement(dbUser, foundEvent.groupId);
+      if (!entitled) {
+        return res.status(403).json({ error: 'You must purchase the coupon book to RSVP for this members-only event' });
+      }
+    }
+
+    const { attendees = 1, guest_name, guest_email } = req.body;
     const ticketCount = Number(attendees) || 1;
 
     if (ticketCount > foundEvent.maxTicketsPerGuest) {
       return res.status(400).json({
         error: `Maximum ${foundEvent.maxTicketsPerGuest} ticket(s) per guest`,
       });
-    }
-
-    // Resolve authenticated user from Bearer token if present
-    let resolvedUserId = user_id || null;
-    const bearerToken = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-    if (bearerToken) {
-      const [tokenUser] = await db
-        .select({ id: user.id })
-        .from(user)
-        .where(eq(user.cognitoSub, bearerToken))
-        .limit(1);
-      if (tokenUser) resolvedUserId = tokenUser.id;
     }
 
     // Block duplicate RSVPs for authenticated users
@@ -343,7 +414,7 @@ router.post('/:id/rsvp', async (req, res, next) => {
       .where(
         and(
           eq(eventRsvp.eventId, eventId),
-          eq(eventRsvp.status, 'going'),
+            sql`${eventRsvp.status}::text IN ('going', 'checked_in')`,
           isNull(eventRsvp.deletedAt),
         ),
       );
@@ -428,7 +499,7 @@ router.post('/:id/rsvp/:rsvpId/cancel', async (req, res, next) => {
       .where(and(eq(eventRsvp.id, rsvpId), eq(eventRsvp.eventId, eventId), isNull(eventRsvp.deletedAt)));
     if (!rsvp) return res.status(404).json({ message: 'RSVP not found' });
 
-    const wasConfirmed = rsvp.status === 'going';
+    const wasConfirmed = rsvp.status === 'going' || rsvp.status === 'checked_in';
 
     // Soft-delete the RSVP
     await db
@@ -482,6 +553,30 @@ router.post('/:id/rsvp/:rsvpId/promote', auth(), resolveLocalUser, async (req, r
       return res.status(400).json({ error: `Cannot promote an RSVP with status '${rsvp.status}'` });
     }
 
+    const [foundEvent] = await db
+      .select({ id: event.id, capacity: event.capacity })
+      .from(event)
+      .where(and(eq(event.id, eventId), isNull(event.deletedAt)));
+    if (!foundEvent) return res.status(404).json({ message: 'Event not found' });
+
+    if (foundEvent.capacity > 0) {
+      const confirmed = await db
+        .select({ attendees: eventRsvp.attendees })
+        .from(eventRsvp)
+        .where(
+          and(
+            eq(eventRsvp.eventId, eventId),
+            sql`${eventRsvp.status}::text IN ('going', 'checked_in')`,
+            isNull(eventRsvp.deletedAt),
+          ),
+        );
+      const confirmedCount = confirmed.reduce((sum, row) => sum + (row.attendees || 0), 0);
+      const remaining = foundEvent.capacity - confirmedCount;
+      if (remaining < (rsvp.attendees || 1)) {
+        return res.status(400).json({ error: 'No remaining capacity to promote this attendee' });
+      }
+    }
+
     const [promoted] = await db
       .update(eventRsvp)
       .set({ status: 'going', waitlistPosition: null, updatedAt: new Date().toISOString() })
@@ -489,6 +584,110 @@ router.post('/:id/rsvp/:rsvpId/promote', auth(), resolveLocalUser, async (req, r
       .returning();
 
     res.json(promoted);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/v1/events/:id/rsvp/:rsvpId/status — manager updates attendance outcome
+router.patch('/:id/rsvp/:rsvpId/status', auth(), resolveLocalUser, async (req, res, next) => {
+  const { id: eventId, rsvpId } = req.params;
+  try {
+    const allowed = await canManageEvent(req.dbUser, eventId);
+    if (!allowed) return res.status(403).json({ error: 'Forbidden' });
+
+    const status = String(req.body?.status || '').trim();
+    const allowedStatuses = new Set(['checked_in', 'no_show', 'cancelled', 'going', 'waitlist']);
+    if (!allowedStatuses.has(status)) {
+      return res.status(400).json({ error: 'Invalid status value' });
+    }
+
+    const [existing] = await db
+      .select()
+      .from(eventRsvp)
+      .where(and(eq(eventRsvp.id, rsvpId), eq(eventRsvp.eventId, eventId), isNull(eventRsvp.deletedAt)));
+    if (!existing) return res.status(404).json({ message: 'RSVP not found' });
+
+    if (status === 'waitlist') {
+      const waitlisted = await db
+        .select({ waitlistPosition: eventRsvp.waitlistPosition })
+        .from(eventRsvp)
+        .where(and(eq(eventRsvp.eventId, eventId), eq(eventRsvp.status, 'waitlist'), isNull(eventRsvp.deletedAt)));
+      const maxPos = waitlisted.reduce((m, row) => Math.max(m, row.waitlistPosition || 0), 0);
+      const [updated] = await db
+        .update(eventRsvp)
+        .set({ status: 'waitlist', waitlistPosition: maxPos + 1, updatedAt: new Date().toISOString() })
+        .where(eq(eventRsvp.id, rsvpId))
+        .returning();
+      return res.json(updated);
+    }
+
+    const [updated] = await db
+      .update(eventRsvp)
+      .set({ status, waitlistPosition: null, updatedAt: new Date().toISOString() })
+      .where(eq(eventRsvp.id, rsvpId))
+      .returning();
+    return res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/v1/events/:id/stats — aggregate performance stats (no PII)
+// Accessible by: super_admin, merchant owner, or foodie group admin for the event's group
+router.get('/:id/stats', auth(), resolveLocalUser, async (req, res, next) => {
+  const { id: eventId } = req.params;
+  try {
+    const allowed = await canViewEventStats(req.dbUser, eventId);
+    if (!allowed) return res.status(403).json({ error: 'Forbidden' });
+
+    const [foundEvent] = await db
+      .select({ id: event.id, capacity: event.capacity, name: event.name })
+      .from(event)
+      .where(and(eq(event.id, eventId), isNull(event.deletedAt)));
+    if (!foundEvent) return res.status(404).json({ message: 'Event not found' });
+
+    const rows = await db
+      .select({ status: eventRsvp.status, attendees: eventRsvp.attendees })
+      .from(eventRsvp)
+      .where(and(eq(eventRsvp.eventId, eventId), isNull(eventRsvp.deletedAt)));
+
+    const totals = {
+      totalRsvps: 0,
+      confirmedSeats: 0,
+      waitlistCount: 0,
+      cancellations: 0,
+      checkedIns: 0,
+      noShows: 0,
+    };
+
+    for (const row of rows) {
+      const attendees = Number(row.attendees || 0);
+      totals.totalRsvps += attendees;
+      if (row.status === 'going') totals.confirmedSeats += attendees;
+      if (row.status === 'checked_in') {
+        totals.confirmedSeats += attendees;
+        totals.checkedIns += attendees;
+      }
+      if (row.status === 'waitlist') totals.waitlistCount += attendees;
+      if (row.status === 'cancelled') totals.cancellations += attendees;
+      if (row.status === 'no_show') totals.noShows += attendees;
+    }
+
+    const attendanceBase = totals.checkedIns + totals.noShows;
+    const attendanceRate = attendanceBase > 0 ? Number((totals.checkedIns / attendanceBase).toFixed(4)) : 0;
+    const capacityFillPercent = foundEvent.capacity > 0
+      ? Number(Math.min(1, totals.confirmedSeats / foundEvent.capacity).toFixed(4))
+      : null;
+
+    return res.json({
+      eventId,
+      eventName: foundEvent.name,
+      capacity: foundEvent.capacity,
+      ...totals,
+      attendanceRate,
+      capacityFillPercent,
+    });
   } catch (err) {
     next(err);
   }

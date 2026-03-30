@@ -80,6 +80,37 @@ function mockFetchOk(url) {
         }),
     });
   }
+  if (String(url).includes('/events?')) {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([]),
+    });
+  }
+  if (String(url).includes('/attendees')) {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([]),
+    });
+  }
+  if (String(url).includes('/stats')) {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          totalRsvps: 0,
+          confirmedSeats: 0,
+          waitlistCount: 0,
+          cancellations: 0,
+          checkedIns: 0,
+          noShows: 0,
+          attendanceRate: 0,
+          capacityFillPercent: 0,
+        }),
+    });
+  }
   if (String(url).includes('/coupon-submissions')) {
     return Promise.resolve({
       ok: true,

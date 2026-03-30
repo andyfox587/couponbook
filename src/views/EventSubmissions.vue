@@ -81,6 +81,7 @@
       <div v-else class="submissions">
         <h1>{{ editMode ? 'Edit Pending Event Submission' : 'Submit a New Event' }}</h1>
         <p v-if="editMode" class="edit-hint">You can edit this submission until it is reviewed by the Foodie Group admin.</p>
+        <p v-if="submissionError" class="error-text">{{ submissionError }}</p>
 
         <!-- Images + preview combined (shown only on the images page) -->
         <div v-if="currentSurveyPage === 'images'" class="images-and-preview">
@@ -234,6 +235,7 @@ export default {
       submissionSuccess: false,
       existingSubmission: null,
       loadingSubmission: false,
+      submissionError: null,
       currentSurveyPage: null,
       // Image upload state
       coverImageUrl: null,      // URL returned from API (used in submission)
@@ -559,6 +561,7 @@ export default {
 
     async handleSubmit(sender) {
       const d = sender.data
+      this.submissionError = null
 
       const submissionData = {
         name:                        d.name,
@@ -622,7 +625,7 @@ export default {
         this.submissionSuccess = true
       } catch (err) {
         console.error('❌ Event submission error:', err)
-        alert(`⚠️ ${this.editMode ? 'Update' : 'Event submission'} failed: ${err.message}`)
+        this.submissionError = `${this.editMode ? 'Update' : 'Event submission'} failed: ${err.message}`
       }
     },
 
@@ -636,6 +639,7 @@ export default {
 
     submitAnother() {
       this.submissionSuccess = false
+      this.submissionError = null
       if (this.coverImagePreview?.startsWith('blob:')) URL.revokeObjectURL(this.coverImagePreview)
       if (this.bannerImagePreview?.startsWith('blob:')) URL.revokeObjectURL(this.bannerImagePreview)
       this.coverImageUrl = null

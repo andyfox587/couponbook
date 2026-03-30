@@ -18,6 +18,11 @@ vi.mock('../../../server/src/middleware/auth.js', () => ({
     req.user = { sub: token, email: `${token}@example.com` };
     return next();
   },
+  optional: () => (req, res, next) => {
+    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (token) req.user = { sub: token, email: `${token}@example.com` };
+    return next();
+  },
 }));
 
 vi.mock('../../../server/src/config/stripe.js', () => ({
@@ -125,6 +130,28 @@ describe('Event Overview APIs', () => {
       expect(res.body.upcomingPublishedEvents).toBeGreaterThanOrEqual(1);
     }, TEST_TIMEOUT_MS);
 
+    it('accepts days query and counts checked-in attendance seats', async () => {
+      const groupAdmin = await seedHelpers.createUser(db, { cognitoSub: 'evov-days-admin', role: 'foodie_group_admin' });
+      const merchantOwner = await seedHelpers.createUser(db, { cognitoSub: 'evov-days-merchant', role: 'merchant' });
+      const group = await seedHelpers.createFoodieGroup(db, { name: 'Days Group' });
+      const m = await seedHelpers.createMerchant(db, merchantOwner.id, { name: 'Days Merchant' });
+      await seedHelpers.createMembership(db, groupAdmin.id, group.id, { role: 'foodie_group_admin' });
+
+      const futureEvent = await seedHelpers.createEvent(db, group.id, m.id, {
+        name: 'Checked In Event',
+        startDatetime: new Date(Date.now() + 5 * 86400000).toISOString(),
+      });
+      const attendee = await seedHelpers.createUser(db, { email: 'checkedin@test.com' });
+      await seedHelpers.createEventRsvp(db, futureEvent.id, { userId: attendee.id, status: 'checked_in', attendees: 2 });
+
+      const res = await request(app)
+        .get(`/api/v1/groups/${group.id}/event-overview?days=7`)
+        .set('Authorization', 'Bearer evov-days-admin');
+
+      expect(res.status).toBe(200);
+      expect(res.body.rsvpsLast30Days).toBe(2);
+    }, TEST_TIMEOUT_MS);
+
     it('returns zero and null when no RSVPs exist', async () => {
       const groupAdmin = await seedHelpers.createUser(db, { cognitoSub: 'evov-empty-admin', role: 'foodie_group_admin' });
       const group = await seedHelpers.createFoodieGroup(db);
@@ -185,6 +212,59 @@ describe('Event Overview APIs', () => {
         .get(`/api/v1/groups/${group.id}/event-overview`)
         .set('Authorization', 'Bearer evov-auth-admin');
       expect(allowed.status).toBe(200);
+    }, TEST_TIMEOUT_MS);
+  });
+
+  // ─── GET /api/v1/events/:id/stats — foodie group admin access ───
+
+  describe('GET /api/v1/events/:id/stats — role-based access', () => {
+    it('foodie group admin can view aggregate stats for events in their group', async () => {
+      const groupAdmin = await seedHelpers.createUser(db, { cognitoSub: 'fga-stats-admin', role: 'foodie_group_admin' });
+      const merchantOwner = await seedHelpers.createUser(db, { cognitoSub: 'fga-stats-merch', role: 'merchant' });
+      const group = await seedHelpers.createFoodieGroup(db);
+      const m = await seedHelpers.createMerchant(db, merchantOwner.id);
+      await seedHelpers.createMembership(db, groupAdmin.id, group.id, { role: 'foodie_group_admin' });
+      const evt = await seedHelpers.createEvent(db, group.id, m.id, { name: 'FGA Stats Event' });
+      await seedHelpers.createEventRsvp(db, evt.id, { userId: null, status: 'going', guestName: 'Alice', guestEmail: 'alice@test.com' });
+
+      const res = await request(app)
+        .get(`/api/v1/events/${evt.id}/stats`)
+        .set('Authorization', 'Bearer fga-stats-admin');
+
+      expect(res.status).toBe(200);
+      expect(res.body.totalRsvps).toBeGreaterThanOrEqual(1);
+      expect(res.body).not.toHaveProperty('attendees');
+    }, TEST_TIMEOUT_MS);
+
+    it('foodie group admin cannot access the attendee list (PII)', async () => {
+      const groupAdmin = await seedHelpers.createUser(db, { cognitoSub: 'fga-attendees-admin', role: 'foodie_group_admin' });
+      const merchantOwner = await seedHelpers.createUser(db, { cognitoSub: 'fga-attendees-merch', role: 'merchant' });
+      const group = await seedHelpers.createFoodieGroup(db);
+      const m = await seedHelpers.createMerchant(db, merchantOwner.id);
+      await seedHelpers.createMembership(db, groupAdmin.id, group.id, { role: 'foodie_group_admin' });
+      const evt = await seedHelpers.createEvent(db, group.id, m.id, { name: 'FGA Attendees Event' });
+
+      const res = await request(app)
+        .get(`/api/v1/events/${evt.id}/attendees`)
+        .set('Authorization', 'Bearer fga-attendees-admin');
+
+      expect(res.status).toBe(403);
+    }, TEST_TIMEOUT_MS);
+
+    it('foodie group admin cannot view stats for an event in a different group', async () => {
+      const groupAdmin = await seedHelpers.createUser(db, { cognitoSub: 'fga-xgroup-admin', role: 'foodie_group_admin' });
+      const merchantOwner = await seedHelpers.createUser(db, { cognitoSub: 'fga-xgroup-merch', role: 'merchant' });
+      const group = await seedHelpers.createFoodieGroup(db);
+      const otherGroup = await seedHelpers.createFoodieGroup(db);
+      const m = await seedHelpers.createMerchant(db, merchantOwner.id);
+      await seedHelpers.createMembership(db, groupAdmin.id, group.id, { role: 'foodie_group_admin' });
+      const evt = await seedHelpers.createEvent(db, otherGroup.id, m.id, { name: 'Other Group Event' });
+
+      const res = await request(app)
+        .get(`/api/v1/events/${evt.id}/stats`)
+        .set('Authorization', 'Bearer fga-xgroup-admin');
+
+      expect(res.status).toBe(403);
     }, TEST_TIMEOUT_MS);
   });
 });

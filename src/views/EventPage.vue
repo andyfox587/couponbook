@@ -17,7 +17,7 @@
         <p class="muted">No upcoming events right now. Check back soon!</p>
       </div>
 
-      <EventList v-else :events="events" @rsvp-submitted="onRsvpSubmitted" />
+      <EventList v-else :events="events" />
     </section>
   </div>
 </template>
@@ -54,11 +54,6 @@ export default {
       } finally {
         this.loading = false
       }
-    },
-
-    onRsvpSubmitted() {
-      // Refresh to reflect updated capacity
-      this.load()
     },
   },
 }

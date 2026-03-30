@@ -1,7 +1,22 @@
 <template>
   <div class="event-rsvp">
+    <!-- Members-only gate: not signed in -->
+    <div v-if="isMembersOnly && !isAuthenticated" class="members-gate">
+      <i class="pi pi-lock gate-icon"></i>
+      <h3>Members Only</h3>
+      <p>Sign in and purchase the coupon book to RSVP for this event.</p>
+      <button class="btn primary" @click="$emit('login-requested')">Sign In</button>
+    </div>
+
+    <!-- Members-only gate: signed in but no purchase -->
+    <div v-else-if="isMembersOnly && !hasMembership" class="members-gate">
+      <i class="pi pi-lock gate-icon"></i>
+      <h3>Coupon Book Required</h3>
+      <p>You need to purchase the coupon book for this group to RSVP for this members-only event.</p>
+    </div>
+
     <!-- Success state -->
-    <div v-if="rsvpResult" class="rsvp-success">
+    <div v-else-if="rsvpResult" class="rsvp-success">
       <i class="pi pi-check-circle success-icon"></i>
       <h3 v-if="rsvpResult.status === 'going'">You're in!</h3>
       <h3 v-else>You're on the waitlist</h3>
@@ -9,6 +24,7 @@
         Waitlist position: #{{ rsvpResult.waitlistPosition }}
       </p>
       <button class="btn secondary" @click="cancelConfirmed">Cancel RSVP</button>
+      <div v-if="submitError" class="error-msg">{{ submitError }}</div>
     </div>
 
     <!-- RSVP form -->
@@ -34,10 +50,42 @@
 
       <div v-if="submitError" class="error-msg">{{ submitError }}</div>
 
-      <button type="submit" class="btn primary" :disabled="submitting">
+      <div v-if="isPaidEvent && !checkoutComplete" class="checkout-placeholder">
+        <p class="checkout-title">Demo Checkout Required</p>
+        <p class="checkout-copy">
+          This event requires ticket purchase. Use this placeholder step to simulate Stripe checkout.
+        </p>
+        <button
+          type="button"
+          class="btn checkout-btn"
+          :disabled="submitting"
+          @click="openDemoCheckout"
+        >
+          Proceed to Demo Checkout
+        </button>
+      </div>
+
+      <button type="submit" class="btn primary" :disabled="submitDisabled">
         {{ submitting ? 'Submitting…' : 'RSVP Now' }}
       </button>
     </form>
+
+    <div v-if="showCheckoutDialog" class="checkout-overlay" role="dialog" aria-modal="true">
+      <div class="checkout-modal">
+        <h4>Demo Stripe Checkout</h4>
+        <p class="checkout-copy">
+          Placeholder only: no payment is processed. Click "Complete Demo Payment" to continue RSVP.
+        </p>
+        <div class="checkout-actions">
+          <button type="button" class="btn secondary-outline" @click="closeDemoCheckout">
+            Cancel
+          </button>
+          <button type="button" class="btn primary" @click="completeDemoCheckout">
+            Complete Demo Payment
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -49,9 +97,23 @@ export default {
 
   props: {
     event: { type: Object, required: true },
+    isAuthenticated: { type: Boolean, default: false },
+    hasMembership: { type: Boolean, default: false },
   },
 
-  emits: ['rsvp-submitted', 'rsvp-cancelled'],
+  emits: ['rsvp-submitted', 'rsvp-cancelled', 'login-requested'],
+
+  computed: {
+    isMembersOnly() {
+      return this.event?.visibility === 'members_only'
+    },
+    isPaidEvent() {
+      return this.event?.isFree === false
+    },
+    submitDisabled() {
+      return this.submitting || (this.isPaidEvent && !this.checkoutComplete)
+    },
+  },
 
   data() {
     return {
@@ -63,11 +125,27 @@ export default {
       rsvpResult: null,
       submitting: false,
       submitError: null,
+      showCheckoutDialog: false,
+      checkoutComplete: false,
     }
   },
 
   methods: {
+    openDemoCheckout() {
+      this.showCheckoutDialog = true
+    },
+    closeDemoCheckout() {
+      this.showCheckoutDialog = false
+    },
+    completeDemoCheckout() {
+      this.checkoutComplete = true
+      this.showCheckoutDialog = false
+    },
     async submitRSVP() {
+      if (this.isPaidEvent && !this.checkoutComplete) {
+        this.submitError = 'Please complete demo checkout first.'
+        return
+      }
       this.submitting = true
       this.submitError = null
       try {
@@ -88,6 +166,7 @@ export default {
 
     async cancelConfirmed() {
       if (!this.rsvpResult) return
+      this.submitError = null
       try {
         await cancelRsvp(this.event.id, this.rsvpResult.id)
         const prev = this.rsvpResult
@@ -95,7 +174,7 @@ export default {
         this.$emit('rsvp-cancelled', prev)
       } catch (err) {
         console.error('[EventRSVP] cancelRsvp error', err)
-        alert(`Cancel failed: ${err.message}`)
+        this.submitError = err.message || 'Cancel failed. Please try again.'
       }
     },
   },
@@ -174,6 +253,25 @@ input:focus, select:focus {
 .btn.secondary { background: var(--color-error); color: var(--color-text-on-error); margin-top: var(--spacing-sm); }
 .btn.secondary:hover:not(:disabled) { background: var(--color-error-hover); }
 
+.btn.checkout-btn {
+  background: var(--color-primary);
+  color: var(--color-text-on-primary);
+}
+
+.btn.checkout-btn:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+}
+
+.secondary-outline {
+  background: transparent;
+  border: 1px solid var(--color-border-light);
+  color: var(--color-text-primary);
+}
+
+.secondary-outline:hover:not(:disabled) {
+  background: var(--color-bg-secondary);
+}
+
 .rsvp-success {
   text-align: center;
   display: flex;
@@ -184,4 +282,77 @@ input:focus, select:focus {
 
 .success-icon { font-size: 3rem; color: var(--color-success); }
 .waitlist-pos { color: var(--color-text-secondary); font-size: var(--font-size-sm); }
+
+.members-gate {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-md);
+}
+
+.gate-icon { font-size: 2.5rem; color: var(--color-text-muted); }
+
+.members-gate h3 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-lg);
+}
+
+.members-gate p {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  margin: 0;
+  line-height: var(--line-height-relaxed);
+}
+
+.checkout-placeholder {
+  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-md);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+}
+
+.checkout-title {
+  margin: 0 0 var(--spacing-xs);
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.checkout-copy {
+  margin: 0 0 var(--spacing-sm);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+}
+
+.checkout-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+  padding: var(--spacing-md);
+}
+
+.checkout-modal {
+  width: min(420px, 100%);
+  background: var(--color-bg-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--spacing-lg);
+}
+
+.checkout-modal h4 {
+  margin: 0 0 var(--spacing-sm);
+  color: var(--color-text-primary);
+}
+
+.checkout-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacing-sm);
+}
 </style>

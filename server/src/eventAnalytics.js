@@ -23,14 +23,14 @@ export async function getFoodieGroupEventOverview(groupId, days = 30) {
     eq(event.status, 'published'),
     isNull(event.deletedAt),
     isNull(eventRsvp.deletedAt),
-    eq(eventRsvp.status, 'going'),
+    sql`${eventRsvp.status}::text IN ('going', 'checked_in')`,
     gte(eventRsvp.createdAt, cutoff),
   );
 
   const [totalRows, topEventRows, upcomingRows] = await Promise.all([
     db
       .select({
-        rsvpsLast30Days: sql`count(${eventRsvp.id})`.as('rsvps_last_30_days'),
+        rsvpsLast30Days: sql`COALESCE(SUM(${eventRsvp.attendees}), 0)`.as('rsvps_last_30_days'),
       })
       .from(eventRsvp)
       .innerJoin(event, eq(event.id, eventRsvp.eventId))
@@ -42,14 +42,14 @@ export async function getFoodieGroupEventOverview(groupId, days = 30) {
         eventName: event.name,
         merchantName: merchant.name,
         startDatetime: event.startDatetime,
-        rsvps: sql`count(${eventRsvp.id})`.as('rsvps'),
+        rsvps: sql`COALESCE(SUM(${eventRsvp.attendees}), 0)`.as('rsvps'),
       })
       .from(eventRsvp)
       .innerJoin(event, eq(event.id, eventRsvp.eventId))
       .innerJoin(merchant, eq(merchant.id, event.merchantId))
       .where(rsvpFilters)
       .groupBy(event.id, event.name, merchant.name, event.startDatetime)
-      .orderBy(desc(sql`count(${eventRsvp.id})`), asc(event.name), asc(event.id))
+      .orderBy(desc(sql`COALESCE(SUM(${eventRsvp.attendees}), 0)`), asc(event.name), asc(event.id))
       .limit(1),
 
     db

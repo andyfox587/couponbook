@@ -1,5 +1,5 @@
 import { pgTable, foreignKey, uuid, timestamp, jsonb, integer, varchar, text, doublePrecision, boolean, unique, pgEnum } from "drizzle-orm/pg-core";
-export const attendanceStatus = pgEnum("attendance_status", ['going', 'waitlist', 'cancelled']);
+export const attendanceStatus = pgEnum("attendance_status", ['going', 'waitlist', 'cancelled', 'checked_in', 'no_show']);
 export const couponType = pgEnum("coupon_type", ['percent', 'amount', 'bogo', 'free_item']);
 export const purchaseStatus = pgEnum("purchase_status", ['created', 'pending', 'paid', 'expired', 'refunded']);
 export const purchaseProvider = pgEnum("purchase_provider", ['stripe', 'test']);
@@ -116,13 +116,13 @@ export const event = pgTable("event", {
     location: varchar({ length: 255 }),
     capacity: integer().notNull(),
     coverImageUrl: varchar("cover_image_url", { length: 500 }),
-    slug: varchar({ length: 255 }),
+    slug: varchar("slug", { length: 255 }),
     memberAccessToken: varchar("member_access_token", { length: 255 }),
     status: eventStatus("status").default('published').notNull(),
     priceCents: integer("price_cents"),
     membersOnlyPriceCents: integer("members_only_price_cents"),
     isFree: boolean("is_free").default(true).notNull(),
-    visibility: eventVisibility().default('public').notNull(),
+    visibility: eventVisibility("visibility").default('public').notNull(),
     maxTicketsPerGuest: integer("max_tickets_per_guest").default(1).notNull(),
     inviteOnly: boolean("invite_only").default(false).notNull(),
     bannerImageUrl: varchar("banner_image_url", { length: 500 }),

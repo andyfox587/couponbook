@@ -22,6 +22,11 @@ vi.mock('../../../../server/src/middleware/auth.js', () => ({
     req.user = { sub: 'test-sub', email: 'test@example.com' };
     next();
   }),
+  optional: vi.fn(() => (req, res, next) => {
+    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (token) req.user = { sub: token, email: 'test@example.com' };
+    next();
+  }),
 }));
 
 import { db } from '../../../../server/src/db.js';

@@ -563,6 +563,87 @@
             </div>
           </div>
         </section>
+
+        <!-- ── Events Tab ──────────────────────────────────────── -->
+        <section v-if="activeTab === 'events'" class="dashboard-section">
+          <h2>Event Attendee Management</h2>
+
+          <div class="section-actions">
+            <input
+              v-model.trim="eventsSearch"
+              type="text"
+              placeholder="Search by event, merchant, or group…"
+              class="search-input"
+              @keyup.enter="loadAdminEvents"
+            />
+            <button class="btn secondary" @click="loadAdminEvents">Search</button>
+          </div>
+
+          <div v-if="eventsLoading" class="loading-state">Loading events…</div>
+          <div v-else-if="eventsError" class="error-state">{{ eventsError }}</div>
+          <div v-else-if="!adminEvents.length" class="empty-state">No events found.</div>
+
+          <div v-else>
+            <ul class="insights-list">
+              <li v-for="evt in adminEvents" :key="evt.eventId" class="insight-row">
+                <div class="insight-copy">
+                  <strong>{{ evt.eventName }}</strong>
+                  <div class="muted tiny">{{ evt.merchantName }} · {{ evt.groupName }}</div>
+                  <div class="muted tiny">
+                    {{ evt.confirmedRsvps }} confirmed · {{ evt.waitlistCount }} waitlisted
+                    <span v-if="evt.startDatetime"> · {{ formatDate(evt.startDatetime) }}</span>
+                    <span :class="['status-badge', evt.status]"> {{ evt.status }}</span>
+                  </div>
+                </div>
+                <button class="btn tertiary compact" @click="loadAdminEventAttendees(evt.eventId)">
+                  {{ selectedAdminEventId === evt.eventId ? 'Refresh' : 'View attendees' }}
+                </button>
+              </li>
+            </ul>
+
+            <div v-if="selectedAdminEventId" class="coupon-redemptions-panel" style="margin-top: var(--spacing-lg);">
+              <div class="details-header">
+                <strong>{{ (adminEvents.find(e => e.eventId === selectedAdminEventId) || {}).eventName || 'Event' }}</strong>
+                <span class="muted tiny">{{ adminEventAttendees.length }} attendee{{ adminEventAttendees.length === 1 ? '' : 's' }}</span>
+              </div>
+
+              <div v-if="adminAttendeesLoading" class="loading-state">Loading attendees…</div>
+              <div v-else-if="adminAttendeesError" class="error-state">{{ adminAttendeesError }}</div>
+
+              <div v-else-if="adminEventAttendees.length" class="data-table-container">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Email</th>
+                      <th>Party</th>
+                      <th>Status</th>
+                      <th>Waitlist</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="a in adminEventAttendees" :key="a.id">
+                      <td>{{ a.userName || a.guestName || '—' }}</td>
+                      <td>{{ a.userEmail || a.guestEmail || '—' }}</td>
+                      <td>{{ a.attendees }}</td>
+                      <td>{{ a.status }}</td>
+                      <td>{{ a.waitlistPosition || '—' }}</td>
+                      <td class="action-cell">
+                        <button class="btn compact tertiary" :disabled="a.status !== 'waitlist'" @click="adminPromoteAttendee(a)">Promote</button>
+                        <button class="btn compact tertiary" :disabled="a.status === 'cancelled'" @click="adminCancelAttendee(a)">Cancel</button>
+                        <button class="btn compact tertiary" :disabled="a.status !== 'going'" @click="adminCheckIn(a)">Check-in</button>
+                        <button class="btn compact tertiary" :disabled="a.status !== 'going' && a.status !== 'checked_in'" @click="adminNoShow(a)">No-show</button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div v-else class="empty-state">No attendees for this event.</div>
+            </div>
+          </div>
+        </section>
       </div>
     </template>
 
@@ -1018,6 +1099,7 @@ export default {
         { id: "groups", label: "Groups", icon: "pi-sitemap" },
         { id: "payments", label: "Payments", icon: "pi-credit-card" },
         { id: "coupons", label: "Coupons", icon: "pi-ticket" },
+        { id: "events", label: "Events", icon: "pi-calendar" },
       ],
 
       // Overview
@@ -1121,6 +1203,16 @@ export default {
       editCouponModal: null,
       editCouponForm: {},
       editCouponSaving: false,
+
+      // Events tab
+      eventsSearch: '',
+      adminEvents: [],
+      eventsLoading: false,
+      eventsError: null,
+      selectedAdminEventId: null,
+      adminEventAttendees: [],
+      adminAttendeesLoading: false,
+      adminAttendeesError: null,
     };
   },
 
@@ -1795,6 +1887,8 @@ export default {
         this.searchGroups();
       } else if (tabId === 'payments' && this.purchases.length === 0) {
         this.loadPurchases();
+      } else if (tabId === 'events' && this.adminEvents.length === 0) {
+        this.loadAdminEvents();
       }
     },
 
@@ -2019,6 +2113,103 @@ export default {
       } catch (err) {
         console.error("reprocessEvent error:", err);
         alert("Failed to reprocess event");
+      }
+    },
+
+    // ==================== EVENTS TAB ====================
+    async loadAdminEvents() {
+      this.eventsLoading = true;
+      this.eventsError = null;
+      this.selectedAdminEventId = null;
+      this.adminEventAttendees = [];
+      try {
+        const headers = await this.getAuthHeaders();
+        const params = new URLSearchParams();
+        if (this.eventsSearch) params.set('search', this.eventsSearch);
+        const res = await fetch(`${API_BASE}/admin/events${params.toString() ? '?' + params : ''}`, { headers });
+        if (!res.ok) throw new Error(`Failed to load events: ${res.status}`);
+        this.adminEvents = await res.json();
+      } catch (err) {
+        console.error('loadAdminEvents error:', err);
+        this.eventsError = err.message || 'Could not load events.';
+      } finally {
+        this.eventsLoading = false;
+      }
+    },
+
+    async loadAdminEventAttendees(eventId) {
+      this.selectedAdminEventId = eventId;
+      this.adminAttendeesLoading = true;
+      this.adminAttendeesError = null;
+      this.adminEventAttendees = [];
+      try {
+        const headers = await this.getAuthHeaders();
+        const res = await fetch(`${API_BASE}/events/${eventId}/attendees`, { headers });
+        if (!res.ok) throw new Error(`Failed to load attendees: ${res.status}`);
+        this.adminEventAttendees = await res.json();
+      } catch (err) {
+        console.error('loadAdminEventAttendees error:', err);
+        this.adminAttendeesError = err.message || 'Could not load attendees.';
+      } finally {
+        this.adminAttendeesLoading = false;
+      }
+    },
+
+    async adminPromoteAttendee(attendee) {
+      try {
+        const headers = await this.getAuthHeaders();
+        const res = await fetch(`${API_BASE}/events/${this.selectedAdminEventId}/rsvp/${attendee.id}/promote`, {
+          method: 'POST', headers,
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `Failed: ${res.status}`);
+        }
+        await this.loadAdminEventAttendees(this.selectedAdminEventId);
+      } catch (err) {
+        this.adminAttendeesError = err.message || 'Could not promote attendee.';
+      }
+    },
+
+    async adminCancelAttendee(attendee) {
+      try {
+        const res = await fetch(`${API_BASE}/events/${this.selectedAdminEventId}/rsvp/${attendee.id}/cancel`, {
+          method: 'POST',
+        });
+        if (!res.ok) throw new Error(`Cancel failed: ${res.status}`);
+        await this.loadAdminEventAttendees(this.selectedAdminEventId);
+      } catch (err) {
+        this.adminAttendeesError = err.message || 'Could not cancel attendee.';
+      }
+    },
+
+    async adminCheckIn(attendee) {
+      try {
+        const headers = await this.getAuthHeaders();
+        const res = await fetch(`${API_BASE}/events/${this.selectedAdminEventId}/rsvp/${attendee.id}/status`, {
+          method: 'PATCH',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'checked_in' }),
+        });
+        if (!res.ok) throw new Error(`Check-in failed: ${res.status}`);
+        await this.loadAdminEventAttendees(this.selectedAdminEventId);
+      } catch (err) {
+        this.adminAttendeesError = err.message || 'Could not check in attendee.';
+      }
+    },
+
+    async adminNoShow(attendee) {
+      try {
+        const headers = await this.getAuthHeaders();
+        const res = await fetch(`${API_BASE}/events/${this.selectedAdminEventId}/rsvp/${attendee.id}/status`, {
+          method: 'PATCH',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'no_show' }),
+        });
+        if (!res.ok) throw new Error(`No-show failed: ${res.status}`);
+        await this.loadAdminEventAttendees(this.selectedAdminEventId);
+      } catch (err) {
+        this.adminAttendeesError = err.message || 'Could not mark no-show.';
       }
     },
 
