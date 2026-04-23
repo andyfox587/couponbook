@@ -86,6 +86,20 @@ Webhooks go to **different URLs** depending on environment. You don’t change a
 
 In dev, keep `npm run stripe:listen` running in a separate terminal so events from Stripe (or the CLI) are forwarded to your local server.
 
+#### Required Stripe webhook event subscriptions
+
+For one-time billing, subscribe to:
+- `checkout.session.completed`
+- `checkout.session.expired`
+- `charge.refunded`
+
+For subscription billing (required when any group uses `billing_model='subscription'`), also subscribe to:
+- `invoice.payment_succeeded`
+- `invoice.payment_failed`
+- `invoice.upcoming`
+- `customer.subscription.updated`
+- `customer.subscription.deleted`
+
 #### Verifying the production webhook (before or after deploy)
 
 1. **Stripe CLI in live mode**  
@@ -172,6 +186,17 @@ Create a `.env` file in the root directory. Key variables include:
 | `STRIPE_WEBHOOK_SECRET` | Per-environment: dev = from `stripe listen`; production = from Dashboard webhook endpoint |
 | `APP_URL` | App base URL for redirects (e.g. `https://your-app.vercel.app` in production) |
 
+### Email & Cron (subscription billing)
+| Variable | Description |
+|----------|-------------|
+| `EMAIL_FROM` | Verified SES sender address (e.g. `noreply@vivaspot.app`) |
+| `AWS_SES_REGION` | AWS region for SES (defaults to `AWS_REGION`) |
+| `CRON_SECRET` | Random secret used to authenticate Vercel cron calls to `/api/v1/cron/*` (legacy alias: `/api/v1/admin/cron/*`). Generate with `openssl rand -hex 32`. |
+| `ACCESS_MIGRATION_GRACE_DAYS` | Days of access to grant when backfilling existing purchases (default: `365`) |
+
+### Stripe Customer Portal (subscription management)
+Configure the Stripe Customer Portal at [dashboard.stripe.com/settings/billing/portal](https://dashboard.stripe.com/settings/billing/portal) to allow subscribers to cancel, update payment methods, and view invoices.
+
 ---
 
 ## 📂 Project Structure
@@ -216,6 +241,68 @@ vercel --prod
 
 ### Local Development
 The project can also be run locally using the `npm run dev` and `npm run serve` commands.
+
+---
+
+## 🔄 Subscription Rollout Runbook
+
+Follow this sequence when enabling subscription billing for the first time or for a new group.
+
+### 1. Database Migration
+
+```bash
+# Apply schema migration 0014 (additive, safe to run on live DB)
+npm run migrate
+```
+
+### 2. Backfill Existing Purchases (one-time)
+
+```bash
+# Preview what will change
+node scripts/migrate-existing-purchases.js --dry-run
+
+# Apply (stamps expires_at = now + ACCESS_MIGRATION_GRACE_DAYS on legacy purchases)
+node scripts/migrate-existing-purchases.js
+```
+
+After this runs, `expires_at IS NULL` means admin_grant (perpetual) only.
+
+### 3. Stripe Configuration
+
+1. Add new webhook event subscriptions (see [Required Stripe webhook event subscriptions](#required-stripe-webhook-event-subscriptions)).
+2. Configure the [Stripe Customer Portal](https://dashboard.stripe.com/settings/billing/portal):
+   - Enable subscription cancellation
+   - Enable payment method updates
+   - Enable invoice download
+
+### 4. Environment Variables
+
+Set in your Vercel project:
+- `EMAIL_FROM` — verified SES sender address
+- `AWS_SES_REGION` — region for SES
+- `CRON_SECRET` — secret for cron endpoint auth
+- Ensure `STRIPE_WEBHOOK_SECRET` is updated if you added new events to the endpoint
+
+### 5. Deploy Application
+
+```bash
+vercel --prod
+```
+
+### 6. Enable Subscription for a Group (super admin)
+
+1. In the Super Admin Dashboard → Groups → edit a group.
+2. Set `billing_model = 'subscription'`.
+3. In the pricing panel, set `billing_interval` and `billing_interval_count` (e.g. `month` / `1` for monthly).
+4. This creates a recurring Stripe Price automatically.
+
+### 7. Verify on Staging
+
+- Complete a test subscription checkout with a Stripe test card.
+- Verify `purchase.subscriptionStatus = 'active'` and `expires_at` is set.
+- Simulate a renewal: `stripe trigger invoice.payment_succeeded`.
+- Simulate cancellation: `stripe trigger customer.subscription.deleted`.
+- Confirm cron endpoint: `curl -X POST /api/v1/cron/renewal-reminders -H "x-cron-secret: $CRON_SECRET"` (the legacy alias `/api/v1/admin/cron/renewal-reminders` also works).
 
 ---
 

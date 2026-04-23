@@ -70,26 +70,28 @@ function validateStripeEnv() {
 }
 
 /**
- * Validates that a Stripe ID matches the current environment mode
- * @param {string} stripeId - The Stripe ID to validate (price_*, prod_*, etc.)
- * @param {string} idType - Type of ID for error messages (e.g., 'Price', 'Product')
- * @throws {Error} If the ID doesn't match the environment mode
+ * Validates that a Stripe ID matches the current environment mode.
+ *
+ * NOTE: Stripe resource IDs (prod_*, price_*, plan_*) use the same format in both
+ * test and live mode — only API keys (sk_test_/sk_live_) encode the environment.
+ * Therefore this function only validates the legacy _test_ infix pattern used by
+ * older Stripe CLI fixtures; it no longer attempts to flag regular resource IDs as
+ * "live" because that check produced false positives on all real Stripe IDs.
+ *
+ * @param {string} stripeId - The Stripe ID to validate
+ * @param {string} idType - Type of ID for error messages
  */
 function validateStripeIdMode(stripeId, idType = 'Stripe ID') {
-  if (!stripeId) return; // Allow null/undefined IDs
-  
+  if (!stripeId) return;
+
   const mode = stripeConfig?.mode;
-  if (!mode) return; // Skip validation if mode not set (shouldn't happen after init)
-  
-  const isTestId = stripeId.includes('_test_');
-  const isLiveId = !isTestId && (stripeId.startsWith('price_') || stripeId.startsWith('prod_') || stripeId.startsWith('plan_'));
-  
-  if (mode === 'live' && isTestId) {
-    throw new Error(`${idType} "${stripeId}" is a test ID but STRIPE_MODE is "live". Cannot use test IDs in production.`);
-  }
-  
-  if (mode === 'test' && isLiveId && !isTestId) {
-    throw new Error(`${idType} "${stripeId}" appears to be a live ID but STRIPE_MODE is "test". Cannot use live IDs in test mode.`);
+  if (!mode) return;
+
+  // Only flag IDs that explicitly contain the _test_ infix (e.g. old CLI fixture IDs)
+  // while running in live mode — a clear copy-paste mistake.
+  const isExplicitTestId = stripeId.includes('_test_');
+  if (mode === 'live' && isExplicitTestId) {
+    throw new Error(`${idType} "${stripeId}" contains "_test_" but STRIPE_MODE is "live". Cannot use test-fixture IDs in production.`);
   }
 }
 

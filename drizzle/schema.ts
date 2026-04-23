@@ -4,7 +4,8 @@ import { sql } from "drizzle-orm"
 export const attendanceStatus = pgEnum("attendance_status", ['going', 'waitlist', 'cancelled', 'checked_in', 'no_show'])
 export const couponType = pgEnum("coupon_type", ['percent', 'amount', 'bogo', 'free_item'])
 export const purchaseStatus = pgEnum("purchase_status", ['created', 'pending', 'paid', 'expired', 'refunded'])
-export const purchaseProvider = pgEnum("purchase_provider", ['stripe', 'test'])
+export const purchaseProvider = pgEnum("purchase_provider", ['stripe', 'test', 'admin_grant'])
+export const billingModel = pgEnum("billing_model", ['one_time', 'subscription'])
 export const role = pgEnum("role", ['super_admin', 'merchant', 'customer', 'foodie_group_admin'])
 export const submissionState = pgEnum("submission_state", ['pending', 'approved', 'rejected'])
 export const eventStatus = pgEnum("event_status", ['draft', 'published', 'cancelled'])
@@ -194,6 +195,7 @@ export const foodieGroup = pgTable("foodie_group", {
 	bannerImageUrl: varchar("banner_image_url", { length: 500 }),
 	map: jsonb(),
 	socialLinks: jsonb("social_links"),
+	billingModel: billingModel("billing_model").default('one_time').notNull(),
 	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow().notNull(),
 	archivedAt: timestamp("archived_at", { mode: 'string' }),
@@ -256,6 +258,14 @@ export const purchase = pgTable("purchase", {
 	purchasedAt: timestamp("purchased_at", { mode: 'string' }),
 	expiresAt: timestamp("expires_at", { mode: 'string' }),
 	refundedAt: timestamp("refunded_at", { mode: 'string' }),
+	// Gift support
+	giftedByUserId: uuid("gifted_by_user_id"),
+	// Subscription lifecycle
+	subscriptionStatus: varchar("subscription_status", { length: 32 }),
+	currentPeriodStart: timestamp("current_period_start", { mode: 'string' }),
+	currentPeriodEnd: timestamp("current_period_end", { mode: 'string' }),
+	cancelAtPeriodEnd: boolean("cancel_at_period_end").default(false).notNull(),
+	renewalReminderSentAt: timestamp("renewal_reminder_sent_at", { mode: 'string' }),
 	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
@@ -269,6 +279,11 @@ export const purchase = pgTable("purchase", {
 			foreignColumns: [foodieGroup.id],
 			name: "purchase_group_id_foodie_group_id_fk"
 		}),
+	foreignKey({
+			columns: [table.giftedByUserId],
+			foreignColumns: [user.id],
+			name: "purchase_gifted_by_user_id_user_id_fk"
+		}).onDelete("set null"),
 	unique("purchase_stripe_checkout_id_unique").on(table.stripeCheckoutId),
 ]);
 
@@ -280,6 +295,14 @@ export const couponBookPrice = pgTable("coupon_book_price", {
 	isActive: boolean("is_active").default(true).notNull(),
 	stripeProductId: varchar("stripe_product_id", { length: 255 }),
 	stripePriceId: varchar("stripe_price_id", { length: 255 }),
+	stripeProductIdTest: varchar("stripe_product_id_test", { length: 255 }),
+	stripePriceIdTest: varchar("stripe_price_id_test", { length: 255 }),
+	stripeProductIdLive: varchar("stripe_product_id_live", { length: 255 }),
+	stripePriceIdLive: varchar("stripe_price_id_live", { length: 255 }),
+	billingInterval: varchar("billing_interval", { length: 10 }),
+	billingIntervalCount: integer("billing_interval_count"),
+	stripeRecurringPriceIdTest: varchar("stripe_recurring_price_id_test", { length: 255 }),
+	stripeRecurringPriceIdLive: varchar("stripe_recurring_price_id_live", { length: 255 }),
 	createdByUserId: uuid("created_by_user_id"),
 	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow().notNull(),

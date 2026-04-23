@@ -1,6 +1,6 @@
 import { db } from '../db.js';
 import * as schema from '../schema.js';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, or, isNull, sql } from 'drizzle-orm';
 
 /**
  * resolveLocalUser:
@@ -226,25 +226,55 @@ export async function canManageEventSubmission(dbUser, submission) {
 /**
  * hasEntitlement:
  * Returns true if the user has access to the given group's locked coupons.
- * (e.g. they have a paid purchase for this group or are a super admin)
+ * Rules:
+ *   - super_admin always has access
+ *   - paid purchase where expires_at IS NULL (perpetual / admin_grant) OR expires_at > now
+ *   - subscription in past_due status gets a 3-day grace window after current_period_end
+ *   - group admins always have access to their group
  */
 export async function hasEntitlement(dbUser, groupId) {
   if (!dbUser || !groupId) return false;
   if (dbUser.role === 'super_admin') return true;
 
-  // 1) Check for active purchase in this group
+  const now = new Date().toISOString();
+  const graceCutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+
+  // 1) Check for active purchase: paid + not expired, OR past_due within grace window
   const [activePurchase] = await db
-    .select()
+    .select({ id: schema.purchase.id, subscriptionStatus: schema.purchase.subscriptionStatus, currentPeriodEnd: schema.purchase.currentPeriodEnd })
     .from(schema.purchase)
     .where(
       and(
         eq(schema.purchase.userId, dbUser.id),
         eq(schema.purchase.groupId, groupId),
-        eq(schema.purchase.status, 'paid')
+        eq(schema.purchase.status, 'paid'),
+        or(
+          // Non-subscription or admin_grant: expires_at null or in future
+          and(
+            isNull(schema.purchase.subscriptionStatus),
+            or(
+              isNull(schema.purchase.expiresAt),
+              sql`${schema.purchase.expiresAt} > ${now}`
+            )
+          ),
+          // Active subscription: expires_at in future
+          and(
+            eq(schema.purchase.subscriptionStatus, 'active'),
+            or(
+              isNull(schema.purchase.expiresAt),
+              sql`${schema.purchase.expiresAt} > ${now}`
+            )
+          ),
+          // Past-due subscription: still within 3-day grace window
+          and(
+            eq(schema.purchase.subscriptionStatus, 'past_due'),
+            sql`${schema.purchase.currentPeriodEnd} > ${graceCutoff}`
+          )
+        )
       )
     )
     .limit(1);
-  
+
   if (activePurchase) return true;
 
   // 2) Check for group admin role in this group

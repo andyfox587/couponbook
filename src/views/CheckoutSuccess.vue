@@ -3,12 +3,22 @@
   <div class="checkout-success-page">
     <div class="success-card">
       <div class="success-icon">✅</div>
-      <h1>Payment Successful!</h1>
-      <p class="success-message">
-        Your coupon book has been purchased and is now unlocked. 
+      <h1 v-if="isGift">Gift Subscription Activated!</h1>
+      <h1 v-else-if="isSubscription">Subscription Started!</h1>
+      <h1 v-else>Payment Successful!</h1>
+
+      <p class="success-message" v-if="isGift">
+        Your gift subscription has been set up. The recipient will receive access to all group coupons and events.
+      </p>
+      <p class="success-message" v-else-if="isSubscription">
+        Your subscription is now active. You have full access to all group coupons and events.
+        We'll send you a reminder before your next renewal.
+      </p>
+      <p class="success-message" v-else>
+        Your coupon book has been purchased and is now unlocked.
         You can now access all group coupons and RSVP for events.
       </p>
-      
+
       <div v-if="groupName" class="group-info">
         <span class="group-label">Coupon Book:</span>
         <span class="group-name">{{ groupName }}</span>
@@ -37,6 +47,8 @@ export default {
       groupSlug: null,
       groupName: null,
       sessionId: null,
+      isGift: false,
+      isSubscription: false,
       loading: true,
     };
   },
@@ -44,6 +56,7 @@ export default {
   created() {
     this.groupSlug = this.$route.params.groupSlug || this.$route.query.group;
     this.sessionId = this.$route.query.session_id;
+    this.isGift = this.$route.query.gift === 'true';
 
     if (this.groupSlug) {
       this.fetchGroupInfo();
@@ -59,6 +72,7 @@ export default {
         if (res.ok) {
           const group = await res.json();
           this.groupName = group.name;
+          this.isSubscription = group.billingModel === 'subscription' && !this.isGift;
         }
       } catch (e) {
         console.error('[CheckoutSuccess] Failed to fetch group info', e);

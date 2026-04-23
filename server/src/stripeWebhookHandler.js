@@ -69,6 +69,21 @@ export async function handleWebhook(rawBody, signature) {
       case 'charge.refunded':
         await handleChargeRefunded(event);
         break;
+      case 'invoice.payment_succeeded':
+        await handleInvoicePaymentSucceeded(event);
+        break;
+      case 'invoice.payment_failed':
+        await handleInvoicePaymentFailed(event);
+        break;
+      case 'invoice.upcoming':
+        await handleInvoiceUpcoming(event);
+        break;
+      case 'customer.subscription.updated':
+        await handleSubscriptionUpdated(event);
+        break;
+      case 'customer.subscription.deleted':
+        await handleSubscriptionDeleted(event);
+        break;
       default:
         console.log('💳  Unhandled event type:', event.type);
     }
@@ -93,7 +108,27 @@ export async function handleWebhook(rawBody, signature) {
 
 async function handleCheckoutSessionCompleted(event) {
   const session = event.data.object;
-  console.log('💳  Processing checkout.session.completed:', session.id);
+  const checkoutType = session.metadata?.checkoutType || 'one_time';
+  console.log('💳  Processing checkout.session.completed:', session.id, { checkoutType });
+
+  // For subscription checkouts, pull period dates from the subscription object
+  let subscriptionFields = {};
+  if (session.mode === 'subscription' && session.subscription) {
+    try {
+      const sub = await stripe.subscriptions.retrieve(session.subscription);
+      subscriptionFields = {
+        stripeSubscriptionId: sub.id,
+        subscriptionStatus: sub.status,
+        currentPeriodStart: new Date(sub.current_period_start * 1000).toISOString(),
+        currentPeriodEnd: new Date(sub.current_period_end * 1000).toISOString(),
+        cancelAtPeriodEnd: sub.cancel_at_period_end,
+        // For subscriptions, expires_at tracks when access ends (= current_period_end)
+        expiresAt: new Date(sub.current_period_end * 1000).toISOString(),
+      };
+    } catch (err) {
+      console.warn('💳  Could not retrieve subscription for period dates:', err.message);
+    }
+  }
 
   const [purchaseRow] = await db
     .select()
@@ -104,9 +139,10 @@ async function handleCheckoutSessionCompleted(event) {
     console.warn('💳  No purchase found for checkout session:', session.id);
     const userId = session.metadata?.userId;
     const groupId = session.metadata?.groupId;
+    const giftedByUserId = session.metadata?.giftedByUserId || null;
 
     if (userId && groupId) {
-      console.log('💳  Creating purchase from webhook metadata:', { userId, groupId });
+      console.log('💳  Creating purchase from webhook metadata:', { userId, groupId, checkoutType });
       try {
         await db.insert(purchase).values({
           userId,
@@ -114,12 +150,14 @@ async function handleCheckoutSessionCompleted(event) {
           provider: 'stripe',
           stripeCheckoutId: session.id,
           stripeCustomerId: session.customer,
-          stripePaymentIntentId: session.payment_intent,
-          amountCents: session.amount_total,
-          currency: session.currency,
+          stripePaymentIntentId: session.payment_intent || null,
+          amountCents: session.amount_total || 0,
+          currency: session.currency || 'usd',
           status: 'paid',
           purchasedAt: new Date().toISOString(),
-          metadata: { createdVia: 'webhook' },
+          giftedByUserId,
+          ...subscriptionFields,
+          metadata: { createdVia: 'webhook', checkoutType },
         });
         await ensureFoodieGroupMembership(userId, groupId);
       } catch (insertErr) {
@@ -140,8 +178,9 @@ async function handleCheckoutSessionCompleted(event) {
       status: 'paid',
       purchasedAt: new Date().toISOString(),
       stripeCustomerId: session.customer,
-      stripePaymentIntentId: session.payment_intent,
+      stripePaymentIntentId: session.payment_intent || null,
       updatedAt: new Date().toISOString(),
+      ...subscriptionFields,
     })
     .where(eq(purchase.id, purchaseRow.id));
 
@@ -154,9 +193,230 @@ async function handleCheckoutSessionCompleted(event) {
 
   await ensureFoodieGroupMembership(purchaseRow.userId, purchaseRow.groupId);
 
+  // If this was a gift checkout, notify the recipient.
+  if (checkoutType === 'gift' && purchaseRow.giftedByUserId) {
+    try {
+      const { sendGiftAccessNotificationEmail } = await import('./services/emailService.js');
+      await sendGiftAccessNotificationEmail({
+        userId: purchaseRow.userId,
+        giftedByUserId: purchaseRow.giftedByUserId,
+        ...subscriptionFields,
+      });
+    } catch (err) {
+      console.warn('💳  Could not send gift access notification:', err.message);
+    }
+  }
+
   console.log('💳  Checkout session completed successfully:', {
     purchaseId: purchaseRow.id,
     sessionId: session.id,
+    checkoutType,
+  });
+}
+
+async function handleInvoicePaymentSucceeded(event) {
+  const invoice = event.data.object;
+  const subscriptionId = invoice.subscription;
+  if (!subscriptionId) return;
+
+  console.log('💳  Processing invoice.payment_succeeded for subscription:', subscriptionId);
+
+  const [purchaseRow] = await db
+    .select()
+    .from(purchase)
+    .where(eq(purchase.stripeSubscriptionId, subscriptionId))
+    .limit(1);
+
+  if (!purchaseRow) {
+    console.warn('💳  No purchase found for subscription:', subscriptionId);
+    return;
+  }
+
+  let periodStart, periodEnd;
+  try {
+    const sub = await stripe.subscriptions.retrieve(subscriptionId);
+    periodStart = new Date(sub.current_period_start * 1000).toISOString();
+    periodEnd = new Date(sub.current_period_end * 1000).toISOString();
+  } catch (err) {
+    console.warn('💳  Could not retrieve subscription period:', err.message);
+  }
+
+  await db
+    .update(purchase)
+    .set({
+      status: 'paid',
+      subscriptionStatus: 'active',
+      ...(periodStart ? { currentPeriodStart: periodStart } : {}),
+      ...(periodEnd ? { currentPeriodEnd: periodEnd, expiresAt: periodEnd } : {}),
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(purchase.id, purchaseRow.id));
+
+  await db
+    .update(paymentEvent)
+    .set({ purchaseId: purchaseRow.id })
+    .where(eq(paymentEvent.eventId, event.id));
+
+  console.log('💳  Subscription renewed, purchase updated:', purchaseRow.id);
+}
+
+async function handleInvoicePaymentFailed(event) {
+  const invoice = event.data.object;
+  const subscriptionId = invoice.subscription;
+  if (!subscriptionId) return;
+
+  console.log('💳  Processing invoice.payment_failed for subscription:', subscriptionId);
+
+  const [purchaseRow] = await db
+    .select()
+    .from(purchase)
+    .where(eq(purchase.stripeSubscriptionId, subscriptionId))
+    .limit(1);
+
+  if (!purchaseRow) {
+    console.warn('💳  No purchase found for subscription:', subscriptionId);
+    return;
+  }
+
+  await db
+    .update(purchase)
+    .set({
+      subscriptionStatus: 'past_due',
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(purchase.id, purchaseRow.id));
+
+  await db
+    .update(paymentEvent)
+    .set({ purchaseId: purchaseRow.id })
+    .where(eq(paymentEvent.eventId, event.id));
+
+  console.log('💳  Subscription payment failed, marked past_due:', purchaseRow.id);
+}
+
+async function handleInvoiceUpcoming(event) {
+  const invoice = event.data.object;
+  const subscriptionId = invoice.subscription;
+  if (!subscriptionId) return;
+
+  console.log('💳  Processing invoice.upcoming for subscription:', subscriptionId);
+
+  // Send immediate renewal reminder email if reminder service is available
+  try {
+    const { sendRenewalReminderEmail } = await import('./services/emailService.js');
+    const [purchaseRow] = await db
+      .select()
+      .from(purchase)
+      .where(eq(purchase.stripeSubscriptionId, subscriptionId))
+      .limit(1);
+
+    if (purchaseRow) {
+      await sendRenewalReminderEmail(purchaseRow);
+      await db
+        .update(purchase)
+        .set({
+          renewalReminderSentAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(purchase.id, purchaseRow.id));
+
+      await db
+        .update(paymentEvent)
+        .set({ purchaseId: purchaseRow.id })
+        .where(eq(paymentEvent.eventId, event.id));
+
+      console.log('💳  Renewal reminder sent for purchase:', purchaseRow.id);
+    }
+  } catch (err) {
+    // Email failure must not block webhook acknowledgment
+    console.warn('💳  Could not send renewal reminder email:', err.message);
+  }
+}
+
+async function handleSubscriptionUpdated(event) {
+  const sub = event.data.object;
+  console.log('💳  Processing customer.subscription.updated:', sub.id);
+
+  const [purchaseRow] = await db
+    .select()
+    .from(purchase)
+    .where(eq(purchase.stripeSubscriptionId, sub.id))
+    .limit(1);
+
+  if (!purchaseRow) {
+    console.warn('💳  No purchase found for subscription:', sub.id);
+    return;
+  }
+
+  const periodEnd = new Date(sub.current_period_end * 1000).toISOString();
+
+  await db
+    .update(purchase)
+    .set({
+      subscriptionStatus: sub.status,
+      currentPeriodStart: new Date(sub.current_period_start * 1000).toISOString(),
+      currentPeriodEnd: periodEnd,
+      expiresAt: periodEnd,
+      cancelAtPeriodEnd: sub.cancel_at_period_end,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(purchase.id, purchaseRow.id));
+
+  await db
+    .update(paymentEvent)
+    .set({ purchaseId: purchaseRow.id })
+    .where(eq(paymentEvent.eventId, event.id));
+
+  console.log('💳  Subscription updated:', { purchaseId: purchaseRow.id, status: sub.status, cancelAtPeriodEnd: sub.cancel_at_period_end });
+}
+
+async function handleSubscriptionDeleted(event) {
+  const sub = event.data.object;
+  console.log('💳  Processing customer.subscription.deleted:', sub.id);
+
+  const [purchaseRow] = await db
+    .select()
+    .from(purchase)
+    .where(eq(purchase.stripeSubscriptionId, sub.id))
+    .limit(1);
+
+  if (!purchaseRow) {
+    console.warn('💳  No purchase found for deleted subscription:', sub.id);
+    return;
+  }
+
+  // When Stripe marks a subscription as deleted, the user has already paid
+  // through current_period_end. Preserve access until that date rather than
+  // yanking it immediately: expiresAt = current_period_end.
+  const periodEnd = sub.current_period_end
+    ? new Date(sub.current_period_end * 1000).toISOString()
+    : (purchaseRow.currentPeriodEnd || new Date().toISOString());
+
+  await db
+    .update(purchase)
+    .set({
+      subscriptionStatus: 'canceled',
+      expiresAt: periodEnd,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(purchase.id, purchaseRow.id));
+
+  await db
+    .update(paymentEvent)
+    .set({ purchaseId: purchaseRow.id })
+    .where(eq(paymentEvent.eventId, event.id));
+
+  // Send cancellation confirmation email (non-fatal if email service is down)
+  try {
+    const { sendCancellationConfirmationEmail } = await import('./services/emailService.js');
+    await sendCancellationConfirmationEmail({ ...purchaseRow, currentPeriodEnd: periodEnd });
+  } catch (err) {
+    console.warn('💳  Could not send cancellation email:', err.message);
+  }
+
+  console.log('💳  Subscription canceled, access retained until periodEnd:', {
+    purchaseId: purchaseRow.id,
+    periodEnd,
   });
 }
 

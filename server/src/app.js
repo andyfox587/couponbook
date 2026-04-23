@@ -12,6 +12,7 @@ import couponSubmissionsRouter from './routes/couponSubmissions.js';
 import eventSubmissionsRouter from './routes/eventSubmissions.js';
 import stripeRouter from './routes/stripe.js';
 import adminRouter from './routes/admin.js';
+import cronRouter from './routes/cron.js';
 
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
@@ -55,6 +56,13 @@ app.use('/api/v1/event-submissions', eventSubmissionsRouter);
 app.use('/api/v1/events', eventsRouter);
 // Stripe webhook is unauthenticated; security is Stripe-Signature + STRIPE_WEBHOOK_SECRET
 app.use('/api/v1/stripe', stripeRouter);
+
+// Cron endpoints are unauthenticated at the middleware level; individual routes
+// enforce a CRON_SECRET header. Must be mounted OUTSIDE the admin auth chain
+// because Vercel Cron cannot provide Cognito tokens.
+app.use('/api/v1/cron', cronRouter);
+// Legacy alias so existing Vercel Cron configs pointing at /admin/cron/... keep working.
+app.use('/api/v1/admin/cron', cronRouter);
 
 // 🔐 Super Admin "god mode" routes - require authentication + super_admin role
 // Mounted with full auth chain for auditing and security

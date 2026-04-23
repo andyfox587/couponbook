@@ -55,13 +55,27 @@ export function getValidatedStripeIds(priceRecord) {
 }
 
 /**
+ * Gets the appropriate recurring Stripe Price ID for subscription billing
+ * @param {Object} priceRecord - Database record with Stripe IDs
+ * @returns {string|null} The appropriate recurring Stripe Price ID for current mode
+ */
+export function getStripeRecurringPriceId(priceRecord) {
+  const mode = getStripeMode();
+  if (mode === 'live') {
+    return priceRecord.stripeRecurringPriceIdLive || null;
+  }
+  return priceRecord.stripeRecurringPriceIdTest || null;
+}
+
+/**
  * Prepares Stripe ID fields for database insert/update based on ID type
  * Automatically detects if IDs are test or live and sets appropriate columns
  * @param {string|null} productId - Stripe Product ID
  * @param {string|null} priceId - Stripe Price ID
+ * @param {string|null} recurringPriceId - Optional recurring Stripe Price ID for subscriptions
  * @returns {Object} Object with appropriate column names set
  */
-export function prepareStripeIdFields(productId, priceId) {
+export function prepareStripeIdFields(productId, priceId, recurringPriceId = null) {
   const fields = {};
   
   if (productId) {
@@ -85,6 +99,15 @@ export function prepareStripeIdFields(productId, priceId) {
     // Also set legacy field for backward compatibility
     fields.stripePriceId = priceId;
   }
-  
+
+  if (recurringPriceId) {
+    const isTest = recurringPriceId.includes('_test_');
+    if (isTest) {
+      fields.stripeRecurringPriceIdTest = recurringPriceId;
+    } else {
+      fields.stripeRecurringPriceIdLive = recurringPriceId;
+    }
+  }
+
   return fields;
 }

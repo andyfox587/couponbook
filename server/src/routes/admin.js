@@ -5,7 +5,7 @@ import express from 'express';
 import { db } from '../db.js';
 import * as schema from '../schema.js';
 import { eq, and, isNull, count, sql, desc, ilike, or, isNotNull, gte, lte } from 'drizzle-orm';
-import { getPlatformRedemptionOverview } from '../redemptionAnalytics.js';
+import { getPlatformRedemptionOverview, getPlatformSubscriptionOverview } from '../redemptionAnalytics.js';
 
 const router = express.Router();
 
@@ -109,11 +109,14 @@ router.get('/overview', async (req, res, next) => {
       ),
     ]);
 
-    // Calculate gross revenue
-    const [revenueResult] = await db
-      .select({ total: sql`COALESCE(SUM(${schema.purchase.amountCents}), 0)` })
-      .from(schema.purchase)
-      .where(eq(schema.purchase.status, 'paid'));
+    // Calculate gross revenue and subscription overview in parallel
+    const [[revenueResult], subscriptionOverview] = await Promise.all([
+      db
+        .select({ total: sql`COALESCE(SUM(${schema.purchase.amountCents}), 0)` })
+        .from(schema.purchase)
+        .where(eq(schema.purchase.status, 'paid')),
+      getPlatformSubscriptionOverview(),
+    ]);
 
     res.json({
       counts: {
@@ -154,6 +157,7 @@ router.get('/overview', async (req, res, next) => {
         grossCents: Number(revenueResult?.total ?? 0),
         currency: 'usd',
       },
+      subscriptions: subscriptionOverview,
     });
   } catch (err) {
     console.error('📦  error in GET /admin/overview', err);
@@ -1517,6 +1521,219 @@ router.get('/rsvps/recent', async (req, res, next) => {
     })));
   } catch (err) {
     console.error('📦  error in GET /admin/rsvps/recent', err);
+    next(err);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// G) ADMIN ACCESS GRANT / REVOCATION
+// Note: The renewal-reminder cron endpoint lives in routes/cron.js because
+// Vercel Cron cannot send Cognito tokens and therefore cannot pass through
+// this router's super_admin auth chain.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * POST /api/v1/admin/groups/:groupId/access-grants
+ * Grant perpetual or fixed-expiry access to a user without going through Stripe.
+ * Creates a purchase row with provider='admin_grant'.
+ */
+router.post('/groups/:groupId/access-grants', async (req, res, next) => {
+  const { groupId } = req.params;
+  const { userId, expiresAt, reason } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ error: 'userId is required' });
+  }
+
+  console.log('📦  POST /api/v1/admin/groups/:groupId/access-grants', { groupId, userId });
+
+  try {
+    // Validate target user
+    const [targetUser] = await db
+      .select({ id: schema.user.id, email: schema.user.email })
+      .from(schema.user)
+      .where(eq(schema.user.id, userId))
+      .limit(1);
+
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Validate target group
+    const [targetGroup] = await db
+      .select({ id: schema.foodieGroup.id, name: schema.foodieGroup.name })
+      .from(schema.foodieGroup)
+      .where(eq(schema.foodieGroup.id, groupId))
+      .limit(1);
+
+    if (!targetGroup) {
+      return res.status(404).json({ error: 'Foodie group not found' });
+    }
+
+    const now = new Date().toISOString();
+
+    // Insert admin_grant purchase (perpetual if expiresAt omitted)
+    const [newGrant] = await db
+      .insert(schema.purchase)
+      .values({
+        userId,
+        groupId,
+        provider: 'admin_grant',
+        amountCents: 0,
+        currency: 'usd',
+        status: 'paid',
+        purchasedAt: now,
+        expiresAt: expiresAt || null,
+        metadata: {
+          grantedBy: req.dbUser.id,
+          reason: reason || 'admin grant',
+          grantedAt: now,
+        },
+      })
+      .returning();
+
+    // Ensure group membership exists
+    const [existingMembership] = await db
+      .select({ id: schema.foodieGroupMembership.id, deletedAt: schema.foodieGroupMembership.deletedAt })
+      .from(schema.foodieGroupMembership)
+      .where(
+        and(
+          eq(schema.foodieGroupMembership.userId, userId),
+          eq(schema.foodieGroupMembership.groupId, groupId)
+        )
+      )
+      .limit(1);
+
+    if (existingMembership) {
+      if (existingMembership.deletedAt) {
+        await db
+          .update(schema.foodieGroupMembership)
+          .set({ deletedAt: null })
+          .where(eq(schema.foodieGroupMembership.id, existingMembership.id));
+      }
+    } else {
+      await db.insert(schema.foodieGroupMembership).values({
+        userId,
+        groupId,
+        role: 'customer',
+        joinedAt: now,
+      });
+    }
+
+    // Audit log
+    await logAdminAction(req.dbUser.id, 'grant_access', 'purchase', newGrant.id, {
+      targetUserId: userId,
+      targetUserEmail: targetUser.email,
+      groupId,
+      groupName: targetGroup.name,
+      expiresAt: expiresAt || null,
+      reason: reason || null,
+    });
+
+    res.status(201).json({
+      purchaseId: newGrant.id,
+      userId,
+      groupId,
+      expiresAt: expiresAt || null,
+      provider: 'admin_grant',
+    });
+  } catch (err) {
+    console.error('📦  error in POST /admin/groups/:groupId/access-grants', err);
+    next(err);
+  }
+});
+
+/**
+ * GET /api/v1/admin/users/:userId/access-grants
+ * List all *active* admin_grant purchases for a user, enriched with group
+ * name so the UI can render a revoke-able list. "Active" = status='paid'
+ * AND (expires_at IS NULL OR expires_at > now()).
+ */
+router.get('/users/:userId/access-grants', async (req, res, next) => {
+  const { userId } = req.params;
+  console.log('📦  GET /api/v1/admin/users/:userId/access-grants', { userId });
+
+  try {
+    const nowIso = new Date().toISOString();
+    const rows = await db
+      .select({
+        purchaseId: schema.purchase.id,
+        groupId:    schema.purchase.groupId,
+        groupName:  schema.foodieGroup.name,
+        expiresAt:  schema.purchase.expiresAt,
+        purchasedAt: schema.purchase.purchasedAt,
+        metadata:   schema.purchase.metadata,
+      })
+      .from(schema.purchase)
+      .leftJoin(schema.foodieGroup, eq(schema.foodieGroup.id, schema.purchase.groupId))
+      .where(
+        and(
+          eq(schema.purchase.userId, userId),
+          eq(schema.purchase.provider, 'admin_grant'),
+          eq(schema.purchase.status, 'paid'),
+          or(
+            isNull(schema.purchase.expiresAt),
+            sql`${schema.purchase.expiresAt} > ${nowIso}`
+          )
+        )
+      )
+      .orderBy(desc(schema.purchase.purchasedAt));
+
+    res.json({ grants: rows });
+  } catch (err) {
+    console.error('📦  error in GET /admin/users/:userId/access-grants', err);
+    next(err);
+  }
+});
+
+/**
+ * DELETE /api/v1/admin/groups/:groupId/access-grants/:userId
+ * Revoke a user's active admin_grant access by setting expires_at = now.
+ */
+router.delete('/groups/:groupId/access-grants/:userId', async (req, res, next) => {
+  const { groupId, userId } = req.params;
+  console.log('📦  DELETE /api/v1/admin/groups/:groupId/access-grants/:userId', { groupId, userId });
+
+  try {
+    const now = new Date().toISOString();
+
+    // Find the active admin_grant for this user+group
+    const [activeGrant] = await db
+      .select({ id: schema.purchase.id, expiresAt: schema.purchase.expiresAt })
+      .from(schema.purchase)
+      .where(
+        and(
+          eq(schema.purchase.userId, userId),
+          eq(schema.purchase.groupId, groupId),
+          eq(schema.purchase.provider, 'admin_grant'),
+          eq(schema.purchase.status, 'paid')
+        )
+      )
+      .limit(1);
+
+    if (!activeGrant) {
+      return res.status(404).json({ error: 'No active admin grant found for this user and group' });
+    }
+
+    // Revoke by setting expires_at = now (non-destructive)
+    await db
+      .update(schema.purchase)
+      .set({
+        expiresAt: now,
+        updatedAt: now,
+      })
+      .where(eq(schema.purchase.id, activeGrant.id));
+
+    // Audit log
+    await logAdminAction(req.dbUser.id, 'revoke_access', 'purchase', activeGrant.id, {
+      targetUserId: userId,
+      groupId,
+      revokedAt: now,
+    });
+
+    res.json({ revoked: true, purchaseId: activeGrant.id, expiresAt: now });
+  } catch (err) {
+    console.error('📦  error in DELETE /admin/groups/:groupId/access-grants/:userId', err);
     next(err);
   }
 });

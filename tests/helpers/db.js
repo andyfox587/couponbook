@@ -32,6 +32,7 @@ async function runMigrations(pg) {
   const migration11 = readFileSync(join(drizzleDir, '0011_expand_event_rsvp.sql'), 'utf-8');
   const migration12 = readFileSync(join(drizzleDir, '0012_expand_event_submission.sql'), 'utf-8');
   const migration13 = readFileSync(join(drizzleDir, '0013_expand_attendance_status.sql'), 'utf-8');
+  const migration14 = readFileSync(join(drizzleDir, '0014_add_subscription_support.sql'), 'utf-8');
   
   // Split by statement breakpoint and execute each statement
   const statements0 = migration0.split('--> statement-breakpoint').map(s => s.trim()).filter(Boolean);
@@ -228,6 +229,23 @@ async function runMigrations(pg) {
     }
   }
 
+  // Migration 14: subscription support
+  try {
+    await pg.exec(migration14);
+  } catch (e) {
+    const stmts14 = migration14
+      .split(';')
+      .map(s => s.trim())
+      .filter(s => {
+        if (!s) return false;
+        const noComments = s.split('\n').filter(l => !l.trim().startsWith('--')).join('\n').trim();
+        return noComments.length > 0 && !noComments.startsWith('DO $$');
+      });
+    for (const stmt of stmts14) {
+      try { await pg.exec(stmt); } catch (_) { /* continue */ }
+    }
+  }
+
   // Add the unique constraint on coupon_redemption that may not be in migrations
   try {
     await pg.exec(`
@@ -393,13 +411,17 @@ export const seedHelpers = {
 
   async createPurchase(db, userId, groupId, overrides = {}) {
     const { purchase } = schema;
+    // For admin_grant provider, stripeCheckoutId should be null (no unique constraint issue)
+    const defaultCheckoutId = overrides.provider === 'admin_grant'
+      ? null
+      : (overrides.stripeCheckoutId || `test-checkout-${Date.now()}-${Math.random()}`);
     const [newPurchase] = await db
       .insert(purchase)
       .values({
         userId,
         groupId,
         provider: overrides.provider || 'stripe',
-        stripeCheckoutId: overrides.stripeCheckoutId || `test-checkout-${Date.now()}-${Math.random()}`,
+        stripeCheckoutId: overrides.stripeCheckoutId !== undefined ? overrides.stripeCheckoutId : defaultCheckoutId,
         stripeSubscriptionId: overrides.stripeSubscriptionId || null,
         stripeCustomerId: overrides.stripeCustomerId || null,
         stripePaymentIntentId: overrides.stripePaymentIntentId || null,
@@ -410,10 +432,38 @@ export const seedHelpers = {
         priceSnapshot: overrides.priceSnapshot || null,
         metadata: overrides.metadata || null,
         purchasedAt: overrides.purchasedAt || new Date().toISOString(),
-        expiresAt: overrides.expiresAt || null,
+        expiresAt: overrides.expiresAt !== undefined ? overrides.expiresAt : null,
+        // Subscription lifecycle fields
+        giftedByUserId: overrides.giftedByUserId || null,
+        subscriptionStatus: overrides.subscriptionStatus || null,
+        currentPeriodStart: overrides.currentPeriodStart || null,
+        currentPeriodEnd: overrides.currentPeriodEnd || null,
+        cancelAtPeriodEnd: overrides.cancelAtPeriodEnd || false,
+        renewalReminderSentAt: overrides.renewalReminderSentAt || null,
       })
       .returning();
     return newPurchase;
+  },
+
+  async createAdminGrant(db, userId, groupId, overrides = {}) {
+    const { purchase } = schema;
+    const now = new Date().toISOString();
+    const [grant] = await db
+      .insert(purchase)
+      .values({
+        userId,
+        groupId,
+        provider: 'admin_grant',
+        stripeCheckoutId: null,
+        amountCents: 0,
+        currency: 'usd',
+        status: 'paid',
+        purchasedAt: now,
+        expiresAt: overrides.expiresAt !== undefined ? overrides.expiresAt : null,
+        metadata: overrides.metadata || { reason: 'test admin grant' },
+      })
+      .returning();
+    return grant;
   },
 
   async createMembership(db, userId, groupId, overrides = {}) {

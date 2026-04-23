@@ -124,12 +124,37 @@
                   <span class="muted tiny">
                     · Purchased {{ formatDateMedium(p.purchasedAt) }}
                   </span>
+                  <!-- Access-type badge: always render one so the user knows
+                       how they got access (subscription / gift / admin grant
+                       / one-time purchase). -->
+                  <span class="status-badge" :class="purchaseBadgeClass(p)">
+                    {{ purchaseBadgeLabel(p) }}
+                  </span>
+                  <span v-if="p.cancelAtPeriodEnd" class="status-badge canceling-badge">
+                    Cancels at period end
+                  </span>
                 </div>
                 <div class="muted tiny">
                   Status: {{ p.status }}
-                  <span v-if="p.expiresAt">
+                  <span v-if="p.subscriptionStatus === 'active' && p.currentPeriodEnd">
+                    · Renews {{ formatDateMedium(p.currentPeriodEnd) }}
+                  </span>
+                  <span v-else-if="p.expiresAt">
                     · Expires {{ formatDateMedium(p.expiresAt) }}
                   </span>
+                  <span v-else>
+                    · Perpetual access
+                  </span>
+                </div>
+                <div v-if="p.stripeCustomerId && p.subscriptionStatus" class="purchase-actions">
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-secondary"
+                    :disabled="billingPortalLoadingId === p.id"
+                    @click="openBillingPortal(p)"
+                  >
+                    {{ billingPortalLoadingId === p.id ? 'Opening…' : 'Manage Billing' }}
+                  </button>
                 </div>
               </li>
             </ul>
@@ -1108,6 +1133,7 @@
 <script>
 import { mapGetters } from "vuex";
 import { getAccessToken, signOut, signIn } from "@/services/authService";
+import { createBillingPortalSession } from "@/services/subscriptionService";
 
 export default {
   name: "UserProfile",
@@ -1126,6 +1152,7 @@ export default {
       },
       adminMemberships: [],
       adminMembershipsLoading: false,
+      billingPortalLoadingId: null,
 
       // logo upload state
       uploadingLogoId: null,
@@ -1244,6 +1271,45 @@ export default {
   },
 
   methods: {
+    /**
+     * Human-readable badge label describing how the user obtained access to
+     * this foodie group (subscription status / gift / admin grant / one-time).
+     */
+    purchaseBadgeLabel(p) {
+      if (p?.provider === 'admin_grant') return 'Admin Granted';
+      if (p?.giftedByUserId) return 'Gift';
+      if (p?.subscriptionStatus === 'active') return 'Active Subscription';
+      if (p?.subscriptionStatus === 'past_due') return 'Past Due';
+      if (p?.subscriptionStatus === 'canceled') return 'Canceled';
+      if (p?.subscriptionStatus) return p.subscriptionStatus;
+      return 'One-time Purchase';
+    },
+
+    purchaseBadgeClass(p) {
+      if (p?.provider === 'admin_grant') return 'admin-grant-badge';
+      if (p?.giftedByUserId) return 'gift-badge';
+      if (p?.subscriptionStatus === 'active') return 'subscription-badge';
+      if (p?.subscriptionStatus === 'past_due') return 'warning-badge';
+      if (p?.subscriptionStatus === 'canceled') return 'canceled-badge';
+      return 'one-time-badge';
+    },
+
+    async openBillingPortal(purchase) {
+      if (!purchase?.groupId) return;
+      this.billingPortalLoadingId = purchase.id;
+      try {
+        const { portalUrl } = await createBillingPortalSession(purchase.groupId);
+        if (portalUrl) {
+          window.location.assign(portalUrl);
+        }
+      } catch (err) {
+        console.error('Failed to open billing portal', err);
+        window.alert('Could not open the billing portal. Please try again.');
+      } finally {
+        this.billingPortalLoadingId = null;
+      }
+    },
+
     async loadUserFromApi() {
       this.loadingUser = true;
       try {
@@ -2625,5 +2691,47 @@ export default {
 
 .error-text {
   color: var(--color-error);
+}
+
+/* Access-type status badges shown next to each purchase row. */
+.status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: var(--font-size-xs, 0.75rem);
+  font-weight: var(--font-weight-semibold, 600);
+  line-height: 1.4;
+  margin-left: var(--spacing-xs, 0.25rem);
+  background: var(--color-bg-muted, #eee);
+  color: var(--color-text-primary, #222);
+}
+.status-badge.subscription-badge {
+  background: #e7f5ec;
+  color: #1f7a3a;
+}
+.status-badge.gift-badge {
+  background: #f3e7ff;
+  color: #6b2bb8;
+}
+.status-badge.admin-grant-badge {
+  background: #e7f0ff;
+  color: #1f4ea3;
+}
+.status-badge.one-time-badge {
+  background: #f1f1f1;
+  color: #555;
+}
+.status-badge.warning-badge {
+  background: #fff3dc;
+  color: #9a5a00;
+}
+.status-badge.canceled-badge,
+.status-badge.canceling-badge {
+  background: #ffe7e7;
+  color: #a62222;
+}
+
+.purchase-actions {
+  margin-top: var(--spacing-xs, 0.25rem);
 }
 </style>

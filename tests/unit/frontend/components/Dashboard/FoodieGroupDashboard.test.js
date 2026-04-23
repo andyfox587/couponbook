@@ -288,10 +288,11 @@ describe('FoodieGroupDashboard', () => {
     expect(wrapper.text()).toContain('Redemptions: 5');
     expect(wrapper.text()).not.toContain('Expired Lunch Deal');
 
-    const activeCouponHeadings = wrapper
-      .findAll('h2, h3')
-      .filter((node) => node.text() === 'Active Coupons');
-    expect(activeCouponHeadings).toHaveLength(1);
+    // The active kanban column uses <h2>Active</h2> + <h3>Coupons</h3>
+    const activeHeadings = wrapper
+      .findAll('h2')
+      .filter((node) => node.text() === 'Active');
+    expect(activeHeadings).toHaveLength(1);
   });
 
   it('navigates to new group when selector changes', () => {

@@ -26,3 +26,9 @@ pnpm-debug.log*
 *.sw?
 .vercel
 .cursor/
+
+# Internal docs
+docs/Eventbrite_VivaSpot_Strategy.pdf
+docs/events-billing-refund-payment-strategy.md
+docs/manual-qa-subscription-rollout.md
+docs/uncommitted-changes-rundown.md

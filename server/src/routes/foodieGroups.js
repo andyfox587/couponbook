@@ -1,13 +1,13 @@
 // server/src/routes/foodieGroup.js
 import express from 'express';
 import { db } from '../db.js';
-import { foodieGroup, purchase, user, foodieGroupMembership, couponBookPrice, coupon, event } from '../schema.js';
+import { foodieGroup, purchase, user, foodieGroupMembership, couponBookPrice, coupon, event, billingModel } from '../schema.js';
 import { eq, and, count, isNull, or, sql, desc } from 'drizzle-orm';
 import auth from '../middleware/auth.js';
 import { resolveLocalUser, requireAdmin, canManageGroup } from '../authz/index.js';
 import { stripe } from '../config/stripe.js';
-import { getValidatedStripeIds, prepareStripeIdFields } from '../utils/stripeIdHelper.js';
-import { getFoodieGroupRedemptionOverview } from '../redemptionAnalytics.js';
+import { getValidatedStripeIds, prepareStripeIdFields, getStripeRecurringPriceId } from '../utils/stripeIdHelper.js';
+import { getFoodieGroupRedemptionOverview, getGroupSubscriptionOverview } from '../redemptionAnalytics.js';
 import { getFoodieGroupEventOverview, getEventSubmissionCounts } from '../eventAnalytics.js';
 
 const router = express.Router();
@@ -102,14 +102,23 @@ router.get('/my/purchases', auth(), async (req, res, next) => {
     const now = new Date().toISOString();
     const rows = await db
       .select({
-        id:          purchase.id,
-        groupId:     purchase.groupId,
-        status:      purchase.status,
-        purchasedAt: purchase.purchasedAt,
-        expiresAt:   purchase.expiresAt,
-        amountCents: purchase.amountCents,
-        currency:    purchase.currency,
-        groupName:   foodieGroup.name,
+        id:                  purchase.id,
+        groupId:             purchase.groupId,
+        status:              purchase.status,
+        purchasedAt:         purchase.purchasedAt,
+        expiresAt:           purchase.expiresAt,
+        amountCents:         purchase.amountCents,
+        currency:            purchase.currency,
+        provider:            purchase.provider,
+        groupName:           foodieGroup.name,
+        // Subscription / billing fields needed by the Profile UI so it can
+        // render status badges and expose the Stripe billing portal CTA.
+        subscriptionStatus:  purchase.subscriptionStatus,
+        currentPeriodStart:  purchase.currentPeriodStart,
+        currentPeriodEnd:    purchase.currentPeriodEnd,
+        cancelAtPeriodEnd:   purchase.cancelAtPeriodEnd,
+        stripeCustomerId:    purchase.stripeCustomerId,
+        giftedByUserId:      purchase.giftedByUserId,
       })
       .from(purchase)
       .innerJoin(foodieGroup, eq(foodieGroup.id, purchase.groupId))
@@ -152,6 +161,7 @@ router.get('/:groupId/admin/overview', auth(), resolveLocalUser, async (req, res
       revenueResult,
       publishedEventsResult,
       eventSubmissionCounts,
+      subscriptionOverview,
     ] = await Promise.all([
       // Paid purchases count
       db.select({ count: count() })
@@ -196,6 +206,8 @@ router.get('/:groupId/admin/overview', auth(), resolveLocalUser, async (req, res
         ),
       // Event submission counts by state
       getEventSubmissionCounts(groupId),
+      // Subscription metrics
+      getGroupSubscriptionOverview(groupId),
     ]);
 
     // Recent purchases (last 10, with user email)
@@ -228,6 +240,7 @@ router.get('/:groupId/admin/overview', auth(), resolveLocalUser, async (req, res
         grossCents: Number(revenueResult[0]?.total ?? 0),
         currency: 'usd',
       },
+      subscriptions: subscriptionOverview,
       recentPurchases,
     });
   } catch (err) {
@@ -362,6 +375,9 @@ router.get('/:id/price', async (req, res, next) => {
         currency: 'usd',
         display: '$9.99',
         isDefault: true,
+        billingModel: groupRow.billingModel || 'one_time',
+        billingInterval: null,
+        billingIntervalCount: null,
       });
     }
 
@@ -377,6 +393,10 @@ router.get('/:id/price', async (req, res, next) => {
       display,
       stripePriceId: priceId,
       isDefault: false,
+      billingModel: groupRow.billingModel || 'one_time',
+      billingInterval: activePrice.billingInterval || null,
+      billingIntervalCount: activePrice.billingIntervalCount || null,
+      stripeRecurringPriceId: getStripeRecurringPriceId(activePrice),
     });
   } catch (err) {
     console.error('📦  error in GET /groups/:id/price', err);
@@ -386,9 +406,11 @@ router.get('/:id/price', async (req, res, next) => {
 
 // ─── PUT /api/v1/groups/:id/price ─────────────────────────────────────
 // Admin endpoint to update coupon book pricing
+// For subscription groups, also accepts billing_interval ('month'/'year') and
+// billing_interval_count (1, 6, or 12) to create a recurring Stripe Price.
 router.put('/:id/price', auth(), async (req, res, next) => {
   const groupIdOrSlug = req.params.id;
-  const { amountCents, currency = 'usd' } = req.body;
+  const { amountCents, currency = 'usd', billing_interval, billing_interval_count, billing_model } = req.body;
 
   console.log('📦  PUT /api/v1/groups/:id/price', { groupIdOrSlug, amountCents, currency });
 
@@ -466,7 +488,33 @@ router.put('/:id/price', auth(), async (req, res, next) => {
       stripeProductId = product.id;
     }
 
-    // 7) Create new Stripe Price (prices are immutable in Stripe)
+    // 7) Resolve group billing model (needed to decide whether to create a recurring price)
+    // Optionally update the group's billing_model if provided.
+    if (billing_model && ['one_time', 'subscription'].includes(billing_model) && billing_model !== groupRow.billingModel) {
+      await db
+        .update(foodieGroup)
+        .set({ billingModel: billing_model, updatedAt: new Date().toISOString() })
+        .where(eq(foodieGroup.id, groupId));
+      groupRow.billingModel = billing_model;
+    }
+
+    const isSubscriptionGroup = groupRow.billingModel === 'subscription';
+
+    // 8) Validate subscription cadence if applicable
+    const ALLOWED_INTERVAL_COUNTS = [1, 6, 12];
+    let resolvedInterval = billing_interval || null;
+    let resolvedIntervalCount = billing_interval_count ? Number(billing_interval_count) : null;
+
+    if (isSubscriptionGroup) {
+      if (!resolvedInterval || !['month', 'year'].includes(resolvedInterval)) {
+        return res.status(400).json({ error: 'billing_interval must be "month" or "year" for subscription groups' });
+      }
+      if (!resolvedIntervalCount || !ALLOWED_INTERVAL_COUNTS.includes(resolvedIntervalCount)) {
+        return res.status(400).json({ error: `billing_interval_count must be one of: ${ALLOWED_INTERVAL_COUNTS.join(', ')}` });
+      }
+    }
+
+    // 9) Create new Stripe Price (prices are immutable in Stripe)
     console.log('📦  Creating new Stripe Price', { stripeProductId, amountCents, currency });
     const stripePrice = await stripe.prices.create({
       product: stripeProductId,
@@ -475,18 +523,33 @@ router.put('/:id/price', auth(), async (req, res, next) => {
       metadata: { groupId, groupSlug: groupRow.slug }
     });
 
-    // 8) Database transaction: deactivate old price, insert new active price
-    // Using raw SQL for the transaction since Drizzle transactions can be tricky
+    // 10) For subscription groups, also create a recurring Stripe Price
+    let stripeRecurringPrice = null;
+    if (isSubscriptionGroup && resolvedInterval) {
+      console.log('📦  Creating recurring Stripe Price for subscription group', { stripeProductId, resolvedInterval, resolvedIntervalCount });
+      stripeRecurringPrice = await stripe.prices.create({
+        product: stripeProductId,
+        unit_amount: amountCents,
+        currency: currency.toLowerCase(),
+        recurring: {
+          interval: resolvedInterval,
+          interval_count: resolvedIntervalCount,
+        },
+        metadata: { groupId, groupSlug: groupRow.slug, billing_interval: resolvedInterval, billing_interval_count: String(resolvedIntervalCount) }
+      });
+    }
+
+    // 11) Database transaction: deactivate old price, insert new active price
     const now = new Date().toISOString();
 
     // Deactivate existing active price(s)
     if (existingPrice) {
       await db
         .update(couponBookPrice)
-        .set({ 
-          isActive: false, 
+        .set({
+          isActive: false,
           archivedAt: now,
-          updatedAt: now 
+          updatedAt: now
         })
         .where(
           and(
@@ -497,7 +560,7 @@ router.put('/:id/price', auth(), async (req, res, next) => {
     }
 
     // Prepare Stripe ID fields (automatically detects test vs live)
-    const stripeIdFields = prepareStripeIdFields(stripeProductId, stripePrice.id);
+    const stripeIdFields = prepareStripeIdFields(stripeProductId, stripePrice.id, stripeRecurringPrice?.id ?? null);
 
     // Insert new active price
     const [newPrice] = await db
@@ -508,6 +571,8 @@ router.put('/:id/price', auth(), async (req, res, next) => {
         currency: currency.toLowerCase(),
         isActive: true,
         ...stripeIdFields,
+        billingInterval: resolvedInterval,
+        billingIntervalCount: resolvedIntervalCount,
         createdByUserId: dbUser.id,
       })
       .returning();
@@ -515,9 +580,10 @@ router.put('/:id/price', auth(), async (req, res, next) => {
     console.log('📦  Price updated successfully', {
       priceId: newPrice.id,
       stripePriceId: stripePrice.id,
+      stripeRecurringPriceId: stripeRecurringPrice?.id,
     });
 
-    // 9) Return updated price
+    // 12) Return updated price
     return res.json({
       id: newPrice.id,
       amountCents,
@@ -525,6 +591,10 @@ router.put('/:id/price', auth(), async (req, res, next) => {
       display: formatPrice(amountCents, currency),
       stripePriceId: stripePrice.id,
       stripeProductId,
+      stripeRecurringPriceId: stripeRecurringPrice?.id ?? null,
+      billingModel: groupRow.billingModel,
+      billingInterval: resolvedInterval,
+      billingIntervalCount: resolvedIntervalCount,
     });
   } catch (err) {
     console.error('📦  error in PUT /groups/:id/price', err);
@@ -633,16 +703,24 @@ router.post('/:id/checkout', auth(), async (req, res, next) => {
     let currency = 'usd';
     let stripePriceId = null;
     let couponBookPriceId = null;
+    let isSubscriptionGroup = false;
+    let recurringPriceId = null;
 
     if (activePrice) {
       amountCents = activePrice.amountCents;
       currency = activePrice.currency;
       couponBookPriceId = activePrice.id;
-      
+
       // Get environment-appropriate Stripe Price ID with validation
       const { priceId } = getValidatedStripeIds(activePrice);
       stripePriceId = priceId;
+
+      // Check if the group uses subscription billing
+      recurringPriceId = getStripeRecurringPriceId(activePrice);
     }
+
+    // Determine if this group is subscription-billed
+    isSubscriptionGroup = resolvedGroup.billingModel === 'subscription';
 
     // 5) Build success and cancel URLs
     // Use APP_PUBLIC_URL to prevent redirect issues with proxies/CDNs
@@ -650,11 +728,32 @@ router.post('/:id/checkout', auth(), async (req, res, next) => {
     const successUrl = `${baseUrl}/checkout/success/${groupRow.slug}?session_id={CHECKOUT_SESSION_ID}`;
     const cancelUrl = `${baseUrl}/foodie-group/${groupRow.slug}?cancelled=true`;
 
-    // 6) Create Stripe Checkout Session
+    // 6) Create Stripe Checkout Session — branch by billing model
     let session;
-    
-    if (stripePriceId) {
-      // Use existing Stripe Price
+
+    if (isSubscriptionGroup && recurringPriceId) {
+      // Subscription checkout
+      session = await stripe.checkout.sessions.create({
+        mode: 'subscription',
+        line_items: [{
+          price: recurringPriceId,
+          quantity: 1,
+        }],
+        client_reference_id: dbUser.id,
+        customer_email: dbUser.email,
+        metadata: {
+          userId: dbUser.id,
+          groupId: groupId,
+          groupSlug: groupRow.slug,
+          couponBookPriceId: couponBookPriceId,
+          checkoutType: 'subscription',
+          billingIntervalCount: activePrice?.billingIntervalCount ? String(activePrice.billingIntervalCount) : null,
+        },
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+      });
+    } else if (stripePriceId) {
+      // One-time payment using existing Stripe Price
       session = await stripe.checkout.sessions.create({
         mode: 'payment',
         line_items: [{
@@ -668,6 +767,7 @@ router.post('/:id/checkout', auth(), async (req, res, next) => {
           groupId: groupId,
           groupSlug: groupRow.slug,
           couponBookPriceId: couponBookPriceId,
+          checkoutType: 'one_time',
         },
         success_url: successUrl,
         cancel_url: cancelUrl,
@@ -693,6 +793,7 @@ router.post('/:id/checkout', auth(), async (req, res, next) => {
           userId: dbUser.id,
           groupId: groupId,
           groupSlug: groupRow.slug,
+          checkoutType: 'one_time',
         },
         success_url: successUrl,
         cancel_url: cancelUrl,
@@ -705,6 +806,7 @@ router.post('/:id/checkout', auth(), async (req, res, next) => {
       currency,
       stripePriceId,
       couponBookPriceId,
+      billingIntervalCount: activePrice?.billingIntervalCount ?? null,
     };
 
     await db.insert(purchase).values({
@@ -719,6 +821,7 @@ router.post('/:id/checkout', auth(), async (req, res, next) => {
       metadata: {
         checkoutSessionUrl: session.url,
         createdVia: 'checkout-endpoint',
+        checkoutType: isSubscriptionGroup ? 'subscription' : 'one_time',
       },
     });
 
@@ -869,8 +972,9 @@ router.get('/:id/access', auth(), async (req, res, next) => {
     }
 
     // 3) Check for a paid purchase for this group (optimized: select only id, limit 1)
-    // Filter for paid status and non-expired (expiresAt is null or in the future)
+    // Includes: non-expired paid purchases + past_due subscriptions within 3-day grace window
     const now = new Date().toISOString();
+    const graceCutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
     const [purchaseRow] = await db
       .select({ id: purchase.id })
       .from(purchase)
@@ -880,8 +984,27 @@ router.get('/:id/access', auth(), async (req, res, next) => {
           eq(purchase.groupId, groupId),
           eq(purchase.status, 'paid'),
           or(
-            isNull(purchase.expiresAt),
-            sql`${purchase.expiresAt} > ${now}`
+            // Non-subscription or admin_grant: expires_at null or in future
+            and(
+              isNull(purchase.subscriptionStatus),
+              or(
+                isNull(purchase.expiresAt),
+                sql`${purchase.expiresAt} > ${now}`
+              )
+            ),
+            // Active subscription: expires_at in future
+            and(
+              sql`${purchase.subscriptionStatus} = 'active'`,
+              or(
+                isNull(purchase.expiresAt),
+                sql`${purchase.expiresAt} > ${now}`
+              )
+            ),
+            // Past-due subscription: within 3-day grace window
+            and(
+              sql`${purchase.subscriptionStatus} = 'past_due'`,
+              sql`${purchase.currentPeriodEnd} > ${graceCutoff}`
+            )
           )
         )
       )
@@ -1089,6 +1212,231 @@ router.post('/:id/test-purchase', auth(), async (req, res, next) => {
     return res.json({ hasAccess: true });
   } catch (err) {
     console.error('📦  error in POST /groups/:id/test-purchase', err);
+    next(err);
+  }
+});
+
+// ─── POST /api/v1/groups/:id/gift ─────────────────────────────────────
+// Initiate a gift subscription purchase on behalf of a recipient.
+// Only valid for subscription groups with cadence >= 6 months.
+// The gift purchase is created as pending; webhook completion sets it to paid.
+router.post('/:id/gift', auth(), resolveLocalUser, async (req, res, next) => {
+  const groupIdOrSlug = req.params.id;
+  const { recipientEmail } = req.body;
+  console.log('📦  POST /api/v1/groups/:id/gift', { groupIdOrSlug, recipientEmail });
+
+  try {
+    if (!recipientEmail) {
+      return res.status(400).json({ error: 'recipientEmail is required' });
+    }
+
+    // Resolve group
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(groupIdOrSlug);
+    const [groupRow] = await db
+      .select()
+      .from(foodieGroup)
+      .where(isUUID ? eq(foodieGroup.id, groupIdOrSlug) : eq(foodieGroup.slug, groupIdOrSlug));
+
+    if (!groupRow) {
+      return res.status(404).json({ error: 'Foodie group not found' });
+    }
+
+    // Gift is only valid for subscription groups
+    if (groupRow.billingModel !== 'subscription') {
+      return res.status(400).json({ error: 'Gifts are only available for subscription groups' });
+    }
+
+    // Get active price and validate cadence (>= 6 months)
+    const [activePrice] = await db
+      .select()
+      .from(couponBookPrice)
+      .where(
+        and(
+          eq(couponBookPrice.groupId, groupRow.id),
+          eq(couponBookPrice.isActive, true)
+        )
+      );
+
+    if (!activePrice) {
+      return res.status(400).json({ error: 'No active price configured for this group' });
+    }
+
+    // Validate cadence: must be >= 6 months
+    const intervalMonths =
+      activePrice.billingInterval === 'year'
+        ? (activePrice.billingIntervalCount || 1) * 12
+        : activePrice.billingIntervalCount || 1;
+
+    if (intervalMonths < 6) {
+      return res.status(400).json({
+        error: 'This group is billed monthly. Gifting is available only for 6-month or yearly plans. Please contact the group admin to update cadence.',
+      });
+    }
+
+    // Resolve recipient user
+    const [recipientUser] = await db
+      .select()
+      .from(user)
+      .where(eq(user.email, recipientEmail.toLowerCase().trim()))
+      .limit(1);
+
+    if (!recipientUser) {
+      return res.status(404).json({ error: 'Recipient not found. They must have a VivaSpot account.' });
+    }
+
+    if (recipientUser.id === req.dbUser.id) {
+      return res.status(400).json({ error: 'You cannot gift to yourself' });
+    }
+
+    // Check recipient does not already have active access
+    const now = new Date().toISOString();
+    const [existingAccess] = await db
+      .select({ id: purchase.id })
+      .from(purchase)
+      .where(
+        and(
+          eq(purchase.userId, recipientUser.id),
+          eq(purchase.groupId, groupRow.id),
+          eq(purchase.status, 'paid'),
+          or(
+            isNull(purchase.expiresAt),
+            sql`${purchase.expiresAt} > ${now}`
+          )
+        )
+      )
+      .limit(1);
+
+    if (existingAccess) {
+      return res.status(400).json({ error: 'Recipient already has active access to this group' });
+    }
+
+    // Get recurring price ID for checkout
+    const recurringPriceId = getStripeRecurringPriceId(activePrice);
+    if (!recurringPriceId) {
+      return res.status(400).json({ error: 'No recurring Stripe price configured for this group' });
+    }
+
+    const baseUrl = process.env.APP_PUBLIC_URL || process.env.APP_URL || 'http://localhost:8080';
+    const successUrl = `${baseUrl}/checkout/success/${groupRow.slug}?session_id={CHECKOUT_SESSION_ID}&gift=true`;
+    const cancelUrl = `${baseUrl}/foodie-group/${groupRow.slug}?cancelled=true`;
+
+    // Create Stripe checkout session in subscription mode
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      line_items: [{ price: recurringPriceId, quantity: 1 }],
+      client_reference_id: req.dbUser.id,
+      customer_email: req.dbUser.email,
+      metadata: {
+        userId: recipientUser.id,
+        giftedByUserId: req.dbUser.id,
+        groupId: groupRow.id,
+        groupSlug: groupRow.slug,
+        couponBookPriceId: activePrice.id,
+        checkoutType: 'gift',
+        billingIntervalCount: activePrice.billingIntervalCount ? String(activePrice.billingIntervalCount) : null,
+      },
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+    });
+
+    // Insert pending gift purchase for recipient
+    await db.insert(purchase).values({
+      userId: recipientUser.id,
+      groupId: groupRow.id,
+      provider: 'stripe',
+      stripeCheckoutId: session.id,
+      amountCents: activePrice.amountCents,
+      currency: activePrice.currency,
+      status: 'pending',
+      giftedByUserId: req.dbUser.id,
+      priceSnapshot: {
+        amountCents: activePrice.amountCents,
+        currency: activePrice.currency,
+        couponBookPriceId: activePrice.id,
+        billingIntervalCount: activePrice.billingIntervalCount,
+      },
+      metadata: {
+        checkoutSessionUrl: session.url,
+        createdVia: 'gift-endpoint',
+        giftedByEmail: req.dbUser.email,
+        recipientEmail,
+      },
+    });
+
+    console.log('📦  Gift checkout session created', {
+      sessionId: session.id,
+      giftedBy: req.dbUser.id,
+      recipient: recipientUser.id,
+      groupId: groupRow.id,
+    });
+
+    return res.json({
+      checkoutUrl: session.url,
+      sessionId: session.id,
+      recipientEmail,
+    });
+  } catch (err) {
+    console.error('📦  error in POST /groups/:id/gift', err);
+    next(err);
+  }
+});
+
+// ─── POST /api/v1/groups/:id/billing-portal ───────────────────────────
+// Returns a Stripe Customer Portal session URL for the authenticated user,
+// scoped to their active subscription purchase in this group. Allows the user
+// to update payment method, cancel, or view invoice history in Stripe's UI.
+router.post('/:id/billing-portal', auth(), resolveLocalUser, async (req, res, next) => {
+  const groupIdOrSlug = req.params.id;
+  console.log('📦  POST /api/v1/groups/:id/billing-portal', { groupIdOrSlug });
+
+  try {
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(groupIdOrSlug);
+    const [groupRow] = await db
+      .select()
+      .from(foodieGroup)
+      .where(isUUID ? eq(foodieGroup.id, groupIdOrSlug) : eq(foodieGroup.slug, groupIdOrSlug));
+
+    if (!groupRow) {
+      return res.status(404).json({ error: 'Foodie group not found' });
+    }
+
+    // Find the most recent purchase for this user+group that has a Stripe customer id.
+    // Prefer subscription purchases; fall back to any purchase with a customer id for
+    // users whose subscription is canceled but still want to see invoice history.
+    const [subscriptionPurchase] = await db
+      .select({
+        id: purchase.id,
+        stripeCustomerId: purchase.stripeCustomerId,
+        stripeSubscriptionId: purchase.stripeSubscriptionId,
+      })
+      .from(purchase)
+      .where(
+        and(
+          eq(purchase.userId, req.dbUser.id),
+          eq(purchase.groupId, groupRow.id),
+          sql`${purchase.stripeCustomerId} IS NOT NULL`
+        )
+      )
+      .orderBy(desc(purchase.createdAt))
+      .limit(1);
+
+    if (!subscriptionPurchase || !subscriptionPurchase.stripeCustomerId) {
+      return res.status(404).json({
+        error: 'No active subscription found for this group',
+      });
+    }
+
+    const baseUrl = process.env.APP_PUBLIC_URL || process.env.APP_URL || 'http://localhost:8080';
+    const returnUrl = `${baseUrl}/foodie-group/${groupRow.slug}`;
+
+    const session = await stripe.billingPortal.sessions.create({
+      customer: subscriptionPurchase.stripeCustomerId,
+      return_url: returnUrl,
+    });
+
+    return res.json({ portalUrl: session.url });
+  } catch (err) {
+    console.error('📦  error in POST /groups/:id/billing-portal', err);
     next(err);
   }
 });

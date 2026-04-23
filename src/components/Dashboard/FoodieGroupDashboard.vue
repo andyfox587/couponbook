@@ -117,6 +117,64 @@
           </div>
         </div>
 
+        <!--
+          Subscription & access metrics. Rendered unconditionally because these
+          values (gifted access, admin-granted access) are meaningful for both
+          one-time and subscription groups, and because zero values are a
+          legitimate "no activity yet" indicator that admins should still see.
+          The header text adapts to the group's current billing model.
+        -->
+        <h3 style="margin-top: var(--spacing-xl);">
+          {{ billingModel === 'subscription' ? 'Subscription Metrics' : 'Access Metrics' }}
+          <span v-if="billingModel !== 'subscription'" class="muted tiny" style="font-weight: normal;">
+            · group is on one-time billing
+          </span>
+        </h3>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <span class="stat-label">Active Subscribers</span>
+            <span class="stat-value highlight-success">
+              {{ groupOverview.subscriptions?.activeSubscribers || 0 }}
+            </span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">MRR</span>
+            <span class="stat-value highlight-success">
+              {{ formatCurrency(groupOverview.subscriptions?.mrrCents || 0) }}
+            </span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Past Due (grace period)</span>
+            <span
+              class="stat-value"
+              :class="groupOverview.subscriptions?.pastDueSubscribers > 0 ? 'highlight-warning' : ''"
+            >
+              {{ groupOverview.subscriptions?.pastDueSubscribers || 0 }}
+            </span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Canceling at Period End</span>
+            <span
+              class="stat-value"
+              :class="groupOverview.subscriptions?.cancelingSubscribers > 0 ? 'highlight-warning' : ''"
+            >
+              {{ groupOverview.subscriptions?.cancelingSubscribers || 0 }}
+            </span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Gifted Access</span>
+            <span class="stat-value">
+              {{ groupOverview.subscriptions?.giftedAccess || 0 }}
+            </span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Admin Granted</span>
+            <span class="stat-value">
+              {{ groupOverview.subscriptions?.adminGranted || 0 }}
+            </span>
+          </div>
+        </div>
+
         <h3 style="margin-top: var(--spacing-xl);">Recent Purchases</h3>
         <div class="data-table-container">
           <table class="data-table">
@@ -324,36 +382,73 @@
       <!-- Coupon Book Pricing Section -->
       <section class="dashboard-section pricing-section" v-if="groupLoaded">
         <h2>Coupon Book Pricing</h2>
-        
+
         <div v-if="!editingPrice" class="current-price">
-          <p>Current Price: <strong>{{ currentPriceDisplay }}</strong></p>
+          <p>
+            Current Price: <strong>{{ currentPriceDisplay }}</strong>
+            <span class="muted tiny"> · {{ billingModeLabel }}</span>
+          </p>
           <p v-if="priceIsDefault" class="muted tiny">
             This is the default price. Set a custom price to create a Stripe product.
+          </p>
+          <p v-if="billingModel === 'subscription' && !stripeRecurringPriceId" class="muted tiny warning-text">
+            ⚠ This group is set to subscription billing but has no recurring Stripe price yet.
+            Edit the price to generate one.
           </p>
           <button @click="startEditPrice" class="btn-edit-price">
             <i class="pi pi-pencil icon-spacing-sm"></i>Edit Price
           </button>
         </div>
-        
+
         <div v-else class="price-form">
           <div class="form-group">
-            <label for="newPrice">New Price (USD):</label>
+            <label>Billing Model:</label>
+            <div class="billing-model-options">
+              <label class="radio-option">
+                <input type="radio" value="one_time" v-model="newBillingModel" />
+                <span>One-time purchase</span>
+              </label>
+              <label class="radio-option">
+                <input type="radio" value="subscription" v-model="newBillingModel" />
+                <span>Recurring subscription</span>
+              </label>
+            </div>
+            <p class="help-text muted tiny">
+              Changing the billing model affects new purchases only. Existing
+              purchases remain valid until their current expiration.
+            </p>
+          </div>
+
+          <div v-if="newBillingModel === 'subscription'" class="form-group">
+            <label for="cadenceSelect">Billing Cadence:</label>
+            <select id="cadenceSelect" v-model="newCadenceKey">
+              <option value="monthly">Monthly (every 1 month)</option>
+              <option value="semiannual">Every 6 months</option>
+              <option value="annual">Annually (every 12 months)</option>
+            </select>
+            <p class="help-text muted tiny">
+              Gift subscriptions require at least a 6-month cadence.
+            </p>
+          </div>
+
+          <div class="form-group">
+            <label for="newPrice">
+              {{ newBillingModel === 'subscription' ? 'Price per billing period (USD):' : 'New Price (USD):' }}
+            </label>
             <div class="price-input-wrapper">
               <span class="currency-symbol">$</span>
-              <input 
-                id="newPrice" 
-                type="number" 
-                v-model.number="newPriceDollars" 
-                min="0.50" 
-                max="999.99" 
+              <input
+                id="newPrice"
+                type="number"
+                v-model.number="newPriceDollars"
+                min="0.50"
+                max="999.99"
                 step="0.01"
                 placeholder="9.99"
               />
             </div>
           </div>
-          <p class="help-text">
-            This will affect new purchases only. Existing purchases remain valid.
-          </p>
+
           <div class="price-form-actions">
             <button @click="savePrice" :disabled="savingPrice" class="btn primary">
               {{ savingPrice ? 'Saving...' : 'Save Price' }}
@@ -654,6 +749,14 @@ export default {
       newPriceDollars: 9.99,
       savingPrice: false,
       priceError: null,
+      // Billing model / cadence state for the pricing editor. These are
+      // populated from GET /api/v1/groups/:id/price when the section loads.
+      billingModel: 'one_time',
+      billingInterval: null,
+      billingIntervalCount: null,
+      stripeRecurringPriceId: null,
+      newBillingModel: 'one_time',
+      newCadenceKey: 'monthly',
 
       // group overview analytics
       groupOverview: {
@@ -713,6 +816,23 @@ export default {
         return this.user.role;
       }
       return null;
+    },
+
+    /**
+     * Human-readable label for the current billing configuration shown in the
+     * read-only pricing summary. Falls back to "One-time purchase" when no
+     * cadence is configured.
+     */
+    billingModeLabel() {
+      if (this.billingModel !== 'subscription') return 'One-time purchase';
+      const count = this.billingIntervalCount;
+      const interval = this.billingInterval;
+      if (interval === 'month' && count === 1) return 'Subscription · Monthly';
+      if (interval === 'month' && count === 6) return 'Subscription · Every 6 months';
+      if (interval === 'month' && count === 12) return 'Subscription · Yearly';
+      if (interval === 'year' && count === 1) return 'Subscription · Yearly';
+      if (interval && count) return `Subscription · Every ${count} ${interval}(s)`;
+      return 'Subscription (cadence not set)';
     },
 
   },
@@ -1647,30 +1767,54 @@ export default {
       }
     },
 
-    // Fetch current price for this group
+    // Fetch current price for this group, including billing model and cadence
     async fetchCurrentPrice() {
       if (!this.groupId) return;
-      
+
       try {
         const res = await fetch(`${API_BASE}/groups/${this.groupId}/price`);
         if (!res.ok) {
           console.warn("[FoodieGroupDashboard] fetchCurrentPrice failed", res.status);
           return;
         }
-        
+
         const data = await res.json();
         this.currentPriceDisplay = data.display || '$9.99';
         this.priceIsDefault = data.isDefault === true;
         this.newPriceDollars = data.amountCents ? data.amountCents / 100 : 9.99;
+        this.billingModel = data.billingModel || 'one_time';
+        this.billingInterval = data.billingInterval || null;
+        this.billingIntervalCount = data.billingIntervalCount || null;
+        this.stripeRecurringPriceId = data.stripeRecurringPriceId || null;
       } catch (err) {
         console.error("[FoodieGroupDashboard] fetchCurrentPrice error", err);
       }
     },
 
-    // Start editing price
+    // Start editing price — seed the editor state from the last-loaded values
     startEditPrice() {
       this.editingPrice = true;
       this.priceError = null;
+      this.newBillingModel = this.billingModel || 'one_time';
+      this.newCadenceKey = this.cadenceKeyFromInterval(
+        this.billingInterval,
+        this.billingIntervalCount
+      );
+    },
+
+    // Map a (interval, count) pair to the UI's cadence key (monthly|semiannual|annual)
+    cadenceKeyFromInterval(interval, count) {
+      if (interval === 'year' && count === 1) return 'annual';
+      if (interval === 'month' && count === 12) return 'annual';
+      if (interval === 'month' && count === 6) return 'semiannual';
+      return 'monthly';
+    },
+
+    // Map the UI cadence key back to (interval, count) for the PUT body
+    intervalFromCadenceKey(key) {
+      if (key === 'annual') return { interval: 'year', count: 1 };
+      if (key === 'semiannual') return { interval: 'month', count: 6 };
+      return { interval: 'month', count: 1 };
     },
 
     // Cancel editing price
@@ -1703,16 +1847,27 @@ export default {
 
         const amountCents = Math.round(this.newPriceDollars * 100);
 
+        // Assemble the payload. For subscription groups we must also send the
+        // billing cadence fields so the backend can create a recurring Stripe
+        // price; one-time groups keep the existing payload shape.
+        const payload = {
+          amountCents,
+          currency: "usd",
+          billing_model: this.newBillingModel,
+        };
+        if (this.newBillingModel === 'subscription') {
+          const { interval, count } = this.intervalFromCadenceKey(this.newCadenceKey);
+          payload.billing_interval = interval;
+          payload.billing_interval_count = count;
+        }
+
         const res = await fetch(`${API_BASE}/groups/${this.groupId}/price`, {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({
-            amountCents,
-            currency: "usd",
-          }),
+          body: JSON.stringify(payload),
         });
 
         if (res.status === 403) {
@@ -1736,7 +1891,11 @@ export default {
         this.currentPriceDisplay = data.display;
         this.priceIsDefault = false;
         this.editingPrice = false;
-        
+        this.billingModel = data.billingModel || this.newBillingModel;
+        this.billingInterval = data.billingInterval || null;
+        this.billingIntervalCount = data.billingIntervalCount || null;
+        this.stripeRecurringPriceId = data.stripeRecurringPriceId || null;
+
         alert("Price updated successfully!");
       } catch (err) {
         console.error("[FoodieGroupDashboard] savePrice error", err);
@@ -2153,6 +2312,24 @@ textarea:focus {
 .price-form-actions .btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.billing-model-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-xs);
+}
+
+.billing-model-options .radio-option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  cursor: pointer;
+}
+
+.warning-text {
+  color: var(--color-warning, #c77700);
 }
 
 /* Group Overview Section */

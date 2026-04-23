@@ -1,6 +1,6 @@
 import { db } from './db.js';
-import { coupon, couponRedemption, foodieGroup, merchant, user } from './schema.js';
-import { and, asc, desc, eq, gte, isNull, sql } from 'drizzle-orm';
+import { coupon, couponRedemption, foodieGroup, merchant, user, purchase } from './schema.js';
+import { and, asc, desc, eq, gte, isNull, isNotNull, sql, or } from 'drizzle-orm';
 
 function buildCutoff(days = 30) {
   const safeDays = Number.isFinite(Number(days)) && Number(days) > 0 ? Number(days) : 30;
@@ -113,6 +113,198 @@ export async function getFoodieGroupRedemptionOverview(groupId, days = 30) {
   return {
     redemptionsLast30Days: toNumber(totalRows[0]?.redemptionsLast30Days),
     topCoupon,
+  };
+}
+
+/**
+ * getGroupSubscriptionOverview:
+ * Returns subscriber counts and MRR for a specific foodie group.
+ */
+export async function getGroupSubscriptionOverview(groupId) {
+  const now = new Date().toISOString();
+  const graceCutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+
+  const [activeRows, pastDueRows, cancelingRows, giftedRows, adminGrantRows, mrrRows] = await Promise.all([
+    // Active subscribers
+    db.select({ count: sql`count(*)` })
+      .from(purchase)
+      .where(
+        and(
+          eq(purchase.groupId, groupId),
+          eq(purchase.status, 'paid'),
+          eq(purchase.subscriptionStatus, 'active'),
+          sql`${purchase.expiresAt} > ${now}`
+        )
+      ),
+    // Past-due (in grace window)
+    db.select({ count: sql`count(*)` })
+      .from(purchase)
+      .where(
+        and(
+          eq(purchase.groupId, groupId),
+          eq(purchase.status, 'paid'),
+          eq(purchase.subscriptionStatus, 'past_due'),
+          sql`${purchase.currentPeriodEnd} > ${graceCutoff}`
+        )
+      ),
+    // Canceling at period end
+    db.select({ count: sql`count(*)` })
+      .from(purchase)
+      .where(
+        and(
+          eq(purchase.groupId, groupId),
+          eq(purchase.status, 'paid'),
+          eq(purchase.subscriptionStatus, 'active'),
+          eq(purchase.cancelAtPeriodEnd, true)
+        )
+      ),
+    // Gifted access (active)
+    db.select({ count: sql`count(*)` })
+      .from(purchase)
+      .where(
+        and(
+          eq(purchase.groupId, groupId),
+          eq(purchase.status, 'paid'),
+          isNotNull(purchase.giftedByUserId),
+          or(
+            isNull(purchase.expiresAt),
+            sql`${purchase.expiresAt} > ${now}`
+          )
+        )
+      ),
+    // Admin grants (active)
+    db.select({ count: sql`count(*)` })
+      .from(purchase)
+      .where(
+        and(
+          eq(purchase.groupId, groupId),
+          eq(purchase.status, 'paid'),
+          eq(purchase.provider, 'admin_grant'),
+          or(
+            isNull(purchase.expiresAt),
+            sql`${purchase.expiresAt} > ${now}`
+          )
+        )
+      ),
+    // MRR: sum amountCents / billingIntervalCount for active subscriptions
+    db.select({
+      totalMrrCents: sql`COALESCE(SUM(
+        CASE
+          WHEN (${purchase.priceSnapshot}->>'billingIntervalCount')::int > 0
+          THEN (${purchase.amountCents})::float / ((${purchase.priceSnapshot}->>'billingIntervalCount')::int)
+          ELSE ${purchase.amountCents}
+        END
+      ), 0)`.as('total_mrr_cents'),
+    })
+      .from(purchase)
+      .where(
+        and(
+          eq(purchase.groupId, groupId),
+          eq(purchase.status, 'paid'),
+          eq(purchase.subscriptionStatus, 'active'),
+          isNotNull(purchase.subscriptionStatus)
+        )
+      ),
+  ]);
+
+  return {
+    activeSubscribers: Number(activeRows[0]?.count ?? 0),
+    pastDueSubscribers: Number(pastDueRows[0]?.count ?? 0),
+    cancelingSubscribers: Number(cancelingRows[0]?.count ?? 0),
+    giftedAccess: Number(giftedRows[0]?.count ?? 0),
+    adminGranted: Number(adminGrantRows[0]?.count ?? 0),
+    mrrCents: Math.round(Number(mrrRows[0]?.totalMrrCents ?? 0)),
+  };
+}
+
+/**
+ * getPlatformSubscriptionOverview:
+ * Returns platform-wide subscriber counts, MRR, and gifted access counts.
+ */
+export async function getPlatformSubscriptionOverview() {
+  const now = new Date().toISOString();
+  const graceCutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+
+  const [activeRows, pastDueRows, cancelingRows, giftedRows, adminGrantRows, mrrRows] = await Promise.all([
+    db.select({ count: sql`count(*)` })
+      .from(purchase)
+      .where(
+        and(
+          eq(purchase.status, 'paid'),
+          eq(purchase.subscriptionStatus, 'active'),
+          sql`${purchase.expiresAt} > ${now}`
+        )
+      ),
+    db.select({ count: sql`count(*)` })
+      .from(purchase)
+      .where(
+        and(
+          eq(purchase.status, 'paid'),
+          eq(purchase.subscriptionStatus, 'past_due'),
+          sql`${purchase.currentPeriodEnd} > ${graceCutoff}`
+        )
+      ),
+    db.select({ count: sql`count(*)` })
+      .from(purchase)
+      .where(
+        and(
+          eq(purchase.status, 'paid'),
+          eq(purchase.subscriptionStatus, 'active'),
+          eq(purchase.cancelAtPeriodEnd, true)
+        )
+      ),
+    // Gifted access (active)
+    db.select({ count: sql`count(*)` })
+      .from(purchase)
+      .where(
+        and(
+          eq(purchase.status, 'paid'),
+          isNotNull(purchase.giftedByUserId),
+          or(
+            isNull(purchase.expiresAt),
+            sql`${purchase.expiresAt} > ${now}`
+          )
+        )
+      ),
+    // Admin grants (active)
+    db.select({ count: sql`count(*)` })
+      .from(purchase)
+      .where(
+        and(
+          eq(purchase.status, 'paid'),
+          eq(purchase.provider, 'admin_grant'),
+          or(
+            isNull(purchase.expiresAt),
+            sql`${purchase.expiresAt} > ${now}`
+          )
+        )
+      ),
+    db.select({
+      totalMrrCents: sql`COALESCE(SUM(
+        CASE
+          WHEN (${purchase.priceSnapshot}->>'billingIntervalCount')::int > 0
+          THEN (${purchase.amountCents})::float / ((${purchase.priceSnapshot}->>'billingIntervalCount')::int)
+          ELSE ${purchase.amountCents}
+        END
+      ), 0)`.as('total_mrr_cents'),
+    })
+      .from(purchase)
+      .where(
+        and(
+          eq(purchase.status, 'paid'),
+          eq(purchase.subscriptionStatus, 'active'),
+          isNotNull(purchase.subscriptionStatus)
+        )
+      ),
+  ]);
+
+  return {
+    activeSubscribers: Number(activeRows[0]?.count ?? 0),
+    pastDueSubscribers: Number(pastDueRows[0]?.count ?? 0),
+    cancelingSubscribers: Number(cancelingRows[0]?.count ?? 0),
+    giftedAccess: Number(giftedRows[0]?.count ?? 0),
+    adminGranted: Number(adminGrantRows[0]?.count ?? 0),
+    mrrCents: Math.round(Number(mrrRows[0]?.totalMrrCents ?? 0)),
   };
 }
 

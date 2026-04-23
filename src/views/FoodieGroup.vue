@@ -22,10 +22,11 @@
 
       <div class="foodie-group-view container">
         <!-- Purchase Coupon Book Banner -->
-        <div v-if="!hasPurchasedCouponBook" class="purchase-banner">
-          <p>Purchase the coupon book to unlock all group coupons and RSVP for events.</p>
+        <div v-if="showPurchaseBanner" class="purchase-banner">
+          <p v-if="showPurchaseControls">Purchase the coupon book to unlock all group coupons and RSVP for events.</p>
+          <p v-else>You already have access. You can still gift this subscription to someone else.</p>
 
-          <div class="promo-code-row">
+          <div v-if="showPurchaseControls" class="promo-code-row">
             <input
               v-model="promoCode"
               type="text"
@@ -38,11 +39,47 @@
               {{ promoLoading ? 'Applying...' : 'Apply' }}
             </button>
           </div>
-          <p v-if="promoError" class="promo-error">{{ promoError }}</p>
+          <p v-if="showPurchaseControls && promoError" class="promo-error">{{ promoError }}</p>
 
-          <button @click="onPurchaseClick" :disabled="checkoutLoading" class="purchase-btn">
-            {{ checkoutLoading ? 'Processing...' : `Buy Coupon Book - ${groupPriceDisplay}` }}
-          </button>
+          <div class="purchase-buttons">
+            <button v-if="showPurchaseControls" @click="onPurchaseClick" :disabled="checkoutLoading" class="purchase-btn">
+              {{ checkoutLoading ? 'Processing...' : `${isSubscriptionGroup ? 'Subscribe' : 'Buy Coupon Book'} — ${groupPriceDisplay}${billingCadenceSuffix}` }}
+            </button>
+            <button
+              v-if="showGiftActions"
+              @click="onGiftClick"
+              :disabled="giftLoading || !canGiftSubscription"
+              :title="giftButtonTooltip"
+              class="purchase-btn gift-btn"
+            >
+              {{ giftLoading ? 'Processing...' : 'Gift a Subscription' }}
+            </button>
+          </div>
+          <p v-if="showGiftActions && !canGiftSubscription && giftIneligibleMessage" class="gift-hint">
+            {{ giftIneligibleMessage }}
+          </p>
+
+          <!-- Gift modal -->
+          <div v-if="showGiftModal" class="gift-modal-overlay" @click.self="showGiftModal = false">
+            <div class="gift-modal">
+              <h3>Gift a Subscription</h3>
+              <p>Enter the email address of the person you'd like to gift access to <strong>{{ group.name }}</strong>.</p>
+              <input
+                v-model="giftEmail"
+                type="email"
+                placeholder="recipient@email.com"
+                class="gift-email-input"
+                @keyup.enter="submitGift"
+              />
+              <p v-if="giftError" class="gift-error">{{ giftError }}</p>
+              <div class="gift-modal-actions">
+                <button @click="submitGift" :disabled="giftLoading || !giftEmail.trim()" class="purchase-btn">
+                  {{ giftLoading ? 'Processing...' : 'Send Gift' }}
+                </button>
+                <button @click="showGiftModal = false" class="btn-cancel">Cancel</button>
+              </div>
+            </div>
+          </div>
         </div>
 
       <!-- Coupons Section -->
@@ -140,13 +177,17 @@ export default {
       promoCode: '',
       promoLoading: false,
       promoError: null,
+      // Gift state
+      showGiftModal: false,
+      giftEmail: '',
+      giftLoading: false,
+      giftError: null,
       filters: {
         keyword: '',
         activeOnly: false,
         couponType: '',
         cuisineType: ''
       }
-
     };
   },
 
@@ -175,6 +216,81 @@ export default {
 
   computed: {
     ...mapGetters('auth', ['isAuthenticated']),
+
+    isSubscriptionGroup() {
+      return this.group?.billingModel === 'subscription';
+    },
+
+    /**
+     * Suffix appended to the price on the Subscribe / Buy button so users
+     * know the cadence (e.g. "$9.99 / month", "$49.99 every 6 months").
+     * Returns empty string for one-time groups.
+     */
+    billingCadenceSuffix() {
+      if (!this.isSubscriptionGroup) return '';
+      const interval = this.groupPrice?.billingInterval;
+      const count = this.groupPrice?.billingIntervalCount;
+      if (!interval || !count) return '';
+      if (interval === 'month' && count === 1) return ' / month';
+      if (interval === 'month' && count === 6) return ' every 6 months';
+      if (interval === 'month' && count === 12) return ' / year';
+      if (interval === 'year' && count === 1) return ' / year';
+      return ` every ${count} ${interval}${count > 1 ? 's' : ''}`;
+    },
+    
+    /**
+     * Human-friendly cadence label used in gift eligibility messaging.
+     */
+    billingCadenceLabel() {
+      if (!this.isSubscriptionGroup) return 'one-time';
+      const interval = this.groupPrice?.billingInterval;
+      const count = this.groupPrice?.billingIntervalCount;
+      if (!interval || !count) return 'not configured';
+      if (interval === 'month' && count === 1) return 'monthly';
+      if (interval === 'month' && count === 6) return 'every 6 months';
+      if ((interval === 'month' && count === 12) || (interval === 'year' && count === 1)) return 'yearly';
+      return `every ${count} ${interval}${count > 1 ? 's' : ''}`;
+    },
+
+    /**
+     * Gifts are only allowed when the current subscription cadence is >= 6 months.
+     */
+    giftCadenceMonths() {
+      if (!this.isSubscriptionGroup) return null;
+      const interval = this.groupPrice?.billingInterval;
+      const count = Number(this.groupPrice?.billingIntervalCount || 0);
+      if (!interval || !count) return null;
+      return interval === 'year' ? count * 12 : count;
+    },
+
+    canGiftSubscription() {
+      return this.isSubscriptionGroup && this.giftCadenceMonths !== null && this.giftCadenceMonths >= 6;
+    },
+
+    giftIneligibleMessage() {
+      if (!this.isSubscriptionGroup || this.canGiftSubscription) return '';
+      if (this.giftCadenceMonths === null) {
+        return 'Gifting is unavailable until this group configures a subscription cadence.';
+      }
+      return `Gifting is available only for plans billed every 6+ months. This group is currently billed ${this.billingCadenceLabel}.`;
+    },
+
+    giftButtonTooltip() {
+      if (!this.isSubscriptionGroup) return '';
+      return this.canGiftSubscription ? 'Gift this subscription to another user' : this.giftIneligibleMessage;
+    },
+
+    showPurchaseBanner() {
+      return !this.hasPurchasedCouponBook || this.showGiftActions;
+    },
+
+    showPurchaseControls() {
+      return !this.hasPurchasedCouponBook;
+    },
+
+    showGiftActions() {
+      return this.isSubscriptionGroup && this.isAuthenticated;
+    },
 
     /**
      * Derive available cuisine types from loaded coupons (data-driven).
@@ -571,6 +687,47 @@ export default {
       }
     },
 
+    onGiftClick() {
+      this.giftError = null;
+      this.giftEmail = '';
+      this.showGiftModal = true;
+    },
+
+    async submitGift() {
+      this.giftError = null;
+      if (!this.giftEmail.trim()) return;
+      if (!this.canGiftSubscription) {
+        this.giftError = this.giftIneligibleMessage || 'Gifting is unavailable for this subscription cadence.';
+        return;
+      }
+      this.giftLoading = true;
+      try {
+        const token = await getAccessToken();
+        const groupId = this.group?.id;
+        const res = await fetch(`/api/v1/groups/${groupId}/gift`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ recipientEmail: this.giftEmail.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          this.giftError = data.error || 'Failed to create gift checkout.';
+          return;
+        }
+        if (data.checkoutUrl) {
+          window.location.href = data.checkoutUrl;
+        }
+      } catch (e) {
+        console.error('[FoodieGroup] gift error', e);
+        this.giftError = 'Something went wrong. Please try again.';
+      } finally {
+        this.giftLoading = false;
+      }
+    },
+
     async applyPromoCode() {
       this.promoError = null;
       this.promoLoading = true;
@@ -854,6 +1011,77 @@ export default {
   margin-bottom: 0;
 }
 
+.gift-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-lg);
+  z-index: 1000;
+}
+
+.gift-modal {
+  width: min(100%, 520px);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--spacing-xl);
+  text-align: left;
+}
+
+.gift-modal h3 {
+  margin-bottom: var(--spacing-sm);
+}
+
+.gift-modal p {
+  margin-bottom: var(--spacing-md);
+}
+
+.gift-email-input {
+  width: 100%;
+  min-height: var(--button-height-md);
+  margin-bottom: var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.gift-modal-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.gift-hint {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.gift-modal-actions .purchase-btn {
+  margin-top: 0;
+}
+
+.btn-cancel {
+  background: transparent;
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  min-height: var(--button-height-md);
+  padding: var(--spacing-md) var(--spacing-xl);
+  font-weight: var(--font-weight-medium);
+  font-family: var(--font-family-base);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.btn-cancel:hover {
+  background: var(--surface-2);
+}
+
 .error {
   color: var(--color-error);
   margin-bottom: var(--spacing-lg);
@@ -929,6 +1157,15 @@ export default {
   .coupons-main-title {
     margin-top: var(--spacing-lg);
     text-align: left;
+  }
+
+  .gift-modal {
+    padding: var(--spacing-lg);
+  }
+
+  .gift-modal-actions {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 </style>

@@ -106,6 +106,41 @@
               <span class="stat-label">Gross Revenue</span>
               <span class="stat-value highlight-success">{{ formatCurrency(overview.revenue?.grossCents || 0) }}</span>
             </div>
+            <!--
+              Subscription metrics (platform-wide). Render unconditionally so
+              super-admins always see the full slate — zero values are valid
+              placeholders that indicate "no activity yet" rather than noise.
+            -->
+            <div class="stat-card">
+              <span class="stat-label">Active Subscribers</span>
+              <span class="stat-value highlight-success">{{ overview.subscriptions?.activeSubscribers || 0 }}</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">MRR</span>
+              <span class="stat-value highlight-success">{{ formatCurrency(overview.subscriptions?.mrrCents || 0) }}</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Past Due (grace)</span>
+              <span
+                class="stat-value"
+                :class="overview.subscriptions?.pastDueSubscribers > 0 ? 'highlight-warning' : ''"
+              >{{ overview.subscriptions?.pastDueSubscribers || 0 }}</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Canceling at Period End</span>
+              <span
+                class="stat-value"
+                :class="overview.subscriptions?.cancelingSubscribers > 0 ? 'highlight-warning' : ''"
+              >{{ overview.subscriptions?.cancelingSubscribers || 0 }}</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Gifted Access</span>
+              <span class="stat-value">{{ overview.subscriptions?.giftedAccess || 0 }}</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Admin Granted</span>
+              <span class="stat-value">{{ overview.subscriptions?.adminGranted || 0 }}</span>
+            </div>
             <div class="stat-card clickable" @click="goToTab('coupons')" title="View recent coupon redemptions">
               <span class="stat-label">Platform Redemptions (30d)</span>
               <span class="stat-value highlight-success">{{ redemptionOverview.redemptionsLast30Days || 0 }}</span>
@@ -209,6 +244,14 @@
                     </span>
                   </td>
                   <td class="actions-cell">
+                    <button
+                      v-if="!u.deletedAt && !u.email.includes('@anonymized')"
+                      class="btn-action primary"
+                      @click="showGrantAccessModal(u)"
+                      title="Grant or revoke group access for this user"
+                    >
+                      Grant Access
+                    </button>
                     <button
                       v-if="!u.deletedAt && u.id !== user.id"
                       class="btn-action warning"
@@ -835,6 +878,114 @@
       </div>
     </Modal>
 
+    <!-- Grant Access Modal -->
+    <Modal v-if="showGrantAccessModalFlag" @close="closeGrantAccessModal">
+      <h2>Grant Group Access</h2>
+      <p class="info-text">
+        Give a user access to a foodie group without going through Stripe.
+        Used for comped access, partnerships, internal QA, and similar cases.
+      </p>
+      <div class="modal-user-info">
+        <p><strong>User:</strong> {{ userToGrant?.name }}</p>
+        <p><strong>Email:</strong> {{ userToGrant?.email }}</p>
+      </div>
+
+      <div class="form-group">
+        <label>Foodie Group:</label>
+        <select v-model="grantForm.groupId" :disabled="groupsLoading">
+          <option value="">-- Select a group --</option>
+          <option v-for="g in groups" :key="g.id" :value="g.id">
+            {{ g.name }}
+          </option>
+        </select>
+        <p v-if="groupsLoading" class="muted tiny">Loading groups...</p>
+      </div>
+
+      <div class="form-group">
+        <label>Access Duration:</label>
+        <div class="radio-group">
+          <label class="radio-option">
+            <input type="radio" v-model="grantForm.expiryPreset" value="perpetual" />
+            <span>Perpetual (never expires)</span>
+          </label>
+          <label class="radio-option">
+            <input type="radio" v-model="grantForm.expiryPreset" value="30d" />
+            <span>30 days</span>
+          </label>
+          <label class="radio-option">
+            <input type="radio" v-model="grantForm.expiryPreset" value="90d" />
+            <span>90 days</span>
+          </label>
+          <label class="radio-option">
+            <input type="radio" v-model="grantForm.expiryPreset" value="1y" />
+            <span>1 year</span>
+          </label>
+          <label class="radio-option">
+            <input type="radio" v-model="grantForm.expiryPreset" value="custom" />
+            <span>Custom date</span>
+          </label>
+        </div>
+        <input
+          v-if="grantForm.expiryPreset === 'custom'"
+          type="date"
+          v-model="grantForm.customExpiry"
+          :min="tomorrowIsoDate"
+          class="date-input"
+        />
+      </div>
+
+      <div class="form-group">
+        <label>Reason (optional, stored in audit log):</label>
+        <textarea
+          v-model="grantForm.reason"
+          placeholder="e.g., comped QA access, partnership grant..."
+          rows="2"
+        ></textarea>
+      </div>
+
+      <p v-if="grantError" class="error-state">{{ grantError }}</p>
+
+      <div class="modal-actions">
+        <button class="btn secondary" @click="closeGrantAccessModal">Cancel</button>
+        <button
+          class="btn primary"
+          @click="submitGrantAccess"
+          :disabled="!grantForm.groupId || grantSubmitting || (grantForm.expiryPreset === 'custom' && !grantForm.customExpiry)"
+        >
+          {{ grantSubmitting ? 'Granting...' : 'Grant Access' }}
+        </button>
+      </div>
+
+      <!-- Active grants list -->
+      <div class="grant-list-section">
+        <h3>Active Grants for This User</h3>
+        <p v-if="userGrantsLoading" class="muted tiny">Loading...</p>
+        <p v-else-if="userGrants.length === 0" class="muted tiny">
+          No active admin-granted access for this user.
+        </p>
+        <ul v-else class="grant-list">
+          <li v-for="g in userGrants" :key="g.purchaseId" class="grant-row">
+            <div class="grant-info">
+              <strong>{{ g.groupName || '(unknown group)' }}</strong>
+              <span class="muted tiny">
+                · Expires: {{ g.expiresAt ? formatDate(g.expiresAt) : 'Never' }}
+              </span>
+              <span v-if="g.metadata?.reason" class="muted tiny">
+                · {{ g.metadata.reason }}
+              </span>
+            </div>
+            <button
+              class="btn-action danger small"
+              @click="revokeGrantAccess(g)"
+              :disabled="revokingPurchaseId === g.purchaseId"
+            >
+              {{ revokingPurchaseId === g.purchaseId ? 'Revoking...' : 'Revoke' }}
+            </button>
+          </li>
+        </ul>
+      </div>
+    </Modal>
+
     <!-- Anonymize User Modal -->
     <Modal v-if="showAnonymizeModalFlag" @close="closeAnonymizeModal">
       <h2>Anonymize User</h2>
@@ -1261,6 +1412,21 @@ export default {
       showDisableModalFlag: false,
       userToDisable: null,
 
+      // Grant access modal
+      showGrantAccessModalFlag: false,
+      userToGrant: null,
+      grantForm: {
+        groupId: '',
+        expiryPreset: 'perpetual',
+        customExpiry: '',
+        reason: '',
+      },
+      grantSubmitting: false,
+      grantError: null,
+      userGrants: [],
+      userGrantsLoading: false,
+      revokingPurchaseId: null,
+
       // Anonymize modal
       showAnonymizeModalFlag: false,
       userToAnonymize: null,
@@ -1367,6 +1533,16 @@ export default {
 
   computed: {
     ...mapGetters("auth", ["isAuthenticated"]),
+
+    /**
+     * YYYY-MM-DD for tomorrow. Used as the `min` attribute on the
+     * custom-expiry date picker so admins can't pick a date in the past.
+     */
+    tomorrowIsoDate() {
+      const d = new Date();
+      d.setDate(d.getDate() + 1);
+      return d.toISOString().slice(0, 10);
+    },
   },
 
   async created() {
@@ -1555,6 +1731,141 @@ export default {
     closeDisableModal() {
       this.showDisableModalFlag = false;
       this.userToDisable = null;
+    },
+
+    /**
+     * Open the "Grant Group Access" modal for a user. Loads the groups list
+     * (for the picker) and the user's existing active admin grants (so the
+     * admin can revoke them from the same dialog).
+     */
+    async showGrantAccessModal(u) {
+      this.userToGrant = u;
+      this.grantForm = {
+        groupId: '',
+        expiryPreset: 'perpetual',
+        customExpiry: '',
+        reason: '',
+      };
+      this.grantError = null;
+      this.userGrants = [];
+      this.showGrantAccessModalFlag = true;
+
+      if (this.groups.length === 0) {
+        await this.searchGroups();
+      }
+      await this.loadUserGrants(u.id);
+    },
+
+    closeGrantAccessModal() {
+      this.showGrantAccessModalFlag = false;
+      this.userToGrant = null;
+      this.userGrants = [];
+      this.grantError = null;
+    },
+
+    async loadUserGrants(userId) {
+      this.userGrantsLoading = true;
+      try {
+        const headers = await this.getAuthHeaders();
+        const res = await fetch(`${API_BASE}/admin/users/${userId}/access-grants`, { headers });
+        if (!res.ok) throw new Error(`Failed to load grants: ${res.status}`);
+        const data = await res.json();
+        this.userGrants = data.grants || [];
+      } catch (err) {
+        console.error('loadUserGrants error', err);
+        this.userGrants = [];
+      } finally {
+        this.userGrantsLoading = false;
+      }
+    },
+
+    /**
+     * Convert the selected expiry preset into an ISO date string (or null
+     * for perpetual). Returns undefined if the custom date is empty.
+     */
+    resolveGrantExpiryIso() {
+      const preset = this.grantForm.expiryPreset;
+      if (preset === 'perpetual') return null;
+      const now = new Date();
+      if (preset === '30d') { now.setDate(now.getDate() + 30); return now.toISOString(); }
+      if (preset === '90d') { now.setDate(now.getDate() + 90); return now.toISOString(); }
+      if (preset === '1y')  { now.setFullYear(now.getFullYear() + 1); return now.toISOString(); }
+      if (preset === 'custom') {
+        if (!this.grantForm.customExpiry) return undefined;
+        return new Date(this.grantForm.customExpiry + 'T23:59:59Z').toISOString();
+      }
+      return null;
+    },
+
+    async submitGrantAccess() {
+      if (!this.userToGrant || !this.grantForm.groupId) return;
+      const expiresAt = this.resolveGrantExpiryIso();
+      if (expiresAt === undefined) {
+        this.grantError = 'Please pick a custom expiry date.';
+        return;
+      }
+
+      this.grantSubmitting = true;
+      this.grantError = null;
+      try {
+        const headers = await this.getAuthHeaders();
+        const res = await fetch(
+          `${API_BASE}/admin/groups/${this.grantForm.groupId}/access-grants`,
+          {
+            method: 'POST',
+            headers: { ...headers, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: this.userToGrant.id,
+              expiresAt,
+              reason: this.grantForm.reason || null,
+            }),
+          }
+        );
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          this.grantError = data.error || `Grant failed: ${res.status}`;
+          return;
+        }
+
+        this.grantForm.groupId = '';
+        this.grantForm.reason = '';
+        this.grantForm.expiryPreset = 'perpetual';
+        this.grantForm.customExpiry = '';
+        await this.loadUserGrants(this.userToGrant.id);
+      } catch (err) {
+        console.error('submitGrantAccess error', err);
+        this.grantError = 'Failed to grant access. Please try again.';
+      } finally {
+        this.grantSubmitting = false;
+      }
+    },
+
+    async revokeGrantAccess(grant) {
+      if (!this.userToGrant || !grant?.groupId) return;
+      if (!window.confirm(`Revoke access to "${grant.groupName}" for ${this.userToGrant.email}?`)) {
+        return;
+      }
+
+      this.revokingPurchaseId = grant.purchaseId;
+      try {
+        const headers = await this.getAuthHeaders();
+        const res = await fetch(
+          `${API_BASE}/admin/groups/${grant.groupId}/access-grants/${this.userToGrant.id}`,
+          { method: 'DELETE', headers }
+        );
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          alert(data.error || `Revoke failed: ${res.status}`);
+          return;
+        }
+        await this.loadUserGrants(this.userToGrant.id);
+      } catch (err) {
+        console.error('revokeGrantAccess error', err);
+        alert('Failed to revoke access.');
+      } finally {
+        this.revokingPurchaseId = null;
+      }
     },
 
     async confirmDisableUser() {
@@ -2913,6 +3224,76 @@ export default {
 .btn-action.danger:hover {
   background: var(--color-error);
   color: white;
+}
+
+.btn-action.primary {
+  background: var(--color-primary, #f2542d);
+  color: var(--color-text-on-primary, #ffffff);
+}
+
+.btn-action.primary:hover {
+  background: var(--color-primary-hover, #f76a43);
+  color: var(--color-text-on-primary, #ffffff);
+}
+
+.btn-action.small {
+  padding: 2px 8px;
+  font-size: 0.8em;
+}
+
+/* Grant-access modal */
+.radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs, 0.25rem);
+  margin-top: var(--spacing-xs, 0.25rem);
+}
+
+.radio-option {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm, 0.5rem);
+  cursor: pointer;
+}
+
+.date-input {
+  margin-top: var(--spacing-sm, 0.5rem);
+  padding: var(--spacing-xs, 0.25rem) var(--spacing-sm, 0.5rem);
+}
+
+.grant-list-section {
+  margin-top: var(--spacing-lg, 1rem);
+  padding-top: var(--spacing-md, 0.75rem);
+  border-top: 1px solid var(--color-border, #333);
+}
+
+.grant-list-section h3 {
+  font-size: var(--font-size-base, 1rem);
+  margin-bottom: var(--spacing-sm, 0.5rem);
+}
+
+.grant-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs, 0.25rem);
+}
+
+.grant-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-sm, 0.5rem);
+  background: var(--color-bg-muted, rgba(255, 255, 255, 0.05));
+  border-radius: var(--radius-sm, 4px);
+}
+
+.grant-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 /* Loading / Error States */

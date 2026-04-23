@@ -3,5 +3,11 @@
   "rewrites": [
     { "source": "/api/v1/stripe/webhook", "destination": "/api/stripe-webhook" },
     { "source": "/api/:path*", "destination": "/api/[...slug]" }
+  ],
+  "crons": [
+    {
+      "path": "/api/v1/cron/renewal-reminders",
+      "schedule": "0 9 * * *"
+    }
   ]
 }
