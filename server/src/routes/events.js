@@ -1,11 +1,21 @@
 // server/src/routes/events.js
 import express from 'express';
 import { db } from '../db.js';
-import { event, eventRsvp, merchant, user, purchase } from '../schema.js';
-import { eq, and, isNull, asc, desc, sql, or } from 'drizzle-orm';
+import { event, eventRsvp, merchant, user, eventOrder } from '../schema.js';
+import { eq, and, isNull, asc, desc, sql, or, gte } from 'drizzle-orm';
 import auth from '../middleware/auth.js';
 import { optional as optionalAuth } from '../middleware/auth.js';
 import { resolveLocalUser, canManageEvent, canViewEventStats, hasEntitlement } from '../authz/index.js';
+import {
+  assertMerchantPaidEventReady,
+  cancelRsvpWithRefund,
+  createEventRefundForOrder,
+  createPaidEventOrder,
+  findEventOrderForRsvp,
+  findValidGuestToken,
+  markGuestTokenUsed,
+  paidEventPaymentsEnabled,
+} from '../services/eventPaymentService.js';
 
 const router = express.Router();
 
@@ -17,7 +27,14 @@ const router = express.Router();
 router.get('/', async (req, res, next) => {
   try {
     const groupId = String(req.query.group_id || '').trim() || null;
-    const filters = [eq(event.status, 'published'), isNull(event.deletedAt)];
+    const filters = [
+      eq(event.status, 'published'),
+      isNull(event.deletedAt),
+      or(
+        gte(event.endDatetime, sql`NOW()`),
+        and(isNull(event.endDatetime), gte(event.startDatetime, sql`NOW()`)),
+      ),
+    ];
     if (groupId) {
       filters.push(eq(event.groupId, groupId));
     }
@@ -49,7 +66,8 @@ router.get('/', async (req, res, next) => {
       })
       .from(event)
       .leftJoin(merchant, eq(event.merchantId, merchant.id))
-      .where(and(...filters));
+      .where(and(...filters))
+      .orderBy(asc(event.startDatetime));
 
     res.json(events);
   } catch (err) {
@@ -124,6 +142,131 @@ router.get('/mine', auth(), resolveLocalUser, async (req, res, next) => {
         ),
       );
     res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/v1/events/my-rsvps — upcoming active RSVPs for the signed-in customer
+// MUST be before /:id to avoid Express matching 'my-rsvps' as an id param
+router.get('/my-rsvps', auth(), resolveLocalUser, async (req, res, next) => {
+  try {
+    const dbUser = req.dbUser;
+    const rows = await db
+      .select({
+        id:               eventRsvp.id,
+        eventId:          eventRsvp.eventId,
+        attendees:        eventRsvp.attendees,
+        status:           eventRsvp.status,
+        waitlistPosition: eventRsvp.waitlistPosition,
+        createdAt:        eventRsvp.createdAt,
+        eventName:        event.name,
+        eventSlug:        event.slug,
+        startDatetime:    event.startDatetime,
+        endDatetime:      event.endDatetime,
+        location:         event.location,
+        eventStatus:      event.status,
+        merchantName:     merchant.name,
+        merchantLogoUrl:  merchant.logoUrl,
+        orderId:          eventOrder.id,
+        orderStatus:      eventOrder.status,
+        orderAmountCents: eventOrder.amountCents,
+        orderCurrency:    eventOrder.currency,
+      })
+      .from(eventRsvp)
+      .innerJoin(event, eq(eventRsvp.eventId, event.id))
+      .leftJoin(merchant, eq(event.merchantId, merchant.id))
+      .leftJoin(eventOrder, eq(eventOrder.rsvpId, eventRsvp.id))
+      .where(
+        and(
+          eq(eventRsvp.userId, dbUser.id),
+          sql`${eventRsvp.status}::text IN ('going', 'waitlist', 'checked_in')`,
+          isNull(eventRsvp.deletedAt),
+          isNull(event.deletedAt),
+          eq(event.status, 'published'),
+          or(
+            gte(event.endDatetime, sql`NOW()`),
+            and(isNull(event.endDatetime), gte(event.startDatetime, sql`NOW()`)),
+          ),
+        ),
+      )
+      .orderBy(asc(event.startDatetime), asc(eventRsvp.createdAt));
+
+    res.json(rows.map(row => ({
+      id:               row.id,
+      eventId:          row.eventId,
+      attendees:        Number(row.attendees),
+      status:           row.status,
+      waitlistPosition: row.waitlistPosition,
+      createdAt:        row.createdAt,
+      eventName:        row.eventName,
+      eventSlug:        row.eventSlug,
+      startDatetime:    row.startDatetime,
+      endDatetime:      row.endDatetime,
+      location:         row.location,
+      eventStatus:      row.eventStatus,
+      merchantName:     row.merchantName,
+      merchantLogoUrl:  row.merchantLogoUrl,
+      order: row.orderId ? {
+        id:          row.orderId,
+        status:      row.orderStatus,
+        amountCents: Number(row.orderAmountCents || 0),
+        currency:    row.orderCurrency,
+      } : null,
+    })));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/v1/events/:id/my-rsvp — current user's active RSVP for one event
+router.get('/:id/my-rsvp', auth(), resolveLocalUser, async (req, res, next) => {
+  try {
+    const [rsvp] = await db
+      .select({
+        id:               eventRsvp.id,
+        eventId:          eventRsvp.eventId,
+        userId:           eventRsvp.userId,
+        attendees:        eventRsvp.attendees,
+        status:           eventRsvp.status,
+        waitlistPosition: eventRsvp.waitlistPosition,
+        createdAt:        eventRsvp.createdAt,
+        updatedAt:        eventRsvp.updatedAt,
+        orderId:          eventOrder.id,
+        orderStatus:      eventOrder.status,
+        orderAmountCents: eventOrder.amountCents,
+        orderCurrency:    eventOrder.currency,
+      })
+      .from(eventRsvp)
+      .leftJoin(eventOrder, eq(eventOrder.rsvpId, eventRsvp.id))
+      .where(
+        and(
+          eq(eventRsvp.eventId, req.params.id),
+          eq(eventRsvp.userId, req.dbUser.id),
+          sql`${eventRsvp.status}::text IN ('going', 'waitlist', 'checked_in')`,
+          isNull(eventRsvp.deletedAt),
+        ),
+      )
+      .limit(1);
+
+    if (!rsvp) return res.json(null);
+
+    res.json({
+      id:               rsvp.id,
+      eventId:          rsvp.eventId,
+      userId:           rsvp.userId,
+      attendees:        Number(rsvp.attendees),
+      status:           rsvp.status,
+      waitlistPosition: rsvp.waitlistPosition,
+      createdAt:        rsvp.createdAt,
+      updatedAt:        rsvp.updatedAt,
+      order: rsvp.orderId ? {
+        id:          rsvp.orderId,
+        status:      rsvp.orderStatus,
+        amountCents: Number(rsvp.orderAmountCents || 0),
+        currency:    rsvp.orderCurrency,
+      } : null,
+    });
   } catch (err) {
     next(err);
   }
@@ -272,6 +415,28 @@ router.put('/:id', auth(), resolveLocalUser, async (req, res, next) => {
     if (cover_image_url !== undefined) updates.coverImageUrl = cover_image_url;
     if (banner_image_url !== undefined) updates.bannerImageUrl = banner_image_url;
 
+    const [currentEvent] = await db
+      .select({ merchantId: event.merchantId, isFree: event.isFree, priceCents: event.priceCents, status: event.status })
+      .from(event)
+      .where(and(eq(event.id, req.params.id), isNull(event.deletedAt)))
+      .limit(1);
+    if (!currentEvent) return res.status(404).json({ message: 'Event not found' });
+
+    const nextIsFree = updates.isFree !== undefined ? updates.isFree : currentEvent.isFree;
+    const nextPriceCents = updates.priceCents !== undefined ? updates.priceCents : currentEvent.priceCents;
+    const nextStatus = updates.status !== undefined ? updates.status : currentEvent.status;
+    const enablingPaidTicketing = nextStatus === 'published' && nextIsFree === false && Number(nextPriceCents || 0) > 0;
+    if (enablingPaidTicketing) {
+      if (!paidEventPaymentsEnabled()) {
+        return res.status(503).json({ error: 'Paid event payments are not enabled' });
+      }
+      try {
+        await assertMerchantPaidEventReady({ merchantId: currentEvent.merchantId });
+      } catch (err) {
+        return res.status(err.status || 409).json({ error: err.message, code: err.code });
+      }
+    }
+
     const [updated] = await db
       .update(event)
       .set(updates)
@@ -304,6 +469,94 @@ router.delete('/:id', auth(), resolveLocalUser, async (req, res, next) => {
   }
 });
 
+// POST /api/v1/events/:id/cancel — merchant/admin customer-facing event cancellation
+router.post('/:id/cancel', auth(), resolveLocalUser, async (req, res, next) => {
+  const eventId = req.params.id;
+  try {
+    const allowed = await canManageEvent(req.dbUser, eventId);
+    if (!allowed) return res.status(403).json({ error: 'Forbidden' });
+
+    const [foundEvent] = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.id, eventId), isNull(event.deletedAt)))
+      .limit(1);
+    if (!foundEvent) return res.status(404).json({ message: 'Event not found' });
+
+    const now = new Date().toISOString();
+    await db
+      .update(event)
+      .set({ status: 'cancelled', updatedAt: now })
+      .where(eq(event.id, eventId));
+
+    const activeRsvps = await db
+      .select()
+      .from(eventRsvp)
+      .where(
+        and(
+          eq(eventRsvp.eventId, eventId),
+          sql`${eventRsvp.status}::text IN ('going', 'checked_in', 'waitlist')`,
+          isNull(eventRsvp.deletedAt),
+        ),
+      );
+
+    const results = [];
+    for (const rsvp of activeRsvps) {
+      const order = await findEventOrderForRsvp({ rsvpId: rsvp.id });
+      try {
+        const result = await cancelRsvpWithRefund({
+          rsvp,
+          eventRow: foundEvent,
+          order,
+          requestedByUserId: req.dbUser.id,
+          requestedByRole: 'merchant',
+          reason: 'event_cancelled',
+        });
+        results.push({
+          rsvpId: rsvp.id,
+          orderId: order?.id || null,
+          refundAmountCents: result.refund?.amountCents ?? 0,
+          refundStatus: result.refund?.status || null,
+        });
+      } catch (err) {
+        results.push({ rsvpId: rsvp.id, orderId: order?.id || null, error: err.message });
+      }
+    }
+
+    const paidOrdersWithoutRsvps = await db
+      .select()
+      .from(eventOrder)
+      .where(and(eq(eventOrder.eventId, eventId), eq(eventOrder.status, 'paid'), isNull(eventOrder.rsvpId)));
+
+    for (const order of paidOrdersWithoutRsvps) {
+      try {
+        const amountCents = order.amountCents - Number(order.refundedAmountCents || 0);
+        const refund = await createEventRefundForOrder({
+          order,
+          eventRow: foundEvent,
+          amountCents,
+          policyWindow: 'merchant_event_cancelled_full_refund',
+          reason: 'event_cancelled',
+          requestedByUserId: req.dbUser.id,
+          requestedByRole: 'merchant',
+        });
+        results.push({ rsvpId: null, orderId: order.id, refundAmountCents: refund.amountCents, refundStatus: refund.status });
+      } catch (err) {
+        results.push({ rsvpId: null, orderId: order.id, error: err.message });
+      }
+    }
+
+    res.json({
+      message: 'Event cancelled',
+      eventId,
+      refundedCount: results.filter((r) => r.refundAmountCents > 0 && !r.error).length,
+      results,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ────────────────────────────────────────────────────────────────
 // RSVP endpoints
 // ────────────────────────────────────────────────────────────────
@@ -324,6 +577,10 @@ router.post('/:id/rsvp', optionalAuth(), async (req, res, next) => {
         maxTicketsPerGuest: event.maxTicketsPerGuest,
         inviteOnly:         event.inviteOnly,
         isFree:             event.isFree,
+        priceCents:         event.priceCents,
+        membersOnlyPriceCents: event.membersOnlyPriceCents,
+        startDatetime:      event.startDatetime,
+        merchantId:         event.merchantId,
       })
       .from(event)
       .where(and(eq(event.id, eventId), isNull(event.deletedAt)));
@@ -407,6 +664,31 @@ router.post('/:id/rsvp', optionalAuth(), async (req, res, next) => {
       }
     }
 
+    const isPaidEvent = foundEvent.isFree === false && Number(foundEvent.priceCents || 0) > 0;
+
+    if (isPaidEvent) {
+      const duplicateFilters = [
+        eq(eventOrder.eventId, eventId),
+        sql`${eventOrder.status}::text IN ('pending_payment', 'paid')`,
+      ];
+      if (resolvedUserId) {
+        duplicateFilters.push(eq(eventOrder.userId, resolvedUserId));
+      } else if (guest_email) {
+        duplicateFilters.push(sql`LOWER(${eventOrder.guestEmail}) = LOWER(${guest_email})`);
+      }
+
+      if (duplicateFilters.length > 2) {
+        const [existingPaidOrder] = await db
+          .select({ id: eventOrder.id })
+          .from(eventOrder)
+          .where(and(...duplicateFilters))
+          .limit(1);
+        if (existingPaidOrder) {
+          return res.status(409).json({ error: 'An active paid ticket order already exists for this event' });
+        }
+      }
+    }
+
     // Count confirmed RSVPs to determine capacity
     const confirmed = await db
       .select({ attendees: eventRsvp.attendees })
@@ -419,7 +701,15 @@ router.post('/:id/rsvp', optionalAuth(), async (req, res, next) => {
         ),
       );
     const confirmedCount = confirmed.reduce((sum, r) => sum + (r.attendees || 0), 0);
-    const remaining = foundEvent.capacity > 0 ? foundEvent.capacity - confirmedCount : Infinity;
+    let heldPaidSeats = 0;
+    if (isPaidEvent) {
+      const heldOrders = await db
+        .select({ quantity: eventOrder.quantity })
+        .from(eventOrder)
+        .where(and(eq(eventOrder.eventId, eventId), eq(eventOrder.status, 'pending_payment')));
+      heldPaidSeats = heldOrders.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+    }
+    const remaining = foundEvent.capacity > 0 ? foundEvent.capacity - confirmedCount - heldPaidSeats : Infinity;
     const status = remaining >= ticketCount ? 'going' : 'waitlist';
 
     // Assign waitlist position if needed
@@ -437,6 +727,45 @@ router.post('/:id/rsvp', optionalAuth(), async (req, res, next) => {
         );
       const maxPos = waitlisted.reduce((m, r) => Math.max(m, r.waitlistPosition || 0), 0);
       waitlistPosition = maxPos + 1;
+    }
+
+    if (isPaidEvent && status === 'waitlist') {
+      return res.status(409).json({ error: 'No paid tickets are currently available for this event' });
+    }
+
+    if (isPaidEvent && status === 'going') {
+      if (!paidEventPaymentsEnabled()) {
+        return res.status(503).json({ error: 'Paid event payments are not enabled' });
+      }
+      if (!resolvedUserId && !guest_email) {
+        return res.status(400).json({ error: 'Guest email is required for paid event tickets' });
+      }
+
+      const refundPolicyAcknowledgedAt = req.body.refund_policy_acknowledged_at
+        || (req.body.refund_policy_accepted ? new Date().toISOString() : null);
+
+      try {
+        const payment = await createPaidEventOrder({
+          eventRow: foundEvent,
+          dbUser,
+          attendees: ticketCount,
+          guestName: guest_name || null,
+          guestEmail: guest_email || dbUser?.email || null,
+          refundPolicyAcknowledgedAt,
+        });
+
+        return res.status(201).json({
+          requiresPayment: true,
+          status: 'pending_payment',
+          orderId: payment.order.id,
+          paymentIntentId: payment.paymentIntentId,
+          clientSecret: payment.clientSecret,
+          amountCents: payment.amountCents,
+          currency: payment.currency,
+        });
+      } catch (err) {
+        return res.status(err.status || 500).json({ error: err.message, code: err.code });
+      }
     }
 
     const [rsvp] = await db
@@ -489,8 +818,91 @@ router.get('/:id/attendees', auth(), resolveLocalUser, async (req, res, next) =>
   }
 });
 
+router.get('/:id/rsvp/cancel-by-token', async (req, res, next) => {
+  try {
+    const token = String(req.query.token || '').trim();
+    const tokenRow = await findValidGuestToken({ rawToken: token, purpose: 'cancellation' });
+    if (!tokenRow || tokenRow.eventId !== req.params.id) {
+      return res.status(404).json({ error: 'Cancellation link is invalid or expired' });
+    }
+
+    const [rsvp] = await db.select().from(eventRsvp).where(eq(eventRsvp.id, tokenRow.eventRsvpId)).limit(1);
+    const [foundEvent] = await db.select().from(event).where(eq(event.id, tokenRow.eventId)).limit(1);
+    const order = tokenRow.eventOrderId ? await findEventOrderForRsvp({ rsvpId: tokenRow.eventRsvpId }) : null;
+
+    res.json({
+      valid: true,
+      event: foundEvent ? {
+        id: foundEvent.id,
+        name: foundEvent.name,
+        startDatetime: foundEvent.startDatetime,
+      } : null,
+      rsvp: rsvp ? {
+        id: rsvp.id,
+        attendees: rsvp.attendees,
+        status: rsvp.status,
+        guestEmail: rsvp.guestEmail,
+      } : null,
+      order: order ? {
+        id: order.id,
+        amountCents: order.amountCents,
+        refundedAmountCents: order.refundedAmountCents,
+        status: order.status,
+      } : null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/:id/rsvp/cancel-by-token', async (req, res, next) => {
+  try {
+    const token = String(req.body?.token || '').trim();
+    const tokenRow = await findValidGuestToken({ rawToken: token, purpose: 'cancellation' });
+    if (!tokenRow || tokenRow.eventId !== req.params.id || !tokenRow.eventRsvpId) {
+      return res.status(403).json({ error: 'Cancellation link is invalid or expired' });
+    }
+
+    const [rsvp] = await db
+      .select()
+      .from(eventRsvp)
+      .where(and(eq(eventRsvp.id, tokenRow.eventRsvpId), eq(eventRsvp.eventId, req.params.id), isNull(eventRsvp.deletedAt)))
+      .limit(1);
+    if (!rsvp) return res.status(404).json({ message: 'RSVP not found' });
+
+    const [foundEvent] = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.id, req.params.id), isNull(event.deletedAt)))
+      .limit(1);
+    if (!foundEvent) return res.status(404).json({ message: 'Event not found' });
+
+    const order = await findEventOrderForRsvp({ rsvpId: rsvp.id });
+    const result = await cancelRsvpWithRefund({
+      rsvp,
+      eventRow: foundEvent,
+      order,
+      requestedByRole: 'guest',
+      reason: 'customer_cancelled',
+    });
+    await markGuestTokenUsed({ tokenId: tokenRow.id });
+
+    res.json({
+      message: 'RSVP cancelled',
+      cancelled: true,
+      refundAmountCents: result.refund?.amountCents ?? 0,
+      refundStatus: result.refund?.status || null,
+      refundPolicyWindow: result.refundQuote?.policyWindow || null,
+      refundPolicyReason: result.refundQuote?.reason || null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/v1/events/:id/rsvp/:rsvpId/cancel
-router.post('/:id/rsvp/:rsvpId/cancel', async (req, res, next) => {
+// Requires either authenticated ownership/management or a valid guest cancellation token.
+router.post('/:id/rsvp/:rsvpId/cancel', optionalAuth(), async (req, res, next) => {
   const { id: eventId, rsvpId } = req.params;
   try {
     const [rsvp] = await db
@@ -499,38 +911,59 @@ router.post('/:id/rsvp/:rsvpId/cancel', async (req, res, next) => {
       .where(and(eq(eventRsvp.id, rsvpId), eq(eventRsvp.eventId, eventId), isNull(eventRsvp.deletedAt)));
     if (!rsvp) return res.status(404).json({ message: 'RSVP not found' });
 
-    const wasConfirmed = rsvp.status === 'going' || rsvp.status === 'checked_in';
+    const [foundEvent] = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.id, eventId), isNull(event.deletedAt)))
+      .limit(1);
+    if (!foundEvent) return res.status(404).json({ message: 'Event not found' });
 
-    // Soft-delete the RSVP
-    await db
-      .update(eventRsvp)
-      .set({ status: 'cancelled', deletedAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
-      .where(eq(eventRsvp.id, rsvpId));
-
-    // Promote earliest waitlisted RSVP if a confirmed spot opened up
-    if (wasConfirmed) {
-      const [earliest] = await db
-        .select()
-        .from(eventRsvp)
-        .where(
-          and(
-            eq(eventRsvp.eventId, eventId),
-            eq(eventRsvp.status, 'waitlist'),
-            isNull(eventRsvp.deletedAt),
-          ),
-        )
-        .orderBy(asc(eventRsvp.waitlistPosition))
-        .limit(1);
-
-      if (earliest) {
-        await db
-          .update(eventRsvp)
-          .set({ status: 'going', waitlistPosition: null, updatedAt: new Date().toISOString() })
-          .where(eq(eventRsvp.id, earliest.id));
-      }
+    let dbUser = null;
+    if (req.user?.sub) {
+      [dbUser] = await db.select().from(user).where(eq(user.cognitoSub, req.user.sub)).limit(1);
     }
 
-    res.json({ message: 'RSVP cancelled' });
+    let requestedByRole = 'guest';
+    let guestTokenRow = null;
+    if (req.body?.token) {
+      guestTokenRow = await findValidGuestToken({
+        rawToken: req.body.token,
+        purpose: 'cancellation',
+      });
+      if (!guestTokenRow || guestTokenRow.eventRsvpId !== rsvp.id) {
+        return res.status(403).json({ error: 'Invalid or expired cancellation token' });
+      }
+    } else {
+      const managerAllowed = dbUser ? await canManageEvent(dbUser, eventId) : false;
+      const ownerAllowed = dbUser && rsvp.userId && rsvp.userId === dbUser.id;
+      if (!managerAllowed && !ownerAllowed) {
+        return res.status(401).json({ error: 'Sign in or provide a valid cancellation token to cancel this RSVP' });
+      }
+      requestedByRole = managerAllowed && !ownerAllowed ? 'merchant' : 'customer';
+    }
+
+    const order = await findEventOrderForRsvp({ rsvpId });
+    const result = await cancelRsvpWithRefund({
+      rsvp,
+      eventRow: foundEvent,
+      order,
+      requestedByUserId: dbUser?.id || null,
+      requestedByRole,
+      reason: requestedByRole === 'merchant' ? 'merchant_cancelled_rsvp' : 'customer_cancelled',
+    });
+
+    if (guestTokenRow) {
+      await markGuestTokenUsed({ tokenId: guestTokenRow.id });
+    }
+
+    res.json({
+      message: 'RSVP cancelled',
+      cancelled: true,
+      refundAmountCents: result.refund?.amountCents ?? 0,
+      refundStatus: result.refund?.status || null,
+      refundPolicyWindow: result.refundQuote?.policyWindow || null,
+      refundPolicyReason: result.refundQuote?.reason || null,
+    });
   } catch (err) {
     next(err);
   }
@@ -554,10 +987,14 @@ router.post('/:id/rsvp/:rsvpId/promote', auth(), resolveLocalUser, async (req, r
     }
 
     const [foundEvent] = await db
-      .select({ id: event.id, capacity: event.capacity })
+      .select({ id: event.id, capacity: event.capacity, isFree: event.isFree, priceCents: event.priceCents })
       .from(event)
       .where(and(eq(event.id, eventId), isNull(event.deletedAt)));
     if (!foundEvent) return res.status(404).json({ message: 'Event not found' });
+
+    if (foundEvent.isFree === false && Number(foundEvent.priceCents || 0) > 0) {
+      return res.status(409).json({ error: 'Paid event waitlist promotion requires collecting payment first' });
+    }
 
     if (foundEvent.capacity > 0) {
       const confirmed = await db

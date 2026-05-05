@@ -24,6 +24,7 @@
     "@aws-sdk/client-cognito-identity-provider": "^3.828.0",
     "@aws-sdk/client-rds-data": "^3.828.0",
     "@aws-sdk/client-s3": "^3.943.0",
+    "@stripe/stripe-js": "^9.3.1",
     "amazon-cognito-identity-js": "^6.3.15",
     "axios": "^1.9.0",
     "bcrypt": "^5.1.1",

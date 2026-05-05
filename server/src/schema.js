@@ -4,6 +4,10 @@ export const couponType = pgEnum("coupon_type", ['percent', 'amount', 'bogo', 'f
 export const purchaseStatus = pgEnum("purchase_status", ['created', 'pending', 'paid', 'expired', 'refunded']);
 export const purchaseProvider = pgEnum("purchase_provider", ['stripe', 'test', 'admin_grant']);
 export const billingModel = pgEnum("billing_model", ['one_time', 'subscription']);
+export const eventOrderStatus = pgEnum("event_order_status", ['pending_email', 'pending_payment', 'paid', 'payment_failed', 'cancelled', 'refunded', 'partially_refunded', 'expired']);
+export const eventRefundStatus = pgEnum("event_refund_status", ['pending', 'succeeded', 'failed', 'declined']);
+export const eventTokenPurpose = pgEnum("event_token_purpose", ['email_confirmation', 'cancellation']);
+export const eventPaymentProvider = pgEnum("event_payment_provider", ['stripe']);
 export const role = pgEnum("role", ['super_admin', 'merchant', 'customer', 'foodie_group_admin']);
 export const submissionState = pgEnum("submission_state", ['pending', 'approved', 'rejected']);
 export const eventStatus = pgEnum("event_status", ['draft', 'published', 'cancelled']);
@@ -210,6 +214,29 @@ export const merchant = pgTable("merchant", {
         name: "merchant_owner_id_user_id_fk"
     }),
 ]);
+export const merchantBillingProfile = pgTable("merchant_billing_profile", {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    merchantId: uuid("merchant_id").notNull(),
+    payoutDestinationDetails: jsonb("payout_destination_details"),
+    payoutDestinationVerified: boolean("payout_destination_verified").default(false).notNull(),
+    stripeCustomerId: varchar("stripe_customer_id", { length: 255 }),
+    backupPaymentMethodId: varchar("backup_payment_method_id", { length: 255 }),
+    backupPaymentMethodLast4: varchar("backup_payment_method_last4", { length: 4 }),
+    backupChargeMethodReady: boolean("backup_charge_method_ready").default(false).notNull(),
+    paidEventTermsAcceptedAt: timestamp("paid_event_terms_accepted_at", { mode: 'string' }),
+    paidEventTermsVersion: varchar("paid_event_terms_version", { length: 64 }),
+    paidEventsEnabled: boolean("paid_events_enabled").default(false).notNull(),
+    disputeRecoveryEnabled: boolean("dispute_recovery_enabled").default(false).notNull(),
+    createdAt: timestamp("created_at", { mode: 'string' }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+    foreignKey({
+        columns: [table.merchantId],
+        foreignColumns: [merchant.id],
+        name: "merchant_billing_profile_merchant_id_merchant_id_fk"
+    }).onDelete("cascade"),
+    unique("merchant_billing_profile_merchant_id_unique").on(table.merchantId),
+]);
 export const foodieGroupMembership = pgTable("foodie_group_membership", {
     id: uuid().defaultRandom().primaryKey().notNull(),
     userId: uuid("user_id").notNull(),
@@ -315,6 +342,7 @@ export const paymentEvent = pgTable("payment_event", {
     eventType: varchar("event_type", { length: 255 }).notNull(),
     receivedAt: timestamp("received_at", { mode: 'string' }).defaultNow().notNull(),
     purchaseId: uuid("purchase_id"),
+    eventOrderId: uuid("event_order_id"),
     processedAt: timestamp("processed_at", { mode: 'string' }),
     processingError: text("processing_error"),
     payload: jsonb(),
@@ -324,7 +352,177 @@ export const paymentEvent = pgTable("payment_event", {
         foreignColumns: [purchase.id],
         name: "payment_event_purchase_id_purchase_id_fk"
     }).onDelete("set null"),
+    foreignKey({
+        columns: [table.eventOrderId],
+        foreignColumns: [eventOrder.id],
+        name: "payment_event_event_order_id_event_order_id_fk"
+    }).onDelete("set null"),
     unique("payment_event_event_id_unique").on(table.eventId),
+]);
+export const eventOrder = pgTable("event_order", {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    eventId: uuid("event_id").notNull(),
+    rsvpId: uuid("rsvp_id"),
+    userId: uuid("user_id"),
+    groupId: uuid("group_id").notNull(),
+    merchantId: uuid("merchant_id").notNull(),
+    provider: eventPaymentProvider().default('stripe').notNull(),
+    quantity: integer().notNull(),
+    guestName: varchar("guest_name", { length: 255 }),
+    guestEmail: varchar("guest_email", { length: 255 }),
+    emailConfirmationStatus: varchar("email_confirmation_status", { length: 32 }).default('not_required').notNull(),
+    emailConfirmedAt: timestamp("email_confirmed_at", { mode: 'string' }),
+    amountCents: integer("amount_cents").notNull(),
+    refundedAmountCents: integer("refunded_amount_cents").default(0).notNull(),
+    currency: varchar({ length: 10 }).default('usd').notNull(),
+    pricingBasis: varchar("pricing_basis", { length: 64 }).notNull(),
+    status: eventOrderStatus().notNull(),
+    stripePaymentIntentId: varchar("stripe_payment_intent_id", { length: 255 }),
+    stripeChargeId: varchar("stripe_charge_id", { length: 255 }),
+    stripeCustomerId: varchar("stripe_customer_id", { length: 255 }),
+    refundPolicyVersion: varchar("refund_policy_version", { length: 64 }).notNull(),
+    refundPolicyAcknowledgedAt: timestamp("refund_policy_acknowledged_at", { mode: 'string' }),
+    cancellationReason: text("cancellation_reason"),
+    cancellationRequestedAt: timestamp("cancellation_requested_at", { mode: 'string' }),
+    cancelledAt: timestamp("cancelled_at", { mode: 'string' }),
+    metadata: jsonb("metadata"),
+    createdAt: timestamp("created_at", { mode: 'string' }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+    foreignKey({
+        columns: [table.eventId],
+        foreignColumns: [event.id],
+        name: "event_order_event_id_event_id_fk"
+    }).onDelete("cascade"),
+    foreignKey({
+        columns: [table.rsvpId],
+        foreignColumns: [eventRsvp.id],
+        name: "event_order_rsvp_id_event_rsvp_id_fk"
+    }).onDelete("set null"),
+    foreignKey({
+        columns: [table.userId],
+        foreignColumns: [user.id],
+        name: "event_order_user_id_user_id_fk"
+    }).onDelete("set null"),
+    foreignKey({
+        columns: [table.groupId],
+        foreignColumns: [foodieGroup.id],
+        name: "event_order_group_id_foodie_group_id_fk"
+    }),
+    foreignKey({
+        columns: [table.merchantId],
+        foreignColumns: [merchant.id],
+        name: "event_order_merchant_id_merchant_id_fk"
+    }),
+    unique("event_order_stripe_payment_intent_unique").on(table.stripePaymentIntentId),
+]);
+export const eventRefund = pgTable("event_refund", {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    eventOrderId: uuid("event_order_id").notNull(),
+    eventRsvpId: uuid("event_rsvp_id"),
+    eventId: uuid("event_id").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    currency: varchar({ length: 10 }).default('usd').notNull(),
+    reason: varchar({ length: 64 }).notNull(),
+    policyWindow: varchar("policy_window", { length: 64 }).notNull(),
+    refundPolicyVersion: varchar("refund_policy_version", { length: 64 }).notNull(),
+    status: eventRefundStatus().notNull(),
+    stripeRefundId: varchar("stripe_refund_id", { length: 255 }),
+    stripeChargeId: varchar("stripe_charge_id", { length: 255 }),
+    failureReason: text("failure_reason"),
+    requestedByUserId: uuid("requested_by_user_id"),
+    requestedByRole: varchar("requested_by_role", { length: 64 }),
+    metadata: jsonb("metadata"),
+    processedAt: timestamp("processed_at", { mode: 'string' }),
+    createdAt: timestamp("created_at", { mode: 'string' }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+    foreignKey({
+        columns: [table.eventOrderId],
+        foreignColumns: [eventOrder.id],
+        name: "event_refund_event_order_id_event_order_id_fk"
+    }).onDelete("cascade"),
+    foreignKey({
+        columns: [table.eventRsvpId],
+        foreignColumns: [eventRsvp.id],
+        name: "event_refund_event_rsvp_id_event_rsvp_id_fk"
+    }).onDelete("set null"),
+    foreignKey({
+        columns: [table.eventId],
+        foreignColumns: [event.id],
+        name: "event_refund_event_id_event_id_fk"
+    }).onDelete("cascade"),
+    foreignKey({
+        columns: [table.requestedByUserId],
+        foreignColumns: [user.id],
+        name: "event_refund_requested_by_user_id_user_id_fk"
+    }).onDelete("set null"),
+    unique("event_refund_stripe_refund_id_unique").on(table.stripeRefundId),
+]);
+export const eventGuestToken = pgTable("event_guest_token", {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    eventOrderId: uuid("event_order_id"),
+    eventRsvpId: uuid("event_rsvp_id"),
+    eventId: uuid("event_id").notNull(),
+    purpose: eventTokenPurpose().notNull(),
+    tokenHash: varchar("token_hash", { length: 128 }).notNull(),
+    expiresAt: timestamp("expires_at", { mode: 'string' }).notNull(),
+    usedAt: timestamp("used_at", { mode: 'string' }),
+    revokedAt: timestamp("revoked_at", { mode: 'string' }),
+    metadata: jsonb("metadata"),
+    createdAt: timestamp("created_at", { mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+    foreignKey({
+        columns: [table.eventOrderId],
+        foreignColumns: [eventOrder.id],
+        name: "event_guest_token_event_order_id_event_order_id_fk"
+    }).onDelete("cascade"),
+    foreignKey({
+        columns: [table.eventRsvpId],
+        foreignColumns: [eventRsvp.id],
+        name: "event_guest_token_event_rsvp_id_event_rsvp_id_fk"
+    }).onDelete("cascade"),
+    foreignKey({
+        columns: [table.eventId],
+        foreignColumns: [event.id],
+        name: "event_guest_token_event_id_event_id_fk"
+    }).onDelete("cascade"),
+    unique("event_guest_token_token_hash_unique").on(table.tokenHash),
+]);
+export const eventDispute = pgTable("event_dispute", {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    eventOrderId: uuid("event_order_id"),
+    eventId: uuid("event_id").notNull(),
+    merchantId: uuid("merchant_id").notNull(),
+    stripeDisputeId: varchar("stripe_dispute_id", { length: 255 }).notNull(),
+    stripeChargeId: varchar("stripe_charge_id", { length: 255 }),
+    amountCents: integer("amount_cents").notNull(),
+    currency: varchar({ length: 10 }).default('usd').notNull(),
+    status: varchar({ length: 64 }).notNull(),
+    disputeFeeCents: integer("dispute_fee_cents"),
+    recoveryAmountCents: integer("recovery_amount_cents"),
+    recoveryStatus: varchar("recovery_status", { length: 64 }),
+    merchantRecoveryPaymentIntentId: varchar("merchant_recovery_payment_intent_id", { length: 255 }),
+    metadata: jsonb("metadata"),
+    createdAt: timestamp("created_at", { mode: 'string' }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+    foreignKey({
+        columns: [table.eventOrderId],
+        foreignColumns: [eventOrder.id],
+        name: "event_dispute_event_order_id_event_order_id_fk"
+    }).onDelete("set null"),
+    foreignKey({
+        columns: [table.eventId],
+        foreignColumns: [event.id],
+        name: "event_dispute_event_id_event_id_fk"
+    }).onDelete("cascade"),
+    foreignKey({
+        columns: [table.merchantId],
+        foreignColumns: [merchant.id],
+        name: "event_dispute_merchant_id_merchant_id_fk"
+    }),
+    unique("event_dispute_stripe_dispute_id_unique").on(table.stripeDisputeId),
 ]);
 
 // Admin audit log for tracking super admin "god mode" actions

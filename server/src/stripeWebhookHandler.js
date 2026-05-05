@@ -2,9 +2,14 @@
 // Shared webhook logic for Stripe. Use from Express (with express.raw) or from a
 // dedicated serverless handler that reads the raw body without any body parser.
 import { db } from './db.js';
-import { purchase, paymentEvent, foodieGroupMembership } from './schema.js';
+import { purchase, paymentEvent, foodieGroupMembership, eventRefund, eventDispute, eventOrder } from './schema.js';
 import { eq, and } from 'drizzle-orm';
 import { stripe } from './config/stripe.js';
+import {
+  applyChargeRefundToEventOrder,
+  confirmPaidEventOrderFromPaymentIntent,
+  markPaidEventOrderPaymentFailed,
+} from './services/eventPaymentService.js';
 
 /**
  * Process a Stripe webhook payload. Call this with the raw body (Buffer or string)
@@ -68,6 +73,20 @@ export async function handleWebhook(rawBody, signature) {
         break;
       case 'charge.refunded':
         await handleChargeRefunded(event);
+        break;
+      case 'payment_intent.succeeded':
+        await handlePaymentIntentSucceeded(event);
+        break;
+      case 'payment_intent.payment_failed':
+        await handlePaymentIntentPaymentFailed(event);
+        break;
+      case 'refund.failed':
+        await handleRefundFailed(event);
+        break;
+      case 'charge.dispute.created':
+      case 'charge.dispute.updated':
+      case 'charge.dispute.closed':
+        await handleChargeDispute(event);
         break;
       case 'invoice.payment_succeeded':
         await handleInvoicePaymentSucceeded(event);
@@ -212,6 +231,36 @@ async function handleCheckoutSessionCompleted(event) {
     sessionId: session.id,
     checkoutType,
   });
+}
+
+async function handlePaymentIntentSucceeded(event) {
+  const paymentIntent = event.data.object;
+  console.log('💳  Processing payment_intent.succeeded:', paymentIntent.id);
+
+  const order = await confirmPaidEventOrderFromPaymentIntent(paymentIntent);
+  if (!order) return;
+
+  await db
+    .update(paymentEvent)
+    .set({ eventOrderId: order.id })
+    .where(eq(paymentEvent.eventId, event.id));
+
+  console.log('💳  Event order marked paid:', order.id);
+}
+
+async function handlePaymentIntentPaymentFailed(event) {
+  const paymentIntent = event.data.object;
+  console.log('💳  Processing payment_intent.payment_failed:', paymentIntent.id);
+
+  const order = await markPaidEventOrderPaymentFailed(paymentIntent);
+  if (!order) return;
+
+  await db
+    .update(paymentEvent)
+    .set({ eventOrderId: order.id })
+    .where(eq(paymentEvent.eventId, event.id));
+
+  console.log('💳  Event order payment failed:', order.id);
 }
 
 async function handleInvoicePaymentSucceeded(event) {
@@ -450,6 +499,16 @@ async function handleChargeRefunded(event) {
   const charge = event.data.object;
   console.log('💳  Processing charge.refunded:', charge.id);
 
+  const eventOrderRow = await applyChargeRefundToEventOrder({ charge });
+  if (eventOrderRow) {
+    await db
+      .update(paymentEvent)
+      .set({ eventOrderId: eventOrderRow.id })
+      .where(eq(paymentEvent.eventId, event.id));
+    console.log('💳  Event order refund updated:', eventOrderRow.id);
+    return;
+  }
+
   let purchaseRow;
   [purchaseRow] = await db
     .select()
@@ -471,7 +530,7 @@ async function handleChargeRefunded(event) {
   await db
     .update(purchase)
     .set({
-      status: 'refunded',
+      status: charge.amount_refunded >= charge.amount ? 'refunded' : purchaseRow.status,
       refundedAt: new Date().toISOString(),
       stripeChargeId: charge.id,
       updatedAt: new Date().toISOString(),
@@ -483,6 +542,118 @@ async function handleChargeRefunded(event) {
   await db
     .update(paymentEvent)
     .set({ purchaseId: purchaseRow.id })
+    .where(eq(paymentEvent.eventId, event.id));
+}
+
+async function handleRefundFailed(event) {
+  const refund = event.data.object;
+  console.log('💳  Processing refund.failed:', refund.id);
+
+  const [refundRow] = await db
+    .update(eventRefund)
+    .set({
+      status: 'failed',
+      failureReason: refund.failure_reason || 'Stripe refund failed',
+      processedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(eventRefund.stripeRefundId, refund.id))
+    .returning();
+
+  if (refundRow) {
+    const successfulRefunds = await db
+      .select({ amountCents: eventRefund.amountCents })
+      .from(eventRefund)
+      .where(and(eq(eventRefund.eventOrderId, refundRow.eventOrderId), eq(eventRefund.status, 'succeeded')));
+
+    const refundedAmountCents = successfulRefunds.reduce((sum, row) => sum + Number(row.amountCents || 0), 0);
+    const [order] = await db
+      .select()
+      .from(eventOrder)
+      .where(eq(eventOrder.id, refundRow.eventOrderId))
+      .limit(1);
+
+    if (order) {
+      let status = order.status;
+      if (refundedAmountCents >= Number(order.amountCents || 0)) {
+        status = 'refunded';
+      } else if (refundedAmountCents > 0) {
+        status = 'partially_refunded';
+      } else {
+        status = order.cancelledAt ? 'cancelled' : 'paid';
+      }
+
+      await db
+        .update(eventOrder)
+        .set({
+          refundedAmountCents,
+          status,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(eventOrder.id, order.id));
+    }
+
+    await db
+      .update(paymentEvent)
+      .set({ eventOrderId: refundRow.eventOrderId })
+      .where(eq(paymentEvent.eventId, event.id));
+  }
+}
+
+async function handleChargeDispute(event) {
+  const dispute = event.data.object;
+  console.log('💳  Processing dispute event:', event.type, dispute.id);
+
+  const [order] = await db
+    .select()
+    .from(eventOrder)
+    .where(eq(eventOrder.stripeChargeId, dispute.charge))
+    .limit(1);
+
+  if (!order) {
+    console.warn('💳  No event order found for disputed charge:', dispute.charge);
+    return;
+  }
+
+  const isLost = event.type === 'charge.dispute.closed' && dispute.status === 'lost';
+  const recoveryAmountCents = isLost ? Number(dispute.amount || 0) + Number(dispute.balance_transactions?.[0]?.fee || 0) : null;
+
+  try {
+    await db.insert(eventDispute).values({
+      eventOrderId: order.id,
+      eventId: order.eventId,
+      merchantId: order.merchantId,
+      stripeDisputeId: dispute.id,
+      stripeChargeId: dispute.charge,
+      amountCents: dispute.amount || 0,
+      currency: dispute.currency || order.currency || 'usd',
+      status: dispute.status || 'unknown',
+      disputeFeeCents: dispute.balance_transactions?.[0]?.fee || null,
+      recoveryAmountCents,
+      recoveryStatus: isLost ? 'due' : null,
+      metadata: dispute,
+    });
+  } catch (err) {
+    if (err.code === '23505') {
+      await db
+        .update(eventDispute)
+        .set({
+          status: dispute.status || 'unknown',
+          disputeFeeCents: dispute.balance_transactions?.[0]?.fee || null,
+          recoveryAmountCents,
+          recoveryStatus: isLost ? 'due' : null,
+          metadata: dispute,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(eventDispute.stripeDisputeId, dispute.id));
+    } else {
+      throw err;
+    }
+  }
+
+  await db
+    .update(paymentEvent)
+    .set({ eventOrderId: order.id })
     .where(eq(paymentEvent.eventId, event.id));
 }
 

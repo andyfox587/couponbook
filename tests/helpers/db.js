@@ -33,6 +33,7 @@ async function runMigrations(pg) {
   const migration12 = readFileSync(join(drizzleDir, '0012_expand_event_submission.sql'), 'utf-8');
   const migration13 = readFileSync(join(drizzleDir, '0013_expand_attendance_status.sql'), 'utf-8');
   const migration14 = readFileSync(join(drizzleDir, '0014_add_subscription_support.sql'), 'utf-8');
+  const migration15 = readFileSync(join(drizzleDir, '0015_add_paid_event_payments.sql'), 'utf-8');
   
   // Split by statement breakpoint and execute each statement
   const statements0 = migration0.split('--> statement-breakpoint').map(s => s.trim()).filter(Boolean);
@@ -256,6 +257,23 @@ async function runMigrations(pg) {
   } catch (e) {
     // Constraint may already exist from migration
   }
+
+  // Migration 15: paid event payment support
+  try {
+    await pg.exec(migration15);
+  } catch (e) {
+    const stmts15 = migration15
+      .split(';')
+      .map(s => s.trim())
+      .filter(s => {
+        if (!s) return false;
+        const noComments = s.split('\n').filter(l => !l.trim().startsWith('--')).join('\n').trim();
+        return noComments.length > 0 && !noComments.startsWith('DO $$') && !noComments.startsWith('END');
+      });
+    for (const stmt of stmts15) {
+      try { await pg.exec(stmt); } catch (_) { /* continue */ }
+    }
+  }
 }
 
 /**
@@ -298,7 +316,11 @@ export async function resetTestDb() {
   // Delete all data from tables in reverse dependency order
   const tables = [
     'admin_audit_log',
+    'event_dispute',
+    'event_guest_token',
+    'event_refund',
     'payment_event',
+    'event_order',
     'coupon_redemption',
     'event_rsvp', 
     'purchase',
@@ -308,6 +330,7 @@ export async function resetTestDb() {
     'event',
     'coupon_submission',
     'event_submission',
+    'merchant_billing_profile',
     'merchant',
     'foodie_group',
     'user',
@@ -536,6 +559,84 @@ export const seedHelpers = {
       })
       .returning();
     return newRsvp;
+  },
+
+  async createMerchantBillingProfile(db, merchantId, overrides = {}) {
+    const { merchantBillingProfile } = schema;
+    const [profile] = await db
+      .insert(merchantBillingProfile)
+      .values({
+        merchantId,
+        payoutDestinationDetails: overrides.payoutDestinationDetails || { method: 'manual', label: 'Test payout' },
+        payoutDestinationVerified: overrides.payoutDestinationVerified !== undefined ? overrides.payoutDestinationVerified : true,
+        stripeCustomerId: overrides.stripeCustomerId || 'cus_test_merchant',
+        backupPaymentMethodId: overrides.backupPaymentMethodId || 'pm_test_backup',
+        backupPaymentMethodLast4: overrides.backupPaymentMethodLast4 || '4242',
+        backupChargeMethodReady: overrides.backupChargeMethodReady !== undefined ? overrides.backupChargeMethodReady : true,
+        paidEventTermsAcceptedAt: overrides.paidEventTermsAcceptedAt || new Date().toISOString(),
+        paidEventTermsVersion: overrides.paidEventTermsVersion || 'paid-events-v1',
+        paidEventsEnabled: overrides.paidEventsEnabled !== undefined ? overrides.paidEventsEnabled : true,
+        disputeRecoveryEnabled: overrides.disputeRecoveryEnabled !== undefined ? overrides.disputeRecoveryEnabled : true,
+      })
+      .returning();
+    return profile;
+  },
+
+  async createEventOrder(db, eventRow, overrides = {}) {
+    const { eventOrder } = schema;
+    const [order] = await db
+      .insert(eventOrder)
+      .values({
+        eventId: eventRow.id,
+        rsvpId: overrides.rsvpId || null,
+        userId: overrides.userId || null,
+        groupId: eventRow.groupId,
+        merchantId: eventRow.merchantId,
+        quantity: overrides.quantity || 1,
+        guestName: overrides.guestName || null,
+        guestEmail: overrides.guestEmail || null,
+        emailConfirmationStatus: overrides.emailConfirmationStatus || 'not_required',
+        emailConfirmedAt: overrides.emailConfirmedAt || null,
+        amountCents: overrides.amountCents ?? 1000,
+        refundedAmountCents: overrides.refundedAmountCents ?? 0,
+        currency: overrides.currency || 'usd',
+        pricingBasis: overrides.pricingBasis || 'standard',
+        status: overrides.status || 'pending_payment',
+        stripePaymentIntentId: overrides.stripePaymentIntentId || `pi_test_${Date.now()}_${Math.random()}`,
+        stripeChargeId: overrides.stripeChargeId || null,
+        stripeCustomerId: overrides.stripeCustomerId || null,
+        refundPolicyVersion: overrides.refundPolicyVersion || 'event-refunds-v1',
+        refundPolicyAcknowledgedAt: overrides.refundPolicyAcknowledgedAt || new Date().toISOString(),
+        metadata: overrides.metadata || null,
+      })
+      .returning();
+    return order;
+  },
+
+  async createEventRefund(db, order, overrides = {}) {
+    const { eventRefund } = schema;
+    const [refund] = await db
+      .insert(eventRefund)
+      .values({
+        eventOrderId: order.id,
+        eventRsvpId: overrides.eventRsvpId || order.rsvpId || null,
+        eventId: order.eventId,
+        amountCents: overrides.amountCents ?? order.amountCents,
+        currency: overrides.currency || order.currency || 'usd',
+        reason: overrides.reason || 'requested_by_customer',
+        policyWindow: overrides.policyWindow || 'full_refund',
+        refundPolicyVersion: overrides.refundPolicyVersion || order.refundPolicyVersion || 'event-refunds-v1',
+        status: overrides.status || 'pending',
+        stripeRefundId: overrides.stripeRefundId || null,
+        stripeChargeId: overrides.stripeChargeId || order.stripeChargeId || null,
+        failureReason: overrides.failureReason || null,
+        requestedByUserId: overrides.requestedByUserId || null,
+        requestedByRole: overrides.requestedByRole || null,
+        metadata: overrides.metadata || null,
+        processedAt: overrides.processedAt || null,
+      })
+      .returning();
+    return refund;
   },
 
   async createEventSubmission(db, groupId, merchantId, overrides = {}) {

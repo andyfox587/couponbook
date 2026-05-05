@@ -5,7 +5,7 @@
       <i class="pi pi-lock gate-icon"></i>
       <h3>Members Only</h3>
       <p>Sign in and purchase the coupon book to RSVP for this event.</p>
-      <button class="btn primary" @click="$emit('login-requested')">Sign In</button>
+      <button class="btn btn-primary" @click="$emit('login-requested')">Sign In</button>
     </div>
 
     <!-- Members-only gate: signed in but no purchase -->
@@ -15,15 +15,23 @@
       <p>You need to purchase the coupon book for this group to RSVP for this members-only event.</p>
     </div>
 
+    <!-- Existing RSVP lookup state -->
+    <div v-else-if="rsvpLoading" class="rsvp-loading">
+      <p class="loading-copy">Checking your RSVP…</p>
+    </div>
+
     <!-- Success state -->
-    <div v-else-if="rsvpResult" class="rsvp-success">
+    <div v-else-if="activeRsvp" class="rsvp-success">
       <i class="pi pi-check-circle success-icon"></i>
-      <h3 v-if="rsvpResult.status === 'going'">You're in!</h3>
-      <h3 v-else>You're on the waitlist</h3>
-      <p v-if="rsvpResult.status === 'waitlist'" class="waitlist-pos">
-        Waitlist position: #{{ rsvpResult.waitlistPosition }}
+      <h3>{{ activeRsvpTitle }}</h3>
+      <p v-if="activeRsvp.status === 'waitlist'" class="waitlist-pos">
+        Waitlist position: #{{ activeRsvp.waitlistPosition }}
       </p>
-      <button class="btn secondary" @click="cancelConfirmed">Cancel RSVP</button>
+      <p class="rsvp-meta">
+        {{ activeRsvp.attendees || form.attendees }}
+        {{ (activeRsvp.attendees || form.attendees) === 1 ? 'guest' : 'guests' }}
+      </p>
+      <button class="btn btn-secondary" @click="cancelConfirmed">Cancel RSVP</button>
       <div v-if="submitError" class="error-msg">{{ submitError }}</div>
     </div>
 
@@ -50,47 +58,50 @@
 
       <div v-if="submitError" class="error-msg">{{ submitError }}</div>
 
-      <div v-if="isPaidEvent && !checkoutComplete" class="checkout-placeholder">
-        <p class="checkout-title">Demo Checkout Required</p>
+      <div v-if="isPaidEvent" class="payment-policy card">
+        <p class="checkout-title">Paid Event Ticket</p>
         <p class="checkout-copy">
-          This event requires ticket purchase. Use this placeholder step to simulate Stripe checkout.
+          Your card is charged when checkout completes. Cancellations follow the event refund policy:
+          72+ hours full refund, 24-72 hours 50% refund, under 24 hours no refund.
         </p>
-        <button
-          type="button"
-          class="btn checkout-btn"
-          :disabled="submitting"
-          @click="openDemoCheckout"
-        >
-          Proceed to Demo Checkout
-        </button>
+        <label class="policy-check">
+          <input type="checkbox" v-model="refundPolicyAccepted" :disabled="!!paymentClientSecret" />
+          <span>I acknowledge the refund policy.</span>
+        </label>
       </div>
 
-      <button type="submit" class="btn primary" :disabled="submitDisabled">
-        {{ submitting ? 'Submitting…' : 'RSVP Now' }}
+      <button v-if="!paymentClientSecret" type="submit" class="btn btn-primary" :disabled="submitDisabled">
+        {{ submitting ? 'Submitting…' : isPaidEvent ? 'Continue to Payment' : 'RSVP Now' }}
       </button>
     </form>
 
-    <div v-if="showCheckoutDialog" class="checkout-overlay" role="dialog" aria-modal="true">
-      <div class="checkout-modal">
-        <h4>Demo Stripe Checkout</h4>
-        <p class="checkout-copy">
-          Placeholder only: no payment is processed. Click "Complete Demo Payment" to continue RSVP.
-        </p>
-        <div class="checkout-actions">
-          <button type="button" class="btn secondary-outline" @click="closeDemoCheckout">
-            Cancel
-          </button>
-          <button type="button" class="btn primary" @click="completeDemoCheckout">
-            Complete Demo Payment
-          </button>
-        </div>
+    <div v-if="paymentClientSecret" class="payment-card card">
+      <h3>Complete Payment</h3>
+      <p class="checkout-copy">
+        Total: {{ formatMoney(paymentAmountCents, paymentCurrency) }}
+      </p>
+      <div ref="paymentElement" class="payment-element"></div>
+      <div v-if="paymentStatusMessage" class="alert alert-success">{{ paymentStatusMessage }}</div>
+      <div v-if="submitError" class="alert alert-error">{{ submitError }}</div>
+      <div class="checkout-actions">
+        <button type="button" class="btn btn-secondary" :disabled="confirmingPayment" @click="resetPayment">
+          Back
+        </button>
+        <button type="button" class="btn btn-primary" :disabled="confirmingPayment || paymentComplete" @click="confirmPayment">
+          {{ confirmingPayment ? 'Processing…' : 'Pay and RSVP' }}
+        </button>
       </div>
     </div>
   </div>
 </template>
 
 <script>
+import { loadStripe } from '@stripe/stripe-js'
 import { createRsvp, cancelRsvp } from '@/services/eventService'
+
+function getStripePublishableKey() {
+  return process.env.VUE_APP_STRIPE_PUBLISHABLE_KEY || import.meta.env?.VITE_STRIPE_PUBLISHABLE_KEY || ''
+}
 
 export default {
   name: 'EventRSVP',
@@ -99,6 +110,8 @@ export default {
     event: { type: Object, required: true },
     isAuthenticated: { type: Boolean, default: false },
     hasMembership: { type: Boolean, default: false },
+    existingRsvp: { type: Object, default: null },
+    rsvpLoading: { type: Boolean, default: false },
   },
 
   emits: ['rsvp-submitted', 'rsvp-cancelled', 'login-requested'],
@@ -111,7 +124,16 @@ export default {
       return this.event?.isFree === false
     },
     submitDisabled() {
-      return this.submitting || (this.isPaidEvent && !this.checkoutComplete)
+      return this.submitting || (this.isPaidEvent && !this.refundPolicyAccepted)
+    },
+    activeRsvp() {
+      return this.rsvpResult || this.existingRsvp
+    },
+    activeRsvpTitle() {
+      if (this.activeRsvp?.status === 'going') return "You're going"
+      if (this.activeRsvp?.status === 'waitlist') return "You're on the waitlist"
+      if (this.activeRsvp?.status === 'checked_in') return 'Checked in'
+      return 'RSVP confirmed'
     },
   },
 
@@ -124,26 +146,25 @@ export default {
       },
       rsvpResult: null,
       submitting: false,
+      confirmingPayment: false,
       submitError: null,
-      showCheckoutDialog: false,
-      checkoutComplete: false,
+      refundPolicyAccepted: false,
+      stripe: null,
+      elements: null,
+      paymentElement: null,
+      paymentClientSecret: null,
+      paymentOrderId: null,
+      paymentAmountCents: 0,
+      paymentCurrency: 'usd',
+      paymentComplete: false,
+      paymentStatusMessage: '',
     }
   },
 
   methods: {
-    openDemoCheckout() {
-      this.showCheckoutDialog = true
-    },
-    closeDemoCheckout() {
-      this.showCheckoutDialog = false
-    },
-    completeDemoCheckout() {
-      this.checkoutComplete = true
-      this.showCheckoutDialog = false
-    },
     async submitRSVP() {
-      if (this.isPaidEvent && !this.checkoutComplete) {
-        this.submitError = 'Please complete demo checkout first.'
+      if (this.isPaidEvent && !this.refundPolicyAccepted) {
+        this.submitError = 'Please acknowledge the refund policy before payment.'
         return
       }
       this.submitting = true
@@ -153,8 +174,18 @@ export default {
           attendees: this.form.attendees,
           guest_name: this.form.guest_name || undefined,
           guest_email: this.form.guest_email || undefined,
+          refund_policy_accepted: this.refundPolicyAccepted || undefined,
         }
-        this.rsvpResult = await createRsvp(this.event.id, payload)
+        const result = await createRsvp(this.event.id, payload)
+        if (result.requiresPayment) {
+          this.paymentClientSecret = result.clientSecret
+          this.paymentOrderId = result.orderId
+          this.paymentAmountCents = result.amountCents
+          this.paymentCurrency = result.currency || 'usd'
+          await this.mountPaymentElement()
+          return
+        }
+        this.rsvpResult = result
         this.$emit('rsvp-submitted', this.rsvpResult)
       } catch (err) {
         console.error('[EventRSVP] submitRSVP error', err)
@@ -164,12 +195,79 @@ export default {
       }
     },
 
-    async cancelConfirmed() {
-      if (!this.rsvpResult) return
+    async mountPaymentElement() {
+      const publishableKey = getStripePublishableKey()
+      if (!publishableKey) {
+        this.submitError = 'Stripe publishable key is not configured.'
+        return
+      }
+      this.stripe = this.stripe || await loadStripe(publishableKey)
+      if (!this.stripe) {
+        this.submitError = 'Could not load Stripe. Please try again.'
+        return
+      }
+      this.elements = this.stripe.elements({ clientSecret: this.paymentClientSecret })
+      this.paymentElement = this.elements.create('payment')
+      await this.$nextTick()
+      this.paymentElement.mount(this.$refs.paymentElement)
+    },
+
+    async confirmPayment() {
+      if (!this.stripe || !this.elements) return
+      this.confirmingPayment = true
       this.submitError = null
       try {
-        await cancelRsvp(this.event.id, this.rsvpResult.id)
-        const prev = this.rsvpResult
+        const { error, paymentIntent } = await this.stripe.confirmPayment({
+          elements: this.elements,
+          redirect: 'if_required',
+        })
+        if (error) {
+          this.submitError = error.message || 'Payment failed. Please try again.'
+          return
+        }
+        this.paymentComplete = true
+        this.paymentStatusMessage = paymentIntent?.status === 'succeeded'
+          ? 'Payment received. Your RSVP will be confirmed shortly.'
+          : 'Payment is processing. Your RSVP will update when Stripe confirms it.'
+        this.$emit('rsvp-submitted', {
+          requiresPayment: true,
+          status: paymentIntent?.status || 'processing',
+          orderId: this.paymentOrderId,
+        })
+      } catch (err) {
+        console.error('[EventRSVP] confirmPayment error', err)
+        this.submitError = err.message || 'Payment failed. Please try again.'
+      } finally {
+        this.confirmingPayment = false
+      }
+    },
+
+    resetPayment() {
+      if (this.paymentElement) {
+        this.paymentElement.unmount()
+      }
+      this.elements = null
+      this.paymentElement = null
+      this.paymentClientSecret = null
+      this.paymentOrderId = null
+      this.paymentComplete = false
+      this.paymentStatusMessage = ''
+    },
+
+    formatMoney(amountCents, currency = 'usd') {
+      return new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency: currency.toUpperCase(),
+      }).format((amountCents || 0) / 100)
+    },
+
+    async cancelConfirmed() {
+      const currentRsvp = this.activeRsvp
+      if (!currentRsvp) return
+      this.submitError = null
+      try {
+        await cancelRsvp(this.event.id, currentRsvp.id)
+        const prev = currentRsvp
         this.rsvpResult = null
         this.$emit('rsvp-cancelled', prev)
       } catch (err) {
@@ -281,7 +379,19 @@ input:focus, select:focus {
 }
 
 .success-icon { font-size: 3rem; color: var(--color-success); }
-.waitlist-pos { color: var(--color-text-secondary); font-size: var(--font-size-sm); }
+.waitlist-pos,
+.rsvp-meta,
+.loading-copy {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  margin: 0;
+}
+
+.rsvp-loading {
+  display: flex;
+  justify-content: center;
+  text-align: center;
+}
 
 .members-gate {
   text-align: center;

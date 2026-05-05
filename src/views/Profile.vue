@@ -101,6 +101,59 @@
             </div>
           </section>
 
+          <!-- Upcoming RSVPs -->
+          <section class="section-card" data-test="customer-rsvps-section">
+            <h2>My RSVPs</h2>
+            <p class="muted">
+              See your upcoming event RSVPs and manage attendance from your account.
+            </p>
+
+            <div v-if="customerRsvps.error" class="muted tiny error-text" style="margin-bottom:0.5rem;">
+              {{ customerRsvps.error }}
+            </div>
+
+            <div v-if="customerRsvps.loading" class="loading">Loading RSVPs…</div>
+
+            <p v-else-if="!customerRsvps.items.length" class="muted">
+              You do not have any upcoming RSVPs yet.
+            </p>
+
+            <ul v-else class="rsvp-list">
+              <li v-for="rsvp in customerRsvps.items" :key="rsvp.id" class="rsvp-item">
+                <div class="rsvp-copy">
+                  <div class="rsvp-title-row">
+                    <strong>{{ rsvp.eventName }}</strong>
+                    <span class="status-badge" :class="rsvpBadgeClass(rsvp.status)">
+                      {{ rsvpBadgeLabel(rsvp) }}
+                    </span>
+                  </div>
+                  <div class="muted tiny">
+                    <span v-if="rsvp.merchantName">{{ rsvp.merchantName }} · </span>
+                    {{ formatDateDateTime(rsvp.startDatetime) }}
+                    <span v-if="rsvp.location"> · {{ rsvp.location }}</span>
+                  </div>
+                  <div class="muted tiny">
+                    {{ rsvp.attendees }} {{ rsvp.attendees === 1 ? 'guest' : 'guests' }}
+                    <span v-if="rsvp.order"> · {{ formatRsvpOrder(rsvp.order) }}</span>
+                  </div>
+                </div>
+                <div class="rsvp-actions">
+                  <button type="button" class="btn tertiary compact" @click="goToRsvpEvent(rsvp)">
+                    View Event
+                  </button>
+                  <button
+                    type="button"
+                    class="btn danger compact"
+                    :disabled="customerRsvps.cancellingId === rsvp.id"
+                    @click="cancelCustomerRsvp(rsvp)"
+                  >
+                    {{ customerRsvps.cancellingId === rsvp.id ? 'Cancelling…' : 'Cancel RSVP' }}
+                  </button>
+                </div>
+              </li>
+            </ul>
+          </section>
+
           <!-- Purchased Coupon Books -->
           <section class="section-card">
             <h2>Purchased Coupon Books</h2>
@@ -1134,6 +1187,7 @@
 import { mapGetters } from "vuex";
 import { getAccessToken, signOut, signIn } from "@/services/authService";
 import { createBillingPortalSession } from "@/services/subscriptionService";
+import { getMyRsvps, cancelRsvp } from "@/services/eventService";
 
 export default {
   name: "UserProfile",
@@ -1149,6 +1203,12 @@ export default {
         couponsRedeemed: null,
         activeCouponBooks: null,
         purchases: [],
+      },
+      customerRsvps: {
+        loading: false,
+        error: null,
+        items: [],
+        cancellingId: null,
       },
       adminMemberships: [],
       adminMembershipsLoading: false,
@@ -1338,6 +1398,7 @@ export default {
 
         if (this.role === 'customer') {
           this.loadCustomerStats();
+          this.loadCustomerRsvps();
         }
         if (this.role === 'merchant') {
           this.loadMerchantOverview();
@@ -1395,6 +1456,72 @@ export default {
     // 🔹 Super Admin → dashboard
     goToAdminDashboard() {
       this.$router.push({ name: 'SuperAdminDashboard' });
+    },
+
+    goToRsvpEvent(rsvp) {
+      if (rsvp?.eventSlug) {
+        this.$router.push({ name: 'EventDetailSlug', params: { slug: rsvp.eventSlug } });
+        return;
+      }
+      this.$router.push({ name: 'EventDetail', params: { id: rsvp.eventId } });
+    },
+
+    rsvpBadgeLabel(rsvp) {
+      const status = typeof rsvp === 'string' ? rsvp : rsvp?.status;
+      if (status === 'going') return 'Going';
+      if (status === 'waitlist') {
+        const position = typeof rsvp === 'object' ? rsvp?.waitlistPosition : null;
+        return position ? `Waitlist #${position}` : 'Waitlist';
+      }
+      if (status === 'checked_in') return 'Checked In';
+      return 'RSVP';
+    },
+
+    rsvpBadgeClass(status) {
+      if (status === 'going') return 'rsvp-going-badge';
+      if (status === 'waitlist') return 'rsvp-waitlist-badge';
+      if (status === 'checked_in') return 'rsvp-checked-in-badge';
+      return 'rsvp-default-badge';
+    },
+
+    formatRsvpOrder(order) {
+      if (!order?.status) return 'Ticket order';
+      return `Order ${order.status.replace(/_/g, ' ')}`;
+    },
+
+    async loadCustomerRsvps() {
+      if (this.role !== 'customer') return;
+
+      this.customerRsvps.loading = true;
+      this.customerRsvps.error = null;
+
+      try {
+        const rows = await getMyRsvps();
+        this.customerRsvps.items = Array.isArray(rows) ? rows : [];
+      } catch (err) {
+        console.error('Error loading customer RSVPs', err);
+        this.customerRsvps.error = 'Could not load your RSVPs.';
+        this.customerRsvps.items = [];
+      } finally {
+        this.customerRsvps.loading = false;
+      }
+    },
+
+    async cancelCustomerRsvp(rsvp) {
+      if (!rsvp?.eventId || !rsvp?.id) return;
+
+      this.customerRsvps.cancellingId = rsvp.id;
+      this.customerRsvps.error = null;
+
+      try {
+        await cancelRsvp(rsvp.eventId, rsvp.id);
+        this.customerRsvps.items = this.customerRsvps.items.filter((item) => item.id !== rsvp.id);
+      } catch (err) {
+        console.error('Error cancelling RSVP', err);
+        this.customerRsvps.error = err.message || 'Could not cancel this RSVP.';
+      } finally {
+        this.customerRsvps.cancellingId = null;
+      }
     },
 
     async onLogoFileChange(merchant, event) {
@@ -1822,8 +1949,10 @@ export default {
 
     async cancelAttendeeRsvp(attendee) {
       try {
+        const token = await getAccessToken();
         const res = await fetch(`/api/v1/events/${this.selectedEventId}/rsvp/${attendee.id}/cancel`, {
           method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (!res.ok) throw new Error(`Cancel failed, status ${res.status}`);
         await this.loadEventAttendeeDetails(this.selectedEventId);
@@ -2689,6 +2818,67 @@ export default {
   align-items: baseline;
 }
 
+.rsvp-list {
+  list-style: none;
+  padding: 0;
+  margin: var(--spacing-md) 0 0;
+}
+
+.rsvp-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  margin-bottom: var(--spacing-sm);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--surface-1) 76%, var(--surface-2));
+  box-shadow: var(--shadow-xs);
+}
+
+.rsvp-copy {
+  min-width: 0;
+}
+
+.rsvp-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  align-items: baseline;
+}
+
+.rsvp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  justify-content: flex-end;
+}
+
+.btn.danger {
+  background: var(--color-error);
+  color: var(--color-text-on-error);
+}
+
+.btn.danger:hover:not(:disabled) {
+  background: var(--color-error-hover);
+}
+
+@media (max-width: 768px) {
+  .rsvp-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .rsvp-actions {
+    justify-content: stretch;
+  }
+
+  .rsvp-actions .btn.compact {
+    flex: 1;
+    justify-content: center;
+  }
+}
+
 .error-text {
   color: var(--color-error);
 }
@@ -2729,6 +2919,22 @@ export default {
 .status-badge.canceling-badge {
   background: #ffe7e7;
   color: #a62222;
+}
+
+.status-badge.rsvp-going-badge,
+.status-badge.rsvp-checked-in-badge {
+  background: var(--color-success-light);
+  color: var(--color-success-dark);
+}
+
+.status-badge.rsvp-waitlist-badge {
+  background: var(--color-warning-light);
+  color: var(--color-warning-dark);
+}
+
+.status-badge.rsvp-default-badge {
+  background: var(--surface-2);
+  color: var(--color-text-secondary);
 }
 
 .purchase-actions {

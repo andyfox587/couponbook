@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { foodieGroup, couponSubmission, merchant, event, eventRsvp, user, coupon, eventSubmission, couponRedemption, foodieGroupMembership, purchase } from "./schema";
+import { foodieGroup, couponSubmission, merchant, event, eventRsvp, user, coupon, eventSubmission, couponRedemption, foodieGroupMembership, purchase, merchantBillingProfile, eventOrder, eventRefund, eventGuestToken, eventDispute } from "./schema";
 
 export const couponSubmissionRelations = relations(couponSubmission, ({one}) => ({
 	foodieGroup: one(foodieGroup, {
@@ -26,9 +26,19 @@ export const merchantRelations = relations(merchant, ({one, many}) => ({
 	coupons: many(coupon),
 	eventSubmissions: many(eventSubmission),
 	events: many(event),
+	eventOrders: many(eventOrder),
+	eventDisputes: many(eventDispute),
+	billingProfiles: many(merchantBillingProfile),
 	user: one(user, {
 		fields: [merchant.ownerId],
 		references: [user.id]
+	}),
+}));
+
+export const merchantBillingProfileRelations = relations(merchantBillingProfile, ({one}) => ({
+	merchant: one(merchant, {
+		fields: [merchantBillingProfile.merchantId],
+		references: [merchant.id]
 	}),
 }));
 
@@ -41,10 +51,18 @@ export const eventRsvpRelations = relations(eventRsvp, ({one}) => ({
 		fields: [eventRsvp.userId],
 		references: [user.id]
 	}),
+	eventOrder: one(eventOrder, {
+		fields: [eventRsvp.id],
+		references: [eventOrder.rsvpId]
+	}),
 }));
 
 export const eventRelations = relations(event, ({one, many}) => ({
 	eventRsvps: many(eventRsvp),
+	eventOrders: many(eventOrder),
+	eventRefunds: many(eventRefund),
+	eventGuestTokens: many(eventGuestToken),
+	eventDisputes: many(eventDispute),
 	foodieGroup: one(foodieGroup, {
 		fields: [event.groupId],
 		references: [foodieGroup.id]
@@ -57,6 +75,7 @@ export const eventRelations = relations(event, ({one, many}) => ({
 
 export const userRelations = relations(user, ({many}) => ({
 	eventRsvps: many(eventRsvp),
+	eventOrders: many(eventOrder),
 	couponRedemptions: many(couponRedemption),
 	merchants: many(merchant),
 	foodieGroupMemberships: many(foodieGroupMembership),
@@ -116,5 +135,80 @@ export const purchaseRelations = relations(purchase, ({one}) => ({
 	foodieGroup: one(foodieGroup, {
 		fields: [purchase.groupId],
 		references: [foodieGroup.id]
+	}),
+}));
+
+export const eventOrderRelations = relations(eventOrder, ({one, many}) => ({
+	event: one(event, {
+		fields: [eventOrder.eventId],
+		references: [event.id]
+	}),
+	eventRsvp: one(eventRsvp, {
+		fields: [eventOrder.rsvpId],
+		references: [eventRsvp.id]
+	}),
+	user: one(user, {
+		fields: [eventOrder.userId],
+		references: [user.id]
+	}),
+	foodieGroup: one(foodieGroup, {
+		fields: [eventOrder.groupId],
+		references: [foodieGroup.id]
+	}),
+	merchant: one(merchant, {
+		fields: [eventOrder.merchantId],
+		references: [merchant.id]
+	}),
+	eventRefunds: many(eventRefund),
+	eventGuestTokens: many(eventGuestToken),
+	eventDisputes: many(eventDispute),
+}));
+
+export const eventRefundRelations = relations(eventRefund, ({one}) => ({
+	eventOrder: one(eventOrder, {
+		fields: [eventRefund.eventOrderId],
+		references: [eventOrder.id]
+	}),
+	eventRsvp: one(eventRsvp, {
+		fields: [eventRefund.eventRsvpId],
+		references: [eventRsvp.id]
+	}),
+	event: one(event, {
+		fields: [eventRefund.eventId],
+		references: [event.id]
+	}),
+	requestedByUser: one(user, {
+		fields: [eventRefund.requestedByUserId],
+		references: [user.id]
+	}),
+}));
+
+export const eventGuestTokenRelations = relations(eventGuestToken, ({one}) => ({
+	eventOrder: one(eventOrder, {
+		fields: [eventGuestToken.eventOrderId],
+		references: [eventOrder.id]
+	}),
+	eventRsvp: one(eventRsvp, {
+		fields: [eventGuestToken.eventRsvpId],
+		references: [eventRsvp.id]
+	}),
+	event: one(event, {
+		fields: [eventGuestToken.eventId],
+		references: [event.id]
+	}),
+}));
+
+export const eventDisputeRelations = relations(eventDispute, ({one}) => ({
+	eventOrder: one(eventOrder, {
+		fields: [eventDispute.eventOrderId],
+		references: [eventOrder.id]
+	}),
+	event: one(event, {
+		fields: [eventDispute.eventId],
+		references: [event.id]
+	}),
+	merchant: one(merchant, {
+		fields: [eventDispute.merchantId],
+		references: [merchant.id]
 	}),
 }));

@@ -1,0 +1,67 @@
+{
+    "name": "VivaSpot Notification Webhook",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "7ff60e19-5c41-4794-bac3-40d47a517761",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Notification Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [0, 0]
+      },
+      {
+        "parameters": {
+          "jsCode": "const payload = $json.body || $json;\n\nconst template = payload.template;\nconst recipient = payload.recipient || {};\nconst data = payload.data || {};\n\nlet subject = 'VivaSpot Notification';\nlet html = '<p>You have a new VivaSpot notification.</p>';\n\nif (template === 'event_rsvp_confirmation') {\n  subject = `You're confirmed for ${data.event?.name || 'your event'}`;\n  html = `\n    <h2>You're in!</h2>\n    <p>Hi ${recipient.name || 'there'},</p>\n    <p>Your RSVP is confirmed for <strong>${data.event?.name || 'the event'}</strong>.</p>\n    <p><strong>When:</strong> ${data.event?.startDatetime || ''}</p>\n    <p><strong>Where:</strong> ${data.event?.location || ''}</p>\n    <p><strong>Tickets:</strong> ${data.order?.quantity || 1}</p>\n    ${data.eventUrl ? `<p><a href=\"${data.eventUrl}\">View event</a></p>` : ''}\n    ${data.cancellationUrl ? `<p><a href=\"${data.cancellationUrl}\">Cancel RSVP</a></p>` : ''}\n  `;\n}\n\nif (template === 'event_rsvp_cancelled') {\n  subject = `RSVP cancelled for ${data.event?.name || 'your event'}`;\n  html = `\n    <h2>RSVP Cancelled</h2>\n    <p>Hi ${recipient.name || 'there'},</p>\n    <p>Your RSVP for <strong>${data.event?.name || 'the event'}</strong> has been cancelled.</p>\n    ${data.refund ? `<p>Refund status: ${data.refund.status}. Amount: $${((data.refund.amountCents || 0) / 100).toFixed(2)}</p>` : ''}\n  `;\n}\n\nreturn [{\n  json: {\n    template,\n    eventType: payload.eventType,\n    to: recipient.email,\n    recipientName: recipient.name,\n    subject,\n    html,\n    payload\n  }\n}];"
+        },
+        "id": "map-email",
+        "name": "Map Email Content",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [240, 0]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "{ \"message\": \"Workflow was started\" }",
+          "options": {}
+        },
+        "id": "respond-ok",
+        "name": "Respond OK",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [480, 0]
+      }
+    ],
+    "connections": {
+      "Notification Webhook": {
+        "main": [
+          [
+            {
+              "node": "Map Email Content",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Map Email Content": {
+        "main": [
+          [
+            {
+              "node": "Respond OK",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1"
+    }
+  }

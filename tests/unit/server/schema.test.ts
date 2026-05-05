@@ -50,6 +50,34 @@ describe('Drizzle Schema', () => {
       expect(schema.purchase.status).toBeDefined();
     });
 
+    it('should have paid event payment tables with required fields', () => {
+      expect(schema.eventOrder).toBeDefined();
+      expect(schema.eventOrder.eventId).toBeDefined();
+      expect(schema.eventOrder.rsvpId).toBeDefined();
+      expect(schema.eventOrder.userId).toBeDefined();
+      expect(schema.eventOrder.quantity).toBeDefined();
+      expect(schema.eventOrder.amountCents).toBeDefined();
+      expect(schema.eventOrder.refundedAmountCents).toBeDefined();
+      expect(schema.eventOrder.pricingBasis).toBeDefined();
+      expect(schema.eventOrder.stripePaymentIntentId).toBeDefined();
+      expect(schema.eventOrder.refundPolicyVersion).toBeDefined();
+
+      expect(schema.eventRefund).toBeDefined();
+      expect(schema.eventRefund.eventOrderId).toBeDefined();
+      expect(schema.eventRefund.amountCents).toBeDefined();
+      expect(schema.eventRefund.policyWindow).toBeDefined();
+      expect(schema.eventRefund.stripeRefundId).toBeDefined();
+
+      expect(schema.eventGuestToken).toBeDefined();
+      expect(schema.eventGuestToken.tokenHash).toBeDefined();
+      expect(schema.eventGuestToken.purpose).toBeDefined();
+
+      expect(schema.merchantBillingProfile).toBeDefined();
+      expect(schema.merchantBillingProfile.paidEventsEnabled).toBeDefined();
+      expect(schema.merchantBillingProfile.backupChargeMethodReady).toBeDefined();
+      expect(schema.eventDispute).toBeDefined();
+    });
+
     it('should have couponRedemption table with required fields', () => {
       expect(schema.couponRedemption).toBeDefined();
       expect(schema.couponRedemption.id).toBeDefined();
@@ -129,6 +157,13 @@ describe('Drizzle Schema', () => {
       statuses.forEach((status) => {
         expect(validStatuses).toContain(status);
       });
+    });
+
+    it('should have paid event enums with correct values', () => {
+      expect(schema.eventOrderStatus).toBeDefined();
+      expect(schema.eventRefundStatus).toBeDefined();
+      expect(schema.eventTokenPurpose).toBeDefined();
+      expect(schema.eventPaymentProvider).toBeDefined();
     });
   });
 

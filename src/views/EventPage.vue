@@ -17,14 +17,18 @@
         <p class="muted">No upcoming events right now. Check back soon!</p>
       </div>
 
-      <EventList v-else :events="events" />
+      <EventList
+        v-else
+        :events="events"
+        :my-rsvps-by-event-id="myRsvpsByEventId"
+      />
     </section>
   </div>
 </template>
 
 <script>
 import EventList from '@/components/Events/EventList.vue'
-import { listEvents } from '@/services/eventService'
+import { listEvents, getMyRsvps } from '@/services/eventService'
 
 export default {
   name: 'EventPage',
@@ -35,11 +39,26 @@ export default {
       events: [],
       loading: true,
       error: null,
+      myRsvpsByEventId: {},
     }
+  },
+
+  computed: {
+    isAuthenticated() {
+      return this.$store?.getters['auth/isAuthenticated'] ?? false
+    },
+  },
+
+  watch: {
+    isAuthenticated(val) {
+      if (val) this.loadMyRsvps()
+      else this.myRsvpsByEventId = {}
+    },
   },
 
   async created() {
     await this.load()
+    await this.loadMyRsvps()
   },
 
   methods: {
@@ -53,6 +72,24 @@ export default {
         this.error = 'Failed to load events. Please try again.'
       } finally {
         this.loading = false
+      }
+    },
+
+    async loadMyRsvps() {
+      if (!this.isAuthenticated) {
+        this.myRsvpsByEventId = {}
+        return
+      }
+      try {
+        const rows = await getMyRsvps()
+        const map = {}
+        for (const row of Array.isArray(rows) ? rows : []) {
+          if (row?.eventId) map[row.eventId] = row
+        }
+        this.myRsvpsByEventId = map
+      } catch (err) {
+        console.error('[EventPage] failed to load my RSVPs', err)
+        this.myRsvpsByEventId = {}
       }
     },
   },

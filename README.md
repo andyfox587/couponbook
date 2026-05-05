@@ -189,8 +189,8 @@ Create a `.env` file in the root directory. Key variables include:
 ### Email & Cron (subscription billing)
 | Variable | Description |
 |----------|-------------|
-| `EMAIL_FROM` | Verified SES sender address (e.g. `noreply@vivaspot.app`) |
-| `AWS_SES_REGION` | AWS region for SES (defaults to `AWS_REGION`) |
+| `N8N_NOTIFICATION_WEBHOOK_URL` | n8n webhook that receives transactional email requests. Cron/webhooks schedule the work; n8n sends the email. |
+| `PAID_EVENT_NOTIFICATION_WEBHOOK_URL` | Optional paid-events-specific n8n webhook override. Falls back to `N8N_NOTIFICATION_WEBHOOK_URL`. |
 | `CRON_SECRET` | Random secret used to authenticate Vercel cron calls to `/api/v1/cron/*` (legacy alias: `/api/v1/admin/cron/*`). Generate with `openssl rand -hex 32`. |
 | `ACCESS_MIGRATION_GRACE_DAYS` | Days of access to grant when backfilling existing purchases (default: `365`) |
 
@@ -278,8 +278,7 @@ After this runs, `expires_at IS NULL` means admin_grant (perpetual) only.
 ### 4. Environment Variables
 
 Set in your Vercel project:
-- `EMAIL_FROM` — verified SES sender address
-- `AWS_SES_REGION` — region for SES
+- `N8N_NOTIFICATION_WEBHOOK_URL` — n8n transactional email webhook
 - `CRON_SECRET` — secret for cron endpoint auth
 - Ensure `STRIPE_WEBHOOK_SECRET` is updated if you added new events to the endpoint
 

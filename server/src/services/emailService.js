@@ -1,63 +1,52 @@
 /**
  * server/src/services/emailService.js
  *
- * SES-backed transactional email service for subscription lifecycle notifications.
- * Requires: AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (or instance role),
- *           and EMAIL_FROM environment variables.
+ * n8n-backed transactional email request service for subscription lifecycle
+ * notifications. Scheduling stays in cron/webhooks; this service only emits
+ * "please send this email" requests to n8n.
  *
- * All functions are safe to call even when SES is not configured — they log a
- * warning and return without throwing so callers don't need to guard against
- * missing config in non-production environments.
+ * Requires: N8N_NOTIFICATION_WEBHOOK_URL or PAID_EVENT_NOTIFICATION_WEBHOOK_URL.
+ * All functions are safe to call even when n8n is not configured — they log a
+ * warning and return false so callers don't need to guard against missing config
+ * in non-production environments.
  */
 
-import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 import { db } from '../db.js';
 import { user } from '../schema.js';
 import { eq } from 'drizzle-orm';
-
-const EMAIL_FROM = process.env.EMAIL_FROM || 'noreply@vivaspot.app';
-const SES_REGION = process.env.AWS_SES_REGION || process.env.AWS_REGION || 'us-east-1';
-
-let sesClient = null;
-
-function getSesClient() {
-  if (!sesClient) {
-    sesClient = new SESClient({ region: SES_REGION });
-  }
-  return sesClient;
-}
+import { sendNotificationWebhook } from './notificationService.js';
 
 /**
- * Low-level send helper. Returns true on success, false on failure.
- * @param {object} params - { to, subject, htmlBody, textBody }
+ * Low-level n8n notification helper. Returns true on success, false on failure.
+ * @param {object} params - { template, eventType, entityType, entityId, recipient, data, metadata }
  */
-async function sendEmail({ to, subject, htmlBody, textBody }) {
-  if (!process.env.EMAIL_FROM) {
-    console.warn('📧  EMAIL_FROM not set, skipping email send to:', to);
-    return false;
-  }
-
-  const client = getSesClient();
-  const command = new SendEmailCommand({
-    Destination: { ToAddresses: [to] },
-    Message: {
-      Subject: { Data: subject, Charset: 'UTF-8' },
-      Body: {
-        Html: { Data: htmlBody, Charset: 'UTF-8' },
-        Text: { Data: textBody, Charset: 'UTF-8' },
-      },
+async function requestEmail({ template, eventType, entityType, entityId, recipient, data = {}, metadata = {} }) {
+  const result = await sendNotificationWebhook({
+    template,
+    eventType,
+    entityType,
+    entityId,
+    recipient,
+    data,
+    metadata: {
+      channel: 'email',
+      source: 'server/src/services/emailService.js',
+      ...metadata,
     },
-    Source: EMAIL_FROM,
   });
 
-  try {
-    await client.send(command);
-    console.log('📧  Email sent:', { to, subject });
+  if (result.sent) {
+    console.log('📧  n8n email request sent:', { template, to: recipient?.email, entityId });
     return true;
-  } catch (err) {
-    console.error('📧  SES send failed:', { to, subject, error: err.message });
+  }
+
+  if (result.skipped) {
+    console.warn('📧  n8n email webhook not configured, skipping:', { template, to: recipient?.email, entityId });
     return false;
   }
+
+  console.warn('📧  n8n email request failed:', { template, to: recipient?.email, entityId, error: result.error });
+  return false;
 }
 
 /**
@@ -88,17 +77,27 @@ export async function sendRenewalReminderEmail(purchaseRow) {
 
   const appUrl = process.env.APP_PUBLIC_URL || process.env.APP_URL || 'https://vivaspot.app';
 
-  const subject = `Your VivaSpot subscription renews on ${renewalDate}`;
-  const htmlBody = `
-    <p>Hi ${purchaseUser.name},</p>
-    <p>Your VivaSpot subscription will automatically renew on <strong>${renewalDate}</strong>.</p>
-    <p>If you'd like to manage your subscription, visit your
-    <a href="${appUrl}/profile">profile page</a>.</p>
-    <p>Thanks for being a VivaSpot member!</p>
-  `;
-  const textBody = `Hi ${purchaseUser.name},\n\nYour VivaSpot subscription will automatically renew on ${renewalDate}.\n\nManage your subscription: ${appUrl}/profile\n\nThanks for being a VivaSpot member!`;
-
-  return sendEmail({ to: purchaseUser.email, subject, htmlBody, textBody });
+  return requestEmail({
+    template: 'subscription_renewal_reminder',
+    eventType: 'subscription.renewal_reminder',
+    entityType: 'purchase',
+    entityId: purchaseRow.id,
+    recipient: {
+      email: purchaseUser.email,
+      name: purchaseUser.name,
+      userId: purchaseRow.userId,
+    },
+    data: {
+      renewalDate,
+      profileUrl: `${appUrl}/profile`,
+      purchase: {
+        id: purchaseRow.id,
+        groupId: purchaseRow.groupId,
+        currentPeriodEnd: purchaseRow.currentPeriodEnd,
+        subscriptionStatus: purchaseRow.subscriptionStatus,
+      },
+    },
+  });
 }
 
 /**
@@ -125,17 +124,27 @@ export async function sendCancellationConfirmationEmail(purchaseRow) {
     : 'the end of your current period';
 
   const appUrl = process.env.APP_PUBLIC_URL || process.env.APP_URL || 'https://vivaspot.app';
-  const subject = 'Your VivaSpot subscription has been canceled';
-  const htmlBody = `
-    <p>Hi ${purchaseUser.name},</p>
-    <p>Your VivaSpot subscription has been canceled. You'll continue to enjoy access
-    through <strong>${accessUntil}</strong>.</p>
-    <p>If this was a mistake, you can resubscribe from your
-    <a href="${appUrl}/profile">profile page</a>.</p>
-  `;
-  const textBody = `Hi ${purchaseUser.name},\n\nYour VivaSpot subscription has been canceled. You'll continue to enjoy access through ${accessUntil}.\n\nResubscribe: ${appUrl}/profile`;
-
-  return sendEmail({ to: purchaseUser.email, subject, htmlBody, textBody });
+  return requestEmail({
+    template: 'subscription_cancellation_confirmation',
+    eventType: 'subscription.cancelled',
+    entityType: 'purchase',
+    entityId: purchaseRow.id,
+    recipient: {
+      email: purchaseUser.email,
+      name: purchaseUser.name,
+      userId: purchaseRow.userId,
+    },
+    data: {
+      accessUntil,
+      profileUrl: `${appUrl}/profile`,
+      purchase: {
+        id: purchaseRow.id,
+        groupId: purchaseRow.groupId,
+        currentPeriodEnd: purchaseRow.currentPeriodEnd,
+        subscriptionStatus: purchaseRow.subscriptionStatus,
+      },
+    },
+  });
 }
 
 /**
@@ -163,16 +172,27 @@ export async function sendGiftAccessNotificationEmail(purchaseRow) {
   }
 
   const appUrl = process.env.APP_PUBLIC_URL || process.env.APP_URL || 'https://vivaspot.app';
-  const subject = `You've received a VivaSpot gift from ${gifterName}!`;
-  const htmlBody = `
-    <p>Hi ${recipient.name},</p>
-    <p><strong>${gifterName}</strong> has gifted you VivaSpot access. Your
-    membership is active and ready to use.</p>
-    <p><a href="${appUrl}/profile">Open VivaSpot</a></p>
-  `;
-  const textBody = `Hi ${recipient.name},\n\n${gifterName} has gifted you VivaSpot access. Your membership is active.\n\nOpen VivaSpot: ${appUrl}/profile`;
-
-  return sendEmail({ to: recipient.email, subject, htmlBody, textBody });
+  return requestEmail({
+    template: 'gift_access_notification',
+    eventType: 'gift.access_granted',
+    entityType: 'purchase',
+    entityId: purchaseRow.id,
+    recipient: {
+      email: recipient.email,
+      name: recipient.name,
+      userId: purchaseRow.userId,
+    },
+    data: {
+      gifterName,
+      profileUrl: `${appUrl}/profile`,
+      purchase: {
+        id: purchaseRow.id,
+        groupId: purchaseRow.groupId,
+        giftedByUserId: purchaseRow.giftedByUserId,
+        currentPeriodEnd: purchaseRow.currentPeriodEnd,
+      },
+    },
+  });
 }
 
 /**
@@ -189,15 +209,24 @@ export async function sendPaymentFailedEmail(purchaseRow) {
   if (!purchaseUser) return false;
 
   const appUrl = process.env.APP_PUBLIC_URL || process.env.APP_URL || 'https://vivaspot.app';
-  const subject = 'Action required: VivaSpot subscription payment failed';
-  const htmlBody = `
-    <p>Hi ${purchaseUser.name},</p>
-    <p>We were unable to process your VivaSpot subscription payment. Your access will remain active for
-    a short grace period, but please update your payment method to avoid interruption.</p>
-    <p><a href="${appUrl}/profile">Update payment method</a></p>
-    <p>If you have questions, reply to this email.</p>
-  `;
-  const textBody = `Hi ${purchaseUser.name},\n\nWe were unable to process your VivaSpot subscription payment. Please update your payment method: ${appUrl}/profile`;
-
-  return sendEmail({ to: purchaseUser.email, subject, htmlBody, textBody });
+  return requestEmail({
+    template: 'subscription_payment_failed',
+    eventType: 'subscription.payment_failed',
+    entityType: 'purchase',
+    entityId: purchaseRow.id,
+    recipient: {
+      email: purchaseUser.email,
+      name: purchaseUser.name,
+      userId: purchaseRow.userId,
+    },
+    data: {
+      profileUrl: `${appUrl}/profile`,
+      purchase: {
+        id: purchaseRow.id,
+        groupId: purchaseRow.groupId,
+        currentPeriodEnd: purchaseRow.currentPeriodEnd,
+        subscriptionStatus: purchaseRow.subscriptionStatus,
+      },
+    },
+  });
 }

@@ -2682,8 +2682,10 @@ export default {
 
     async adminCancelAttendee(attendee) {
       try {
+        const headers = await this.getAuthHeaders();
         const res = await fetch(`${API_BASE}/events/${this.selectedAdminEventId}/rsvp/${attendee.id}/cancel`, {
           method: 'POST',
+          headers,
         });
         if (!res.ok) throw new Error(`Cancel failed: ${res.status}`);
         await this.loadAdminEventAttendees(this.selectedAdminEventId);

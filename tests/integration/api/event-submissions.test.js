@@ -402,6 +402,25 @@ describe('Event Lifecycle (API)', () => {
       expect(res.body[0]).toHaveProperty('confirmedCount');
     });
 
+    it('GET /events excludes events whose end time has passed', async () => {
+      const now = Date.now();
+      const past = await seedApprovedEvent(db, app, {
+        name: 'Past Event',
+        start_datetime: new Date(now - 3 * 86400000).toISOString(),
+        end_datetime: new Date(now - 2 * 86400000).toISOString(),
+      });
+      const upcoming = await seedApprovedEvent(db, app, {
+        name: 'Upcoming Event',
+        start_datetime: new Date(now + 86400000).toISOString(),
+        end_datetime: new Date(now + 2 * 86400000).toISOString(),
+      });
+
+      const res = await request(app).get('/api/v1/events');
+      expect(res.status).toBe(200);
+      expect(res.body.map((event) => event.id)).toContain(upcoming.event.id);
+      expect(res.body.map((event) => event.id)).not.toContain(past.event.id);
+    });
+
     it('GET /events/:id returns a published event', async () => {
       const { event: e } = await seedApprovedEvent(db, app);
 
@@ -611,7 +630,8 @@ await db.update(schema.event).set({ inviteOnly: true }).where(eq(schema.event.id
       expect(rsvp2Res.body.status).toBe('waitlist');
 
       const cancelRes = await request(app)
-        .post(`/api/v1/events/${e.id}/rsvp/${rsvp1Res.body.id}/cancel`);
+        .post(`/api/v1/events/${e.id}/rsvp/${rsvp1Res.body.id}/cancel`)
+        .set('Authorization', 'Bearer cancel-u1');
       expect(cancelRes.status).toBe(200);
 
       // Verify waitlisted user was promoted

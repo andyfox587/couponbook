@@ -1,7 +1,7 @@
 // server/src/routes/merchants.js
 import express from 'express';
 import { db } from '../db.js';
-import { merchant, user } from '../schema.js';
+import { merchant, user, merchantBillingProfile } from '../schema.js';
 import { eq } from 'drizzle-orm';
 
 // 🔐 Auth middleware (default export is verifyJwt → auth())
@@ -61,6 +61,79 @@ router.get('/mine', auth(), resolveLocalUser, async (req, res, next) => {
     return res.json(owned);
   } catch (err) {
     console.error('📦  error in GET /merchants/mine', err);
+    next(err);
+  }
+});
+
+router.get('/:id/billing-profile', auth(), resolveLocalUser, async (req, res, next) => {
+  try {
+    const allowed = await canManageMerchant(req.dbUser, req.params.id);
+    if (!allowed) return res.status(403).json({ error: 'Forbidden: Cannot manage this merchant' });
+
+    const [profile] = await db
+      .select()
+      .from(merchantBillingProfile)
+      .where(eq(merchantBillingProfile.merchantId, req.params.id))
+      .limit(1);
+
+    res.json(profile || {
+      merchantId: req.params.id,
+      payoutDestinationVerified: false,
+      backupChargeMethodReady: false,
+      paidEventsEnabled: false,
+      paidEventTermsAcceptedAt: null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/:id/billing-profile', auth(), resolveLocalUser, async (req, res, next) => {
+  try {
+    const allowed = await canManageMerchant(req.dbUser, req.params.id);
+    if (!allowed) return res.status(403).json({ error: 'Forbidden: Cannot manage this merchant' });
+
+    const existing = await db
+      .select()
+      .from(merchantBillingProfile)
+      .where(eq(merchantBillingProfile.merchantId, req.params.id))
+      .limit(1);
+
+    const values = {
+      payoutDestinationDetails: req.body.payout_destination_details || req.body.payoutDestinationDetails || null,
+      payoutDestinationVerified: Boolean(req.body.payout_destination_verified ?? req.body.payoutDestinationVerified),
+      stripeCustomerId: req.body.stripe_customer_id || req.body.stripeCustomerId || null,
+      backupPaymentMethodId: req.body.backup_payment_method_id || req.body.backupPaymentMethodId || null,
+      backupPaymentMethodLast4: req.body.backup_payment_method_last4 || req.body.backupPaymentMethodLast4 || null,
+      backupChargeMethodReady: Boolean(req.body.backup_charge_method_ready ?? req.body.backupChargeMethodReady),
+      paidEventTermsAcceptedAt: req.body.accept_paid_event_terms ? new Date().toISOString() : (req.body.paid_event_terms_accepted_at || req.body.paidEventTermsAcceptedAt || null),
+      paidEventTermsVersion: req.body.paid_event_terms_version || req.body.paidEventTermsVersion || 'paid-events-v1',
+      disputeRecoveryEnabled: Boolean(req.body.dispute_recovery_enabled ?? req.body.disputeRecoveryEnabled),
+      paidEventsEnabled: Boolean(req.body.paid_events_enabled ?? req.body.paidEventsEnabled),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const ready = values.payoutDestinationVerified
+      && values.backupChargeMethodReady
+      && !!values.paidEventTermsAcceptedAt;
+    values.paidEventsEnabled = values.paidEventsEnabled && ready;
+
+    let profile;
+    if (existing[0]) {
+      [profile] = await db
+        .update(merchantBillingProfile)
+        .set(values)
+        .where(eq(merchantBillingProfile.id, existing[0].id))
+        .returning();
+    } else {
+      [profile] = await db
+        .insert(merchantBillingProfile)
+        .values({ merchantId: req.params.id, ...values })
+        .returning();
+    }
+
+    res.json(profile);
+  } catch (err) {
     next(err);
   }
 });

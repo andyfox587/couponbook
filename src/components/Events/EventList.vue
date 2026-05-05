@@ -4,6 +4,7 @@
       v-for="ev in events"
       :key="ev.id"
       :event="ev"
+      :my-rsvp="myRsvpsByEventId[ev.id] || null"
     />
   </div>
 </template>
@@ -16,6 +17,7 @@ export default {
   components: { EventCard },
   props: {
     events: { type: Array, default: () => [] },
+    myRsvpsByEventId: { type: Object, default: () => ({}) },
   },
 };
 </script>

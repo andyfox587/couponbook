@@ -6,7 +6,7 @@ export default defineConfig({
   devServer: {
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        target: 'http://[::1]:3000',
         changeOrigin: true,
         // if your Express routes are exactly under /api,
         // you can keep the path as-is:

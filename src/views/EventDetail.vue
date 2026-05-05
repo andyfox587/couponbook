@@ -60,14 +60,19 @@
 
           <div v-if="evt.inviteOnly" class="invite-badge">Invite Only</div>
           <div v-else-if="evt.visibility === 'members_only'" class="members-badge">Members Only</div>
+          <div v-if="evt.status === 'cancelled'" class="alert alert-warning cancelled-alert">
+            This event has been cancelled. Existing paid RSVPs are eligible for a full refund.
+          </div>
         </div>
 
         <!-- RSVP Panel -->
-        <div class="rsvp-panel" v-if="!evt.inviteOnly">
+        <div class="rsvp-panel" v-if="!evt.inviteOnly && evt.status !== 'cancelled'">
           <EventRSVP
             :event="evt"
             :is-authenticated="isAuthenticated"
             :has-membership="hasMembership"
+            :existing-rsvp="myRsvp"
+            :rsvp-loading="myRsvpLoading"
             @rsvp-submitted="onRsvpSubmitted"
             @rsvp-cancelled="onRsvpCancelled"
             @login-requested="onLoginRequested"
@@ -87,7 +92,7 @@
 
 <script>
 import EventRSVP from '@/components/Events/EventRSVP.vue'
-import { getEvent, getEventBySlug } from '@/services/eventService'
+import { getEvent, getEventBySlug, getMyRsvpForEvent } from '@/services/eventService'
 import { getAccessToken } from '@/services/authService'
 
 export default {
@@ -105,6 +110,8 @@ export default {
       loading: true,
       error: null,
       hasMembership: false,
+      myRsvp: null,
+      myRsvpLoading: false,
     }
   },
 
@@ -165,8 +172,13 @@ export default {
       this.load()
     },
     isAuthenticated(val) {
-      if (val) this.fetchMembership()
-      else this.hasMembership = false
+      if (val) {
+        this.fetchMembership()
+        this.fetchMyRsvp()
+      } else {
+        this.hasMembership = false
+        this.myRsvp = null
+      }
     },
   },
 
@@ -184,6 +196,7 @@ export default {
           this.error = 'No event identifier provided.'
         }
         await this.fetchMembership()
+        await this.fetchMyRsvp()
       } catch (err) {
         console.error('[EventDetail] failed to load event', err)
         this.error = 'Event not found or unavailable.'
@@ -218,7 +231,24 @@ export default {
       }
     },
 
-    onRsvpSubmitted() {
+    async fetchMyRsvp() {
+      this.myRsvp = null
+      this.myRsvpLoading = true
+      if (!this.isAuthenticated || !this.evt?.id) {
+        this.myRsvpLoading = false
+        return
+      }
+      try {
+        this.myRsvp = await getMyRsvpForEvent(this.evt.id)
+      } catch (err) {
+        console.error('[EventDetail] failed to load current RSVP', err)
+      } finally {
+        this.myRsvpLoading = false
+      }
+    },
+
+    onRsvpSubmitted(result) {
+      if (result?.requiresPayment) return
       this.load()
     },
 
@@ -357,6 +387,7 @@ export default {
 
 .invite-badge { background: var(--color-error-light); color: var(--color-error); }
 .members-badge { background: var(--color-primary); color: var(--color-text-on-primary); opacity: 0.85; }
+.cancelled-alert { margin-top: var(--spacing-lg); }
 
 .rsvp-panel {
   position: sticky;

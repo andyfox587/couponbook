@@ -234,6 +234,105 @@ describe('Profile - Admin Memberships', () => {
     expect(wrapper.vm.roleLabel).toBe('Foodie Group Admin');
   });
 
+  it('renders customer RSVP loading state', async () => {
+    const wrapper = mount(Profile, {
+      global: {
+        plugins: [store],
+        mocks: {
+          $router: { push: vi.fn() },
+        },
+      },
+    });
+
+    await wrapper.setData({
+      user: { role: 'customer' },
+      customerRsvps: { loading: true, error: null, items: [], cancellingId: null },
+    });
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain('Loading RSVPs');
+  });
+
+  it('renders customer RSVP empty state', async () => {
+    const wrapper = mount(Profile, {
+      global: {
+        plugins: [store],
+        mocks: {
+          $router: { push: vi.fn() },
+        },
+      },
+    });
+
+    await wrapper.setData({
+      user: { role: 'customer' },
+      customerRsvps: { loading: false, error: null, items: [], cancellingId: null },
+    });
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain('You do not have any upcoming RSVPs yet.');
+  });
+
+  it('renders populated customer RSVP rows from the API', async () => {
+    global.fetch.mockImplementation((url) => {
+      if (String(url).includes('/users/me')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              id: 'customer-id',
+              email: 'customer@example.com',
+              name: 'Customer User',
+              role: 'customer',
+              merchants: [],
+            }),
+        });
+      }
+      if (String(url).includes('/events/my-rsvps')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve([
+              {
+                id: 'rsvp-1',
+                eventId: 'event-1',
+                eventName: 'Tasting Dinner',
+                eventSlug: 'tasting-dinner',
+                merchantName: 'Viva Bistro',
+                startDatetime: '2026-06-01T19:00:00.000Z',
+                location: '123 Main St',
+                attendees: 2,
+                status: 'waitlist',
+                waitlistPosition: 2,
+              },
+            ]),
+        });
+      }
+      if (String(url).includes('/coupons/redemptions/me') || String(url).includes('/groups/my/purchases')) {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) });
+      }
+      return mockFetch(url);
+    });
+
+    const wrapper = mount(Profile, {
+      global: {
+        plugins: [store],
+        mocks: {
+          $router: { push: vi.fn() },
+        },
+      },
+    });
+
+    await flushPromises();
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain('Tasting Dinner');
+    expect(wrapper.text()).toContain('Waitlist #2');
+    expect(wrapper.text()).toContain('Viva Bistro');
+  });
+
   it('renders merchant redemption analytics from mocked API data', async () => {
     const wrapper = mount(Profile, {
       global: {

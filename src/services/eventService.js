@@ -38,6 +38,20 @@ export async function getMyEvents() {
   return res.json()
 }
 
+export async function getMyRsvps() {
+  const headers = await authHeaders()
+  const res = await fetch(`${API_BASE}/events/my-rsvps`, { headers })
+  if (!res.ok) throw new Error(`Failed to load your RSVPs: ${res.status}`)
+  return res.json()
+}
+
+export async function getMyRsvpForEvent(eventId) {
+  const headers = await authHeaders()
+  const res = await fetch(`${API_BASE}/events/${eventId}/my-rsvp`, { headers })
+  if (!res.ok) throw new Error(`Failed to load your RSVP: ${res.status}`)
+  return res.json()
+}
+
 export async function updateEvent(id, data) {
   const headers = { ...(await authHeaders()), 'Content-Type': 'application/json' }
   const res = await fetch(`${API_BASE}/events/${id}`, {
@@ -72,11 +86,54 @@ export async function createRsvp(eventId, data) {
   return res.json()
 }
 
-export async function cancelRsvp(eventId, rsvpId) {
+export async function cancelRsvp(eventId, rsvpId, token = null) {
+  const headers = { ...(await authHeaders()), 'Content-Type': 'application/json' }
   const res = await fetch(`${API_BASE}/events/${eventId}/rsvp/${rsvpId}/cancel`, {
     method: 'POST',
+    headers,
+    body: JSON.stringify(token ? { token } : {}),
   })
-  if (!res.ok) throw new Error(`Failed to cancel RSVP: ${res.status}`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `Failed to cancel RSVP: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function previewGuestCancellation(eventId, token) {
+  const qs = new URLSearchParams({ token }).toString()
+  const res = await fetch(`${API_BASE}/events/${eventId}/rsvp/cancel-by-token?${qs}`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `Failed to load cancellation: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function cancelGuestRsvpByToken(eventId, token) {
+  const res = await fetch(`${API_BASE}/events/${eventId}/rsvp/cancel-by-token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `Failed to cancel RSVP: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function cancelEvent(eventId, reason = '') {
+  const headers = { ...(await authHeaders()), 'Content-Type': 'application/json' }
+  const res = await fetch(`${API_BASE}/events/${eventId}/cancel`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ reason }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `Failed to cancel event: ${res.status}`)
+  }
   return res.json()
 }
 

@@ -11,6 +11,7 @@ import CouponSubmissions from '@/views/CouponSubmissions.vue'
 import CheckoutSuccess from '@/views/CheckoutSuccess.vue'
 import EventSubmissions from '@/views/EventSubmissions.vue'
 import EventDetail from '@/views/EventDetail.vue'
+import EventGuestCancel from '@/views/EventGuestCancel.vue'
 
 // Import dashboards directly from their component paths:
 import FoodieGroupDashboard from '../components/Dashboard/FoodieGroupDashboard.vue'
@@ -36,6 +37,12 @@ const routes = [
     path: '/events/:id',
     name: 'EventDetail',
     component: EventDetail,
+    props: true
+  },
+  {
+    path: '/events/:id/cancel',
+    name: 'EventGuestCancel',
+    component: EventGuestCancel,
     props: true
   },
   {

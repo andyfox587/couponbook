@@ -6,6 +6,9 @@
       :class="{ 'card-image-placeholder': !cardImage }"
     >
       <span v-if="event.status === 'cancelled'" class="status-badge status-cancelled">Cancelled</span>
+      <span v-else-if="myRsvpBadgeLabel" class="status-badge" :class="myRsvpBadgeClass">
+        {{ myRsvpBadgeLabel }}
+      </span>
     </div>
 
     <div class="card-body">
@@ -65,8 +68,27 @@ export default {
 
   props: {
     event: { type: Object, required: true },
+    myRsvp: { type: Object, default: null },
   },
   computed: {
+    myRsvpBadgeLabel() {
+      const status = this.myRsvp?.status
+      if (status === 'going') return 'Going'
+      if (status === 'waitlist') {
+        const pos = this.myRsvp?.waitlistPosition
+        return pos ? `Waitlist #${pos}` : 'Waitlist'
+      }
+      if (status === 'checked_in') return 'Checked In'
+      return null
+    },
+
+    myRsvpBadgeClass() {
+      const status = this.myRsvp?.status
+      if (status === 'going' || status === 'checked_in') return 'status-going'
+      if (status === 'waitlist') return 'status-waitlist'
+      return ''
+    },
+
     cardImage() {
       return this.event.bannerImageUrl || this.event.coverImageUrl || null
     },
@@ -146,6 +168,16 @@ export default {
 .status-cancelled {
   background: var(--color-error);
   color: var(--color-text-on-error, #fff);
+}
+
+.status-going {
+  background: var(--color-success);
+  color: var(--color-text-on-success, #fff);
+}
+
+.status-waitlist {
+  background: var(--color-warning);
+  color: var(--color-text-on-warning, #fff);
 }
 
 .card-body {
