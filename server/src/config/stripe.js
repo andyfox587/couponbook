@@ -5,10 +5,11 @@ import Stripe from 'stripe';
  * Throws error on startup if required env vars are missing or invalid
  */
 function validateStripeEnv() {
-  const secretKey = process.env.STRIPE_SECRET_KEY;
-  const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY;
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-  const stripeMode = process.env.STRIPE_MODE;
+  // Trim — Dashboard/Vercel pastes often include a trailing newline, which breaks webhook signing.
+  const secretKey = process.env.STRIPE_SECRET_KEY?.trim();
+  const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY?.trim();
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
+  const stripeMode = process.env.STRIPE_MODE?.trim();
 
   const errors = [];
 

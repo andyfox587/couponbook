@@ -17,9 +17,9 @@ const __dirname = dirname(__filename);
 dotenv.config({ path: join(__dirname, '..', '.env.development') });
 
 async function validateStripeKeys() {
-  const secretKey = process.env.STRIPE_SECRET_KEY;
-  const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY;
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  const secretKey = process.env.STRIPE_SECRET_KEY?.trim();
+  const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY?.trim();
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
 
   console.log('🔍 Validating Stripe configuration...\n');
 

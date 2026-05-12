@@ -20,7 +20,7 @@ import {
  * @returns {{ status: number, body: object }}
  */
 export async function handleWebhook(rawBody, signature) {
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
 
   if (!webhookSecret) {
     console.error('💳  STRIPE_WEBHOOK_SECRET not configured');
