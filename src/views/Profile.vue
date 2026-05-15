@@ -242,8 +242,11 @@
                       {{ (m.name || 'VS').trim().charAt(0).toUpperCase() }}
                     </span>
                   </div>
-                  <div>
-                    <h3>{{ m.name }}</h3>
+                  <div style="flex:1;">
+                    <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                      <h3 style="margin:0;">{{ m.name }}</h3>
+                      <span v-if="m.access === 'admin'" class="access-badge admin-access-badge">Admin</span>
+                    </div>
                     <p class="muted tiny">
                       Foodie Group ID: {{ m.foodie_group_id || '—' }}
                     </p>
@@ -281,6 +284,34 @@
                     Recommended: square PNG or JPG, up to 5 MB. This logo will be used on
                     all coupons for this restaurant.
                   </p>
+
+                  <!-- Admins section -->
+                  <div class="merchant-admins-section">
+                    <div class="merchant-admins-header">
+                      <strong>Admins</strong>
+                      <button class="btn-action" @click="openAddAdminModal(m.id)">
+                        <i class="pi pi-user-plus icon-spacing-sm"></i>Add Admin
+                      </button>
+                    </div>
+                    <div v-if="merchantAdminsLoading[m.id]" class="muted tiny">Loading…</div>
+                    <ul v-else-if="merchantAdmins[m.id] && merchantAdmins[m.id].length" class="admin-member-list">
+                      <li v-for="admin in merchantAdmins[m.id]" :key="admin.userId" class="admin-member-row">
+                        <span class="admin-initials">{{ (admin.name || admin.email || 'A').charAt(0).toUpperCase() }}</span>
+                        <span class="admin-info">
+                          <span class="admin-name">{{ admin.name }}</span>
+                          <span class="admin-email muted tiny">{{ admin.email }}</span>
+                        </span>
+                        <button
+                          class="btn-action danger-action"
+                          :disabled="removingAdminId === admin.userId"
+                          @click="removeMerchantAdmin(m.id, admin.userId)"
+                        >
+                          <i class="pi pi-times"></i>
+                        </button>
+                      </li>
+                    </ul>
+                    <p v-else class="muted tiny">No additional admins yet.</p>
+                  </div>
                 </div>
               </article>
             </div>
@@ -739,8 +770,11 @@
                         {{ (m.name || 'VS').trim().charAt(0).toUpperCase() }}
                       </span>
                     </div>
-                    <div>
-                      <h3>{{ m.name }}</h3>
+                    <div style="flex:1;">
+                      <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                        <h3 style="margin:0;">{{ m.name }}</h3>
+                        <span v-if="m.access === 'admin'" class="access-badge admin-access-badge">Admin</span>
+                      </div>
                       <p class="muted tiny">
                         Foodie Group ID: {{ m.foodie_group_id || '—' }}
                       </p>
@@ -777,6 +811,34 @@
                       Recommended: square PNG or JPG, up to 5 MB. This logo will be used on
                       all coupons for this restaurant.
                     </p>
+
+                    <!-- Admins section -->
+                    <div class="merchant-admins-section">
+                      <div class="merchant-admins-header">
+                        <strong>Admins</strong>
+                        <button class="btn-action" @click="openAddAdminModal(m.id)">
+                          <i class="pi pi-user-plus icon-spacing-sm"></i>Add Admin
+                        </button>
+                      </div>
+                      <div v-if="merchantAdminsLoading[m.id]" class="muted tiny">Loading…</div>
+                      <ul v-else-if="merchantAdmins[m.id] && merchantAdmins[m.id].length" class="admin-member-list">
+                        <li v-for="admin in merchantAdmins[m.id]" :key="admin.userId" class="admin-member-row">
+                          <span class="admin-initials">{{ (admin.name || admin.email || 'A').charAt(0).toUpperCase() }}</span>
+                          <span class="admin-info">
+                            <span class="admin-name">{{ admin.name }}</span>
+                            <span class="admin-email muted tiny">{{ admin.email }}</span>
+                          </span>
+                          <button
+                            class="btn-action danger-action"
+                            :disabled="removingAdminId === admin.userId"
+                            @click="removeMerchantAdmin(m.id, admin.userId)"
+                          >
+                            <i class="pi pi-times"></i>
+                          </button>
+                        </li>
+                      </ul>
+                      <p v-else class="muted tiny">No additional admins yet.</p>
+                    </div>
                   </div>
                 </article>
               </div>
@@ -1181,6 +1243,48 @@
       </div>
     </template>
   </div>
+
+  <!-- Add Merchant Admin Modal -->
+  <Modal v-if="showAddAdminModal" @close="closeAddAdminModal">
+    <h2>Add Admin</h2>
+    <p class="muted" style="margin-bottom: 1rem;">
+      Search for an existing user by name or email to grant them admin access to this restaurant.
+    </p>
+
+    <div class="form-group" style="display:flex; gap:0.5rem; align-items:center;">
+      <input
+        type="text"
+        v-model="addAdminSearch"
+        placeholder="Name or email…"
+        @keyup.enter="searchAdminUsers"
+        style="flex:1;"
+      />
+      <button class="btn primary" :disabled="addAdminSearchLoading || addAdminSearch.length < 2" @click="searchAdminUsers">
+        Search
+      </button>
+    </div>
+
+    <div v-if="addAdminSearchLoading" class="muted tiny" style="margin-top:0.5rem;">Searching…</div>
+
+    <ul v-if="addAdminSearchResults.length" class="admin-search-results">
+      <li v-for="u in addAdminSearchResults" :key="u.id" class="admin-search-row">
+        <span class="admin-info">
+          <span class="admin-name">{{ u.name }}</span>
+          <span class="admin-email muted tiny">{{ u.email }}</span>
+        </span>
+        <button class="btn primary" style="padding: 0.25rem 0.75rem; font-size:0.85rem;" @click="addMerchantAdmin(u.id)">
+          Add
+        </button>
+      </li>
+    </ul>
+
+    <p v-if="addAdminSuccess" class="muted tiny" style="margin-top:0.75rem; color: var(--color-success);">{{ addAdminSuccess }}</p>
+    <p v-if="addAdminError" class="muted tiny error-text" style="margin-top:0.75rem;">{{ addAdminError }}</p>
+
+    <div style="margin-top:1.5rem; display:flex; justify-content:flex-end;">
+      <button class="btn secondary" @click="closeAddAdminModal">Done</button>
+    </div>
+  </Modal>
 </template>
 
 <script>
@@ -1188,9 +1292,12 @@ import { mapGetters } from "vuex";
 import { getAccessToken, signOut, signIn } from "@/services/authService";
 import { createBillingPortalSession } from "@/services/subscriptionService";
 import { getMyRsvps, cancelRsvp } from "@/services/eventService";
+import Modal from "@/components/Common/Modal.vue";
 
 export default {
   name: "UserProfile",
+
+  components: { Modal },
 
   data() {
     return {
@@ -1247,6 +1354,18 @@ export default {
       },
       merchantOverviewLoading: false,
       merchantOverviewError: null,
+
+      // merchant admins management
+      merchantAdmins: {},       // { [merchantId]: adminsList }
+      merchantAdminsLoading: {}, // { [merchantId]: bool }
+      showAddAdminModal: false,
+      addAdminMerchantId: null,
+      addAdminSearch: '',
+      addAdminSearchResults: [],
+      addAdminSearchLoading: false,
+      addAdminError: null,
+      addAdminSuccess: null,
+      removingAdminId: null,   // userId being removed
     };
   },
 
@@ -1402,6 +1521,11 @@ export default {
         }
         if (this.role === 'merchant') {
           this.loadMerchantOverview();
+        }
+
+        // Load admin lists for all accessible merchants
+        for (const m of this.merchants) {
+          this.loadMerchantAdmins(m.id);
         }
       } catch (err) {
         console.error("Error fetching /api/v1/users/me", err);
@@ -2216,6 +2340,101 @@ export default {
       }
     },
 
+    // ── Merchant admins ──────────────────────────────────────────────
+    async loadMerchantAdmins(merchantId) {
+      this.merchantAdminsLoading = { ...this.merchantAdminsLoading, [merchantId]: true };
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(`/api/v1/merchants/${merchantId}/admins`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          this.merchantAdmins = { ...this.merchantAdmins, [merchantId]: data.admins || [] };
+        }
+      } catch (err) {
+        console.error('Error loading merchant admins', err);
+      } finally {
+        this.merchantAdminsLoading = { ...this.merchantAdminsLoading, [merchantId]: false };
+      }
+    },
+
+    openAddAdminModal(merchantId) {
+      this.addAdminMerchantId = merchantId;
+      this.addAdminSearch = '';
+      this.addAdminSearchResults = [];
+      this.addAdminError = null;
+      this.addAdminSuccess = null;
+      this.showAddAdminModal = true;
+    },
+
+    closeAddAdminModal() {
+      this.showAddAdminModal = false;
+      this.addAdminMerchantId = null;
+    },
+
+    async searchAdminUsers() {
+      this.addAdminSearchLoading = true;
+      this.addAdminSearchResults = [];
+      try {
+        const token = await getAccessToken();
+        const params = new URLSearchParams({ q: this.addAdminSearch });
+        const res = await fetch(`/api/v1/merchants/${this.addAdminMerchantId}/admins/search?${params}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          this.addAdminSearchResults = data.users || [];
+        }
+      } catch (err) {
+        console.error('Error searching users', err);
+      } finally {
+        this.addAdminSearchLoading = false;
+      }
+    },
+
+    async addMerchantAdmin(userId) {
+      this.addAdminError = null;
+      this.addAdminSuccess = null;
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(`/api/v1/merchants/${this.addAdminMerchantId}/admins`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId }),
+        });
+        if (res.ok) {
+          this.addAdminSuccess = 'Admin added successfully.';
+          await this.loadMerchantAdmins(this.addAdminMerchantId);
+          this.addAdminSearchResults = [];
+          this.addAdminSearch = '';
+        } else {
+          const data = await res.json().catch(() => ({}));
+          this.addAdminError = data.error || 'Failed to add admin.';
+        }
+      } catch (err) {
+        this.addAdminError = 'Unexpected error.';
+      }
+    },
+
+    async removeMerchantAdmin(merchantId, userId) {
+      this.removingAdminId = userId;
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(`/api/v1/merchants/${merchantId}/admins/${userId}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          await this.loadMerchantAdmins(merchantId);
+        }
+      } catch (err) {
+        console.error('Error removing merchant admin', err);
+      } finally {
+        this.removingAdminId = null;
+      }
+    },
+
   },
 };
 </script>
@@ -2939,5 +3158,131 @@ export default {
 
 .purchase-actions {
   margin-top: var(--spacing-xs, 0.25rem);
+}
+
+/* Merchant admin access badge */
+.access-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: var(--font-size-xs, 0.75rem);
+  font-weight: var(--font-weight-semibold, 600);
+  line-height: 1.5;
+}
+
+.admin-access-badge {
+  background: var(--color-primary-light, #fdeee9);
+  color: var(--color-primary, #f2542d);
+  border: 1px solid var(--color-primary, #f2542d);
+}
+
+/* Merchant admins management section */
+.merchant-admins-section {
+  margin-top: var(--spacing-md, 1rem);
+  padding-top: var(--spacing-md, 1rem);
+  border-top: 1px solid var(--surface-2, #eee);
+}
+
+.merchant-admins-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacing-sm, 0.5rem);
+}
+
+.admin-member-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs, 0.25rem);
+}
+
+.admin-member-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm, 0.5rem);
+  padding: var(--spacing-xs, 0.25rem) 0;
+}
+
+.admin-initials {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--surface-2, #eee);
+  color: var(--color-text-secondary, #666);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-sm, 0.875rem);
+  font-weight: var(--font-weight-semibold, 600);
+  flex-shrink: 0;
+}
+
+.admin-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.admin-name {
+  font-size: var(--font-size-sm, 0.875rem);
+  font-weight: var(--font-weight-medium, 500);
+}
+
+.admin-email {
+  font-size: var(--font-size-xs, 0.75rem);
+  color: var(--color-text-secondary, #666);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.danger-action {
+  color: var(--color-error, #d93025);
+  opacity: 0.7;
+  padding: 0.2rem 0.4rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: var(--radius-sm, 4px);
+  transition: opacity 0.15s;
+}
+
+.danger-action:hover:not(:disabled) {
+  opacity: 1;
+  background: var(--color-error-light, #fdecea);
+}
+
+.danger-action:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Add admin search results */
+.admin-search-results {
+  list-style: none;
+  padding: 0;
+  margin: var(--spacing-sm, 0.5rem) 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs, 0.25rem);
+  max-height: 14rem;
+  overflow-y: auto;
+  border: 1px solid var(--surface-2, #eee);
+  border-radius: var(--radius-md, 8px);
+}
+
+.admin-search-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm, 0.5rem);
+  padding: var(--spacing-sm, 0.5rem) var(--spacing-md, 1rem);
+}
+
+.admin-search-row:not(:last-child) {
+  border-bottom: 1px solid var(--surface-2, #eee);
 }
 </style>

@@ -7,9 +7,9 @@ import {
 } from '@aws-sdk/client-cognito-identity-provider';
 import jwt from 'jsonwebtoken';
 import jwksRsa from 'jwks-rsa';
-import { eq } from 'drizzle-orm';
+import { eq, and, isNull } from 'drizzle-orm';
 import { db } from '../db.js';
-import { user, merchant } from '../schema.js';
+import { user, merchant, merchantMembership } from '../schema.js';
 import auth from '../middleware/auth.js';
 
 const router = express.Router();
@@ -315,19 +315,46 @@ router.get('/me', auth(), async (req, res, next) => {
       role: dbUser.role, // 'customer' | 'merchant' | 'foodie_group_admin' | etc.
     };
 
-    // 3) Always attach owned merchants (merchant capability is derived from ownership, not role)
-    const merchantRows = await db
+    // 3) Attach owned merchants and admin-accessible merchants
+    const ownedRows = await db
       .select()
       .from(merchant)
       .where(eq(merchant.ownerId, dbUser.id));
 
-    payload.merchants = merchantRows.map((m) => ({
+    const memberRows = await db
+      .select({
+        id: merchant.id,
+        name: merchant.name,
+        logoUrl: merchant.logoUrl,
+        ownerId: merchant.ownerId,
+        createdAt: merchant.createdAt,
+        updatedAt: merchant.updatedAt,
+        deletedAt: merchant.deletedAt,
+      })
+      .from(merchantMembership)
+      .innerJoin(merchant, eq(merchant.id, merchantMembership.merchantId))
+      .where(
+        and(
+          eq(merchantMembership.userId, dbUser.id),
+          isNull(merchantMembership.deletedAt),
+          isNull(merchant.deletedAt),
+        )
+      );
+
+    const ownedIds = new Set(ownedRows.map((m) => m.id));
+
+    const shapeRow = (m, access) => ({
       id: m.id,
       name: m.name,
       logo_url: m.logoUrl,
-      foodie_group_id: m.foodieGroupId,
-      website_url: m.websiteUrl,
-    }));
+      website_url: m.websiteUrl || null,
+      access,
+    });
+
+    payload.merchants = [
+      ...ownedRows.map((m) => shapeRow(m, 'owner')),
+      ...memberRows.filter((m) => !ownedIds.has(m.id)).map((m) => shapeRow(m, 'admin')),
+    ];
 
     return res.json(payload);
   } catch (err) {

@@ -525,6 +525,32 @@ export const eventDispute = pgTable("event_dispute", {
     unique("event_dispute_stripe_dispute_id_unique").on(table.stripeDisputeId),
 ]);
 
+export const merchantMembership = pgTable("merchant_membership", {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    merchantId: uuid("merchant_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    addedByUserId: uuid("added_by_user_id"),
+    createdAt: timestamp("created_at", { mode: 'string' }).defaultNow().notNull(),
+    deletedAt: timestamp("deleted_at", { mode: 'string' }),
+}, (table) => [
+    foreignKey({
+        columns: [table.merchantId],
+        foreignColumns: [merchant.id],
+        name: "merchant_membership_merchant_id_fk"
+    }).onDelete("cascade"),
+    foreignKey({
+        columns: [table.userId],
+        foreignColumns: [user.id],
+        name: "merchant_membership_user_id_fk"
+    }).onDelete("cascade"),
+    foreignKey({
+        columns: [table.addedByUserId],
+        foreignColumns: [user.id],
+        name: "merchant_membership_added_by_fk"
+    }),
+    unique("merchant_membership_user_merchant_unique").on(table.merchantId, table.userId),
+]);
+
 // Admin audit log for tracking super admin "god mode" actions
 export const adminAuditLog = pgTable("admin_audit_log", {
     id: uuid().defaultRandom().primaryKey().notNull(),

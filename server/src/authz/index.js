@@ -2,6 +2,7 @@ import { db } from '../db.js';
 import * as schema from '../schema.js';
 import { eq, and, or, isNull, sql } from 'drizzle-orm';
 
+
 /**
  * resolveLocalUser:
  * Middleware that fetches the DB user by Cognito sub and attaches it to req.dbUser.
@@ -94,7 +95,8 @@ export const requireAdmin = requireSuperAdmin;
 
 /**
  * canManageMerchant:
- * Returns true if the user is a super admin OR the owner of the merchant.
+ * Returns true if the user is a super admin, the owner of the merchant,
+ * OR has an active merchant_membership row for this merchant.
  */
 export async function canManageMerchant(dbUser, merchantId) {
   if (!dbUser || !merchantId) return false;
@@ -106,25 +108,39 @@ export async function canManageMerchant(dbUser, merchantId) {
     .where(eq(schema.merchant.id, merchantId))
     .limit(1);
 
-  return merchant?.ownerId === dbUser.id;
+  if (merchant?.ownerId === dbUser.id) return true;
+
+  const [member] = await db
+    .select({ id: schema.merchantMembership.id })
+    .from(schema.merchantMembership)
+    .where(
+      and(
+        eq(schema.merchantMembership.merchantId, merchantId),
+        eq(schema.merchantMembership.userId, dbUser.id),
+        isNull(schema.merchantMembership.deletedAt),
+      )
+    )
+    .limit(1);
+
+  return !!member;
 }
 
 /**
  * canManageCoupon:
- * Returns true if the user is a super admin OR the owner of the coupon's merchant.
+ * Returns true if the user can manage the coupon's merchant.
  */
 export async function canManageCoupon(dbUser, couponId) {
   if (!dbUser || !couponId) return false;
   if (dbUser.role === 'super_admin') return true;
 
   const [couponWithMerchant] = await db
-    .select({ merchantOwnerId: schema.merchant.ownerId })
+    .select({ merchantId: schema.coupon.merchantId })
     .from(schema.coupon)
-    .innerJoin(schema.merchant, eq(schema.coupon.merchantId, schema.merchant.id))
     .where(eq(schema.coupon.id, couponId))
     .limit(1);
 
-  return couponWithMerchant?.merchantOwnerId === dbUser.id;
+  if (!couponWithMerchant?.merchantId) return false;
+  return canManageMerchant(dbUser, couponWithMerchant.merchantId);
 }
 
 /**
@@ -151,7 +167,7 @@ export async function canManageGroup(dbUser, groupId) {
 
 /**
  * canManageEvent:
- * Returns true if the user is a super admin OR the owner of the event's merchant.
+ * Returns true if the user can manage the event's merchant.
  * Use for write operations (attendee management, RSVP updates, etc.).
  */
 export async function canManageEvent(dbUser, eventId) {
@@ -159,14 +175,14 @@ export async function canManageEvent(dbUser, eventId) {
   if (dbUser.role === 'super_admin') return true;
 
   try {
-    const [eventWithMerchant] = await db
-      .select({ merchantOwnerId: schema.merchant.ownerId })
+    const [eventRow] = await db
+      .select({ merchantId: schema.event.merchantId })
       .from(schema.event)
-      .innerJoin(schema.merchant, eq(schema.event.merchantId, schema.merchant.id))
       .where(eq(schema.event.id, eventId))
       .limit(1);
 
-    return eventWithMerchant?.merchantOwnerId === dbUser.id;
+    if (!eventRow?.merchantId) return false;
+    return canManageMerchant(dbUser, eventRow.merchantId);
   } catch {
     return false;
   }
@@ -174,7 +190,7 @@ export async function canManageEvent(dbUser, eventId) {
 
 /**
  * canViewEventStats:
- * Returns true if the user is a super admin, the owner of the event's merchant,
+ * Returns true if the user is a super admin, can manage the event's merchant,
  * OR a foodie group admin for the group that hosts this event.
  * Use for read-only aggregate stats (no PII exposed).
  */
@@ -184,14 +200,17 @@ export async function canViewEventStats(dbUser, eventId) {
 
   try {
     const [eventRow] = await db
-      .select({ merchantOwnerId: schema.merchant.ownerId, groupId: schema.event.groupId })
+      .select({ merchantId: schema.event.merchantId, groupId: schema.event.groupId })
       .from(schema.event)
-      .innerJoin(schema.merchant, eq(schema.event.merchantId, schema.merchant.id))
       .where(eq(schema.event.id, eventId))
       .limit(1);
 
     if (!eventRow) return false;
-    if (eventRow.merchantOwnerId === dbUser.id) return true;
+
+    if (eventRow.merchantId) {
+      const canManage = await canManageMerchant(dbUser, eventRow.merchantId);
+      if (canManage) return true;
+    }
 
     if (eventRow.groupId) {
       return canManageGroup(dbUser, eventRow.groupId);
@@ -204,15 +223,15 @@ export async function canViewEventStats(dbUser, eventId) {
 
 /**
  * canManageEventSubmission:
- * Returns true if super admin OR merchant owner of the submission OR group admin.
+ * Returns true if super admin OR can manage submission's merchant OR group admin.
  */
 export async function canManageEventSubmission(dbUser, submission) {
   if (!dbUser || !submission) return false;
   if (dbUser.role === 'super_admin') return true;
 
   if (submission.merchantId) {
-    const isOwner = await canManageMerchant(dbUser, submission.merchantId);
-    if (isOwner) return true;
+    const canManage = await canManageMerchant(dbUser, submission.merchantId);
+    if (canManage) return true;
   }
 
   if (submission.groupId) {

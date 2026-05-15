@@ -4,7 +4,7 @@
 import express from 'express';
 import { db } from '../db.js';
 import * as schema from '../schema.js';
-import { eq, and, isNull, count, sql, desc, ilike, or, isNotNull, gte, lte } from 'drizzle-orm';
+import { eq, and, isNull, count, sql, desc, ilike, or, isNotNull, gte, lte, inArray } from 'drizzle-orm';
 import { getPlatformRedemptionOverview, getPlatformSubscriptionOverview } from '../redemptionAnalytics.js';
 
 const router = express.Router();
@@ -604,6 +604,12 @@ router.post('/users/:id/anonymize', async (req, res, next) => {
       .set({ deletedAt: now })
       .where(eq(schema.foodieGroupMembership.userId, id));
 
+    // 2b) Soft-delete merchant admin memberships
+    await db
+      .update(schema.merchantMembership)
+      .set({ deletedAt: now })
+      .where(eq(schema.merchantMembership.userId, id));
+
     // 3) Soft-delete coupon submissions (keep purchase/payment history for accounting)
     await db
       .update(schema.couponSubmission)
@@ -668,7 +674,7 @@ router.get('/merchants', async (req, res, next) => {
       }
     }
 
-    const merchants = await db
+    const merchantRows = await db
       .select({
         id: schema.merchant.id,
         name: schema.merchant.name,
@@ -685,6 +691,31 @@ router.get('/merchants', async (req, res, next) => {
       .orderBy(desc(schema.merchant.createdAt))
       .limit(Number(limit))
       .offset(Number(offset));
+
+    // Fetch admin counts for returned merchants
+    const merchantIds = merchantRows.map((m) => m.id);
+    let adminCountMap = {};
+    if (merchantIds.length > 0) {
+      const countRows = await db
+        .select({
+          merchantId: schema.merchantMembership.merchantId,
+          adminsCount: count(),
+        })
+        .from(schema.merchantMembership)
+        .where(
+          and(
+            inArray(schema.merchantMembership.merchantId, merchantIds),
+            isNull(schema.merchantMembership.deletedAt),
+          )
+        )
+        .groupBy(schema.merchantMembership.merchantId);
+      adminCountMap = Object.fromEntries(countRows.map((r) => [r.merchantId, r.adminsCount]));
+    }
+
+    const merchants = merchantRows.map((m) => ({
+      ...m,
+      adminsCount: adminCountMap[m.id] ?? 0,
+    }));
 
     res.json({ merchants, limit: Number(limit), offset: Number(offset) });
   } catch (err) {
@@ -798,6 +829,138 @@ router.patch('/merchants/:id', async (req, res, next) => {
     res.json(updated);
   } catch (err) {
     console.error('📦  error in PATCH /admin/merchants/:id', err);
+    next(err);
+  }
+});
+
+/**
+ * GET /api/v1/admin/merchants/:id/admins
+ * List active admin members for a merchant (super admin).
+ */
+router.get('/merchants/:id/admins', async (req, res, next) => {
+  try {
+    const admins = await db
+      .select({
+        membershipId: schema.merchantMembership.id,
+        userId: schema.user.id,
+        name: schema.user.name,
+        email: schema.user.email,
+        addedByUserId: schema.merchantMembership.addedByUserId,
+        createdAt: schema.merchantMembership.createdAt,
+      })
+      .from(schema.merchantMembership)
+      .innerJoin(schema.user, eq(schema.user.id, schema.merchantMembership.userId))
+      .where(
+        and(
+          eq(schema.merchantMembership.merchantId, req.params.id),
+          isNull(schema.merchantMembership.deletedAt),
+          isNull(schema.user.deletedAt),
+        )
+      );
+
+    return res.json({ admins });
+  } catch (err) {
+    console.error('📦  error in GET /admin/merchants/:id/admins', err);
+    next(err);
+  }
+});
+
+/**
+ * POST /api/v1/admin/merchants/:id/admins
+ * Add a user as an admin of a merchant (super admin).
+ * Body: { userId }
+ */
+router.post('/merchants/:id/admins', async (req, res, next) => {
+  try {
+    const merchantId = req.params.id;
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ error: 'userId is required' });
+
+    const [targetUser] = await db
+      .select({ id: schema.user.id, deletedAt: schema.user.deletedAt })
+      .from(schema.user)
+      .where(eq(schema.user.id, userId))
+      .limit(1);
+
+    if (!targetUser || targetUser.deletedAt) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const [m] = await db
+      .select({ ownerId: schema.merchant.ownerId })
+      .from(schema.merchant)
+      .where(eq(schema.merchant.id, merchantId))
+      .limit(1);
+
+    if (!m) return res.status(404).json({ error: 'Merchant not found' });
+    if (m.ownerId === userId) {
+      return res.status(400).json({ error: 'User is already the merchant owner' });
+    }
+
+    const [existing] = await db
+      .select({ id: schema.merchantMembership.id })
+      .from(schema.merchantMembership)
+      .where(
+        and(
+          eq(schema.merchantMembership.merchantId, merchantId),
+          eq(schema.merchantMembership.userId, userId),
+        )
+      )
+      .limit(1);
+
+    let membership;
+    if (existing) {
+      [membership] = await db
+        .update(schema.merchantMembership)
+        .set({ deletedAt: null, addedByUserId: req.dbUser.id })
+        .where(eq(schema.merchantMembership.id, existing.id))
+        .returning();
+    } else {
+      [membership] = await db
+        .insert(schema.merchantMembership)
+        .values({ merchantId, userId, addedByUserId: req.dbUser.id })
+        .returning();
+    }
+
+    await logAdminAction(req.dbUser.id, 'merchant_admin_add', 'merchant', merchantId, { userId });
+    return res.status(201).json({ membership });
+  } catch (err) {
+    console.error('📦  error in POST /admin/merchants/:id/admins', err);
+    next(err);
+  }
+});
+
+/**
+ * DELETE /api/v1/admin/merchants/:id/admins/:userId
+ * Remove a merchant admin (super admin).
+ */
+router.delete('/merchants/:id/admins/:userId', async (req, res, next) => {
+  try {
+    const { id: merchantId, userId: targetUserId } = req.params;
+
+    const [row] = await db
+      .select({ id: schema.merchantMembership.id })
+      .from(schema.merchantMembership)
+      .where(
+        and(
+          eq(schema.merchantMembership.merchantId, merchantId),
+          eq(schema.merchantMembership.userId, targetUserId),
+          isNull(schema.merchantMembership.deletedAt),
+        )
+      )
+      .limit(1);
+
+    if (!row) return res.status(404).json({ error: 'Admin membership not found' });
+
+    await db
+      .update(schema.merchantMembership)
+      .set({ deletedAt: new Date().toISOString() })
+      .where(eq(schema.merchantMembership.id, row.id));
+
+    await logAdminAction(req.dbUser.id, 'merchant_admin_remove', 'merchant', merchantId, { userId: targetUserId });
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('📦  error in DELETE /admin/merchants/:id/admins/:userId', err);
     next(err);
   }
 });

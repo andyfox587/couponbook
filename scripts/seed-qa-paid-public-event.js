@@ -9,13 +9,19 @@
  * Merchant/group are selected randomly from existing coupon records so the event
  * stays associated with realistic data already present in the DB.
  *
+ * This script also ensures the merchant has a billing profile configured with:
+ * - paidEventsEnabled: true
+ * - payoutDestinationVerified: true
+ * - backupChargeMethodReady: true
+ * - paidEventTermsAcceptedAt: set
+ *
  * Usage:
  *   node scripts/seed-qa-paid-public-event.js
  *   node scripts/seed-qa-paid-public-event.js --dry-run
  */
 
 import { db } from '../server/src/db.js';
-import { coupon, event, merchant } from '../server/src/schema.js';
+import { coupon, event, merchant, merchantBillingProfile } from '../server/src/schema.js';
 import { and, eq, isNotNull, isNull } from 'drizzle-orm';
 
 const DRY = process.argv.includes('--dry-run');
@@ -74,11 +80,54 @@ async function main() {
     process.exit(1);
   }
 
+  // Ensure merchant has billing profile set up for paid events
+  const [existingProfile] = await db
+    .select()
+    .from(merchantBillingProfile)
+    .where(eq(merchantBillingProfile.merchantId, pair.merchantId))
+    .limit(1);
+
+  let billingProfileAction = 'already_ready';
+  if (!existingProfile) {
+    billingProfileAction = 'needs_creation';
+    if (!DRY) {
+      console.log('🏦 Creating merchant billing profile for paid events...');
+      await db.insert(merchantBillingProfile).values({
+        merchantId: pair.merchantId,
+        payoutDestinationDetails: { method: 'manual', label: 'QA Test Payout' },
+        payoutDestinationVerified: true,
+        stripeCustomerId: `cus_qa_${randomToken(16)}`,
+        backupPaymentMethodId: `pm_qa_${randomToken(16)}`,
+        backupPaymentMethodLast4: '4242',
+        backupChargeMethodReady: true,
+        paidEventTermsAcceptedAt: new Date().toISOString(),
+        paidEventTermsVersion: 'paid-events-v1',
+        paidEventsEnabled: true,
+        disputeRecoveryEnabled: true,
+      });
+    }
+  } else if (!existingProfile.paidEventsEnabled || !existingProfile.payoutDestinationVerified || !existingProfile.backupChargeMethodReady || !existingProfile.paidEventTermsAcceptedAt) {
+    billingProfileAction = 'needs_update';
+    if (!DRY) {
+      console.log('🏦 Updating merchant billing profile to enable paid events...');
+      await db
+        .update(merchantBillingProfile)
+        .set({
+          payoutDestinationVerified: true,
+          backupChargeMethodReady: true,
+          paidEventTermsAcceptedAt: existingProfile.paidEventTermsAcceptedAt || new Date().toISOString(),
+          paidEventTermsVersion: existingProfile.paidEventTermsVersion || 'paid-events-v1',
+          paidEventsEnabled: true,
+        })
+        .where(eq(merchantBillingProfile.merchantId, pair.merchantId));
+    }
+  }
+
   const baseName = m.name || 'Merchant';
   const name = `${baseName} - Ticketed Public QA Event`.slice(0, 255);
   const slug = `${slugify(name)}-${Date.now().toString(36)}-${randomToken(6)}`;
-  const startDatetime = isoDaysFromNow(12, 19);
-  const endDatetime = isoDaysFromNow(12, 22);
+  const startDatetime = isoDaysFromNow(30, 19);
+  const endDatetime = isoDaysFromNow(30, 22);
 
   const payload = {
     groupId: pair.groupId,
@@ -107,6 +156,7 @@ async function main() {
     merchantId: pair.merchantId,
     merchantName: m.name,
     groupId: pair.groupId,
+    billingProfileAction,
   });
   console.log('🗓️ Event payload preview:', {
     name: payload.name,
@@ -118,7 +168,7 @@ async function main() {
   });
 
   if (DRY) {
-    console.log('✅ Dry run complete. No rows written.');
+    console.log('✅ Dry run complete. No rows written (event or billing profile).');
     process.exit(0);
   }
 

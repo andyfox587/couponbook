@@ -314,6 +314,7 @@
                 <tr>
                   <th>Name</th>
                   <th>Owner</th>
+                  <th>Admins</th>
                   <th>Created</th>
                   <th>Actions</th>
                 </tr>
@@ -322,13 +323,14 @@
                 <tr v-for="m in merchants" :key="m.id">
                   <td>{{ m.name }}</td>
                   <td>{{ m.ownerName || m.ownerEmail || 'Unknown' }}</td>
+                  <td>{{ m.adminsCount || 0 }}</td>
                   <td>{{ formatDate(m.createdAt) }}</td>
                   <td class="actions-cell">
                     <button class="btn-action" @click="editMerchant(m)">Edit</button>
                   </td>
                 </tr>
                 <tr v-if="merchants.length === 0">
-                  <td colspan="4" class="empty-state">No merchants found</td>
+                  <td colspan="5" class="empty-state">No merchants found</td>
                 </tr>
               </tbody>
             </table>
@@ -1107,6 +1109,48 @@
           </option>
         </select>
       </div>
+      <!-- Admins section -->
+      <div class="form-group" style="margin-top: var(--spacing-lg);">
+        <label style="font-weight: var(--font-weight-semibold);">Admins</label>
+
+        <div v-if="merchantAdminsLoading" class="muted" style="font-size:0.875rem; margin-top:0.5rem;">Loading…</div>
+        <ul v-else class="admin-list" style="margin-top:0.5rem;">
+          <li v-for="admin in merchantAdmins" :key="admin.userId" class="admin-item">
+            <span>{{ admin.name }} ({{ admin.email }})</span>
+            <button
+              class="btn-action danger"
+              :disabled="removingMerchantAdminId === admin.userId"
+              @click="removeMerchantAdminAdmin(admin.userId)"
+            >Remove</button>
+          </li>
+          <li v-if="merchantAdmins.length === 0" class="muted" style="font-size:0.875rem;">No additional admins.</li>
+        </ul>
+
+        <div style="margin-top:0.75rem;">
+          <p style="font-size:0.875rem; margin-bottom:0.35rem;">Add Admin:</p>
+          <div style="display:flex; gap:0.5rem; align-items:center;">
+            <input
+              type="text"
+              v-model="merchantAdminSearch"
+              placeholder="Search by name or email…"
+              style="flex:1;"
+              @input="searchMerchantAdminUsers"
+            />
+          </div>
+          <select
+            v-if="merchantAdminSearchResults.length"
+            style="width:100%; margin-top:0.35rem;"
+            @change="(e) => { addMerchantAdminAdmin(e.target.value); e.target.value = ''; }"
+          >
+            <option value="">-- Select user to add --</option>
+            <option v-for="u in merchantAdminSearchResults" :key="u.id" :value="u.id">
+              {{ u.name }} ({{ u.email }})
+            </option>
+          </select>
+          <p v-if="merchantAdminError" class="muted" style="color:var(--color-error); font-size:0.875rem; margin-top:0.35rem;">{{ merchantAdminError }}</p>
+        </div>
+      </div>
+
       <div class="modal-actions">
         <button class="btn secondary" @click="showEditMerchantModal = false">Cancel</button>
         <button class="btn primary" @click="saveMerchant">Save Changes</button>
@@ -1450,6 +1494,15 @@ export default {
       ownerUserOptions: [],
       editOwnerSearch: "",
       editOwnerUserOptions: [],
+
+      // Merchant admins (within edit modal)
+      merchantAdmins: [],
+      merchantAdminsLoading: false,
+      merchantAdminSearch: "",
+      merchantAdminSearchResults: [],
+      merchantAdminSearchLoading: false,
+      merchantAdminError: null,
+      removingMerchantAdminId: null,
 
       // Groups
       groups: [],
@@ -2067,7 +2120,95 @@ export default {
       this.editingMerchant = { ...merchant, newOwnerId: "" };
       this.editOwnerSearch = "";
       this.editOwnerUserOptions = [];
+      this.merchantAdmins = [];
+      this.merchantAdminSearch = "";
+      this.merchantAdminSearchResults = [];
+      this.merchantAdminError = null;
       this.showEditMerchantModal = true;
+      this.loadMerchantAdminsAdmin(merchant.id);
+    },
+
+    async loadMerchantAdminsAdmin(merchantId) {
+      this.merchantAdminsLoading = true;
+      try {
+        const headers = await this.getAuthHeaders();
+        const res = await fetch(`${API_BASE}/admin/merchants/${merchantId}/admins`, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          this.merchantAdmins = data.admins || [];
+        }
+      } catch (err) {
+        console.error("loadMerchantAdminsAdmin error:", err);
+      } finally {
+        this.merchantAdminsLoading = false;
+      }
+    },
+
+    async searchMerchantAdminUsers() {
+      const q = this.merchantAdminSearch.trim();
+      if (q.length < 2) {
+        this.merchantAdminSearchResults = [];
+        return;
+      }
+      this.merchantAdminSearchLoading = true;
+      try {
+        const headers = await this.getAuthHeaders();
+        const res = await fetch(`${API_BASE}/admin/users?query=${encodeURIComponent(q)}&limit=10`, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          this.merchantAdminSearchResults = (data.users || []).filter((u) => !u.deletedAt);
+        }
+      } catch (err) {
+        console.error("searchMerchantAdminUsers error:", err);
+      } finally {
+        this.merchantAdminSearchLoading = false;
+      }
+    },
+
+    async addMerchantAdminAdmin(userId) {
+      this.merchantAdminError = null;
+      try {
+        const headers = await this.getAuthHeaders();
+        headers["Content-Type"] = "application/json";
+        const res = await fetch(`${API_BASE}/admin/merchants/${this.editingMerchant.id}/admins`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ userId }),
+        });
+        if (res.ok) {
+          await this.loadMerchantAdminsAdmin(this.editingMerchant.id);
+          this.merchantAdminSearch = "";
+          this.merchantAdminSearchResults = [];
+          // Update count in merchant list
+          const m = this.merchants.find((m) => m.id === this.editingMerchant.id);
+          if (m) m.adminsCount = (m.adminsCount || 0) + 1;
+        } else {
+          const data = await res.json().catch(() => ({}));
+          this.merchantAdminError = data.error || "Failed to add admin.";
+        }
+      } catch (err) {
+        this.merchantAdminError = "Unexpected error.";
+      }
+    },
+
+    async removeMerchantAdminAdmin(userId) {
+      this.removingMerchantAdminId = userId;
+      try {
+        const headers = await this.getAuthHeaders();
+        const res = await fetch(`${API_BASE}/admin/merchants/${this.editingMerchant.id}/admins/${userId}`, {
+          method: "DELETE",
+          headers,
+        });
+        if (res.ok) {
+          await this.loadMerchantAdminsAdmin(this.editingMerchant.id);
+          const m = this.merchants.find((m) => m.id === this.editingMerchant.id);
+          if (m && m.adminsCount > 0) m.adminsCount -= 1;
+        }
+      } catch (err) {
+        console.error("removeMerchantAdminAdmin error:", err);
+      } finally {
+        this.removingMerchantAdminId = null;
+      }
     },
 
     async searchEditOwnerUsers() {

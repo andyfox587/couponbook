@@ -1,8 +1,9 @@
 /**
- * Seed 3 dummy published events for manual QA (Chapel Hill–area foodie group).
+ * Seed 2 dummy published events for manual RSVP QA (Chapel Hill–area foodie group).
  *
- * Looks up the foodie group (name/slug matching "chapel" + "hill"), picks up to 3
+ * Looks up the foodie group (name/slug matching "chapel" + "hill"), picks up to 2
  * merchants that already have coupons in that group, and inserts one event per merchant.
+ * Start times are ~1 month out from when you run the script.
  *
  * Usage (from repo root, with DATABASE_URL or discrete DB_* envs set):
  *   node scripts/seed-qa-events.js
@@ -36,34 +37,25 @@ function isoDaysFromNow(days, hourLocal = 18) {
 
 const DRY = process.argv.includes('--dry-run');
 
+/** ~30 days out ≈ one month; stagger slightly so both listings are clearly distinct. */
+const RSVP_QA_DAYS_AHEAD = [30, 33];
+
 const EVENT_BLUEPRINTS = [
   {
     titleSuffix: '— Tasting Night (QA)',
     description:
       '[QA dummy event] Join us for a chef-led tasting and pairing. RSVP to hold your spot.',
-    daysFromNow: 14,
+    daysFromNow: RSVP_QA_DAYS_AHEAD[0],
     capacity: 40,
     isFree: true,
     visibility: 'public',
     location: '123 W Franklin St, Chapel Hill, NC',
   },
   {
-    titleSuffix: '— Supper Club (QA)',
-    description:
-      '[QA dummy event] A cozy members-style dinner — test members-only pricing and visibility in the app.',
-    daysFromNow: 21,
-    capacity: 24,
-    isFree: false,
-    priceCents: 4500,
-    membersOnlyPriceCents: 3500,
-    visibility: 'members_only',
-    location: 'Courtyard seating — see event staff on arrival',
-  },
-  {
     titleSuffix: '— Brunch Preview (QA)',
     description:
       '[QA dummy event] Weekend brunch preview. Good for testing capacity bar and public RSVP.',
-    daysFromNow: 10,
+    daysFromNow: RSVP_QA_DAYS_AHEAD[1],
     capacity: 60,
     isFree: true,
     visibility: 'public',
@@ -122,7 +114,7 @@ async function merchantIdsForGroup(groupId) {
     if (!r.merchantId || seen.has(r.merchantId)) continue;
     seen.add(r.merchantId);
     ids.push(r.merchantId);
-    if (ids.length >= 3) break;
+    if (ids.length >= 2) break;
   }
   return ids;
 }
@@ -146,17 +138,17 @@ async function main() {
   console.log('📍 Foodie group:', { id: group.id, slug: group.slug, name: group.name });
 
   let merchantIds = await merchantIdsForGroup(group.id);
-  if (merchantIds.length < 3) {
+  if (merchantIds.length < 2) {
     console.warn(
       `⚠️  Only ${merchantIds.length} merchant(s) with coupons in this group; filling from active merchants.`,
     );
-    const extra = await fallbackMerchants(3);
-    const merged = [...new Set([...merchantIds, ...extra])].slice(0, 3);
+    const extra = await fallbackMerchants(2);
+    const merged = [...new Set([...merchantIds, ...extra])].slice(0, 2);
     merchantIds = merged;
   }
 
-  if (merchantIds.length < 3) {
-    console.error('❌ Need at least 3 merchants in the database (or coupons in this group).');
+  if (merchantIds.length < 2) {
+    console.error('❌ Need at least 2 merchants in the database (or coupons in this group).');
     process.exit(1);
   }
 
@@ -169,7 +161,7 @@ async function main() {
 
   const created = [];
 
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 2; i++) {
     const mid = merchantIds[i];
     const m = byId[mid];
     const bp = EVENT_BLUEPRINTS[i];

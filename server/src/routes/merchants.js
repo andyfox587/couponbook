@@ -1,8 +1,8 @@
 // server/src/routes/merchants.js
 import express from 'express';
 import { db } from '../db.js';
-import { merchant, user, merchantBillingProfile } from '../schema.js';
-import { eq } from 'drizzle-orm';
+import { merchant, user, merchantBillingProfile, merchantMembership } from '../schema.js';
+import { eq, and, isNull, ilike, or } from 'drizzle-orm';
 
 // 🔐 Auth middleware (default export is verifyJwt → auth())
 import auth from '../middleware/auth.js';
@@ -58,7 +58,33 @@ router.get('/mine', auth(), resolveLocalUser, async (req, res, next) => {
       .from(merchant)
       .where(eq(merchant.ownerId, dbUser.id));
 
-    return res.json(owned);
+    const memberRows = await db
+      .select({
+        id: merchant.id,
+        name: merchant.name,
+        logoUrl: merchant.logoUrl,
+        ownerId: merchant.ownerId,
+        createdAt: merchant.createdAt,
+        updatedAt: merchant.updatedAt,
+        deletedAt: merchant.deletedAt,
+      })
+      .from(merchantMembership)
+      .innerJoin(merchant, eq(merchant.id, merchantMembership.merchantId))
+      .where(
+        and(
+          eq(merchantMembership.userId, dbUser.id),
+          isNull(merchantMembership.deletedAt),
+          isNull(merchant.deletedAt),
+        )
+      );
+
+    const ownedIds = new Set(owned.map((m) => m.id));
+    const combined = [
+      ...owned,
+      ...memberRows.filter((m) => !ownedIds.has(m.id)),
+    ];
+
+    return res.json(combined);
   } catch (err) {
     console.error('📦  error in GET /merchants/mine', err);
     next(err);
@@ -354,5 +380,186 @@ router.post(
     }
   },
 );
+
+// ────────────────────────────────────────────────────────────────
+// MERCHANT ADMIN MANAGEMENT
+// ────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/v1/merchants/:id/admins/search?q=
+ * Search users by name or email to populate the add-admin picker.
+ * Accessible by anyone who can manage this merchant.
+ */
+router.get('/:id/admins/search', auth(), resolveLocalUser, async (req, res, next) => {
+  try {
+    const allowed = await canManageMerchant(req.dbUser, req.params.id);
+    if (!allowed) return res.status(403).json({ error: 'Forbidden' });
+
+    const q = (req.query.q || '').trim();
+    if (!q || q.length < 2) return res.json({ users: [] });
+
+    const term = `%${q}%`;
+    const users = await db
+      .select({ id: user.id, name: user.name, email: user.email })
+      .from(user)
+      .where(
+        and(
+          isNull(user.deletedAt),
+          or(ilike(user.name, term), ilike(user.email, term)),
+        )
+      )
+      .limit(10);
+
+    return res.json({ users });
+  } catch (err) {
+    console.error('📦  error in GET /merchants/:id/admins/search', err);
+    next(err);
+  }
+});
+
+/**
+ * GET /api/v1/merchants/:id/admins
+ * List active admin members for this merchant.
+ */
+router.get('/:id/admins', auth(), resolveLocalUser, async (req, res, next) => {
+  try {
+    const allowed = await canManageMerchant(req.dbUser, req.params.id);
+    if (!allowed) return res.status(403).json({ error: 'Forbidden' });
+
+    const admins = await db
+      .select({
+        membershipId: merchantMembership.id,
+        userId: user.id,
+        name: user.name,
+        email: user.email,
+        addedByUserId: merchantMembership.addedByUserId,
+        createdAt: merchantMembership.createdAt,
+      })
+      .from(merchantMembership)
+      .innerJoin(user, eq(user.id, merchantMembership.userId))
+      .where(
+        and(
+          eq(merchantMembership.merchantId, req.params.id),
+          isNull(merchantMembership.deletedAt),
+          isNull(user.deletedAt),
+        )
+      );
+
+    return res.json({ admins });
+  } catch (err) {
+    console.error('📦  error in GET /merchants/:id/admins', err);
+    next(err);
+  }
+});
+
+/**
+ * POST /api/v1/merchants/:id/admins
+ * Add a user as an admin of this merchant.
+ * Body: { userId } — must be an existing user.
+ */
+router.post('/:id/admins', auth(), resolveLocalUser, async (req, res, next) => {
+  try {
+    const merchantId = req.params.id;
+    const allowed = await canManageMerchant(req.dbUser, merchantId);
+    if (!allowed) return res.status(403).json({ error: 'Forbidden' });
+
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ error: 'userId is required' });
+
+    const [targetUser] = await db
+      .select({ id: user.id, deletedAt: user.deletedAt })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+
+    if (!targetUser || targetUser.deletedAt) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const [m] = await db
+      .select({ ownerId: merchant.ownerId })
+      .from(merchant)
+      .where(eq(merchant.id, merchantId))
+      .limit(1);
+
+    if (!m) return res.status(404).json({ error: 'Merchant not found' });
+    if (m.ownerId === userId) {
+      return res.status(400).json({ error: 'User is already the merchant owner' });
+    }
+
+    // Upsert: if soft-deleted row exists, reactivate it; otherwise insert
+    const [existing] = await db
+      .select({ id: merchantMembership.id })
+      .from(merchantMembership)
+      .where(
+        and(
+          eq(merchantMembership.merchantId, merchantId),
+          eq(merchantMembership.userId, userId),
+        )
+      )
+      .limit(1);
+
+    let membership;
+    if (existing) {
+      [membership] = await db
+        .update(merchantMembership)
+        .set({ deletedAt: null, addedByUserId: req.dbUser.id })
+        .where(eq(merchantMembership.id, existing.id))
+        .returning();
+    } else {
+      [membership] = await db
+        .insert(merchantMembership)
+        .values({
+          merchantId,
+          userId,
+          addedByUserId: req.dbUser.id,
+        })
+        .returning();
+    }
+
+    return res.status(201).json({ membership });
+  } catch (err) {
+    console.error('📦  error in POST /merchants/:id/admins', err);
+    next(err);
+  }
+});
+
+/**
+ * DELETE /api/v1/merchants/:id/admins/:userId
+ * Remove an admin from this merchant (soft-delete).
+ */
+router.delete('/:id/admins/:userId', auth(), resolveLocalUser, async (req, res, next) => {
+  try {
+    const merchantId = req.params.id;
+    const targetUserId = req.params.userId;
+
+    const allowed = await canManageMerchant(req.dbUser, merchantId);
+    if (!allowed) return res.status(403).json({ error: 'Forbidden' });
+
+    const [row] = await db
+      .select({ id: merchantMembership.id })
+      .from(merchantMembership)
+      .where(
+        and(
+          eq(merchantMembership.merchantId, merchantId),
+          eq(merchantMembership.userId, targetUserId),
+          isNull(merchantMembership.deletedAt),
+        )
+      )
+      .limit(1);
+
+    if (!row) return res.status(404).json({ error: 'Admin membership not found' });
+
+    await db
+      .update(merchantMembership)
+      .set({ deletedAt: new Date().toISOString() })
+      .where(eq(merchantMembership.id, row.id));
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('📦  error in DELETE /merchants/:id/admins/:userId', err);
+    next(err);
+  }
+});
 
 export default router;
