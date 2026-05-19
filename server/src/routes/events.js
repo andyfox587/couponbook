@@ -758,8 +758,8 @@ router.post('/:id/rsvp', optionalAuth(), async (req, res, next) => {
           requiresPayment: true,
           status: 'pending_payment',
           orderId: payment.order.id,
-          paymentIntentId: payment.paymentIntentId,
-          clientSecret: payment.clientSecret,
+          checkoutUrl: payment.checkoutUrl,
+          checkoutSessionId: payment.checkoutSessionId,
           amountCents: payment.amountCents,
           currency: payment.currency,
         });

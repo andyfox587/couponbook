@@ -326,6 +326,7 @@ router.get('/me', auth(), async (req, res, next) => {
         id: merchant.id,
         name: merchant.name,
         logoUrl: merchant.logoUrl,
+        websiteUrl: merchant.websiteUrl,
         ownerId: merchant.ownerId,
         createdAt: merchant.createdAt,
         updatedAt: merchant.updatedAt,

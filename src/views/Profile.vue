@@ -248,17 +248,48 @@
                       <span v-if="m.access === 'admin'" class="access-badge admin-access-badge">Admin</span>
                     </div>
                     <p class="muted tiny">
-                      Foodie Group ID: {{ m.foodie_group_id || '—' }}
+                      Merchant ID: {{ m.id }}
                     </p>
                   </div>
                 </div>
 
                 <div class="merchant-card-body">
-                  <p>
-                    <strong>Website:</strong>
-                    <span class="placeholder-text">
-                      {{ m.website_url || 'https://example.com' }}
-                    </span>
+                  <div class="website-edit-row">
+                    <label :for="`website-${m.id}`" class="website-label">Website</label>
+                    <div class="website-input-group">
+                      <i class="pi pi-globe website-input-icon" aria-hidden="true"></i>
+                      <input
+                        :id="`website-${m.id}`"
+                        type="url"
+                        class="website-input"
+                        placeholder="https://example.com"
+                        v-model="websiteDrafts[m.id]"
+                        :disabled="websiteSavingId === m.id"
+                        @keyup.enter="saveMerchantWebsite(m)"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      class="btn btn-primary btn-compact"
+                      :disabled="websiteSavingId === m.id || !isWebsiteDirty(m)"
+                      @click="saveMerchantWebsite(m)"
+                    >
+                      {{ websiteSavingId === m.id ? 'Saving…' : 'Save' }}
+                    </button>
+                  </div>
+                  <p
+                    v-if="websiteSaveError && websiteSaveErrorMerchantId === m.id"
+                    class="muted tiny error-text"
+                    style="margin-top: 0.25rem;"
+                  >
+                    {{ websiteSaveError }}
+                  </p>
+                  <p
+                    v-else-if="websiteSavedMerchantId === m.id"
+                    class="muted tiny"
+                    style="margin-top: 0.25rem;"
+                  >
+                    Website saved.
                   </p>
 
                   <!-- Logo upload controls -->
@@ -776,17 +807,48 @@
                         <span v-if="m.access === 'admin'" class="access-badge admin-access-badge">Admin</span>
                       </div>
                       <p class="muted tiny">
-                        Foodie Group ID: {{ m.foodie_group_id || '—' }}
+                        Merchant ID: {{ m.id }}
                       </p>
                     </div>
                   </div>
 
                   <div class="merchant-card-body">
-                    <p>
-                      <strong>Website:</strong>
-                      <span class="placeholder-text">
-                        {{ m.website_url || 'https://example.com' }}
-                      </span>
+                    <div class="website-edit-row">
+                      <label :for="`website-alt-${m.id}`" class="website-label">Website</label>
+                      <div class="website-input-group">
+                        <i class="pi pi-globe website-input-icon" aria-hidden="true"></i>
+                        <input
+                          :id="`website-alt-${m.id}`"
+                          type="url"
+                          class="website-input"
+                          placeholder="https://example.com"
+                          v-model="websiteDrafts[m.id]"
+                          :disabled="websiteSavingId === m.id"
+                          @keyup.enter="saveMerchantWebsite(m)"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        class="btn btn-primary btn-compact"
+                        :disabled="websiteSavingId === m.id || !isWebsiteDirty(m)"
+                        @click="saveMerchantWebsite(m)"
+                      >
+                        {{ websiteSavingId === m.id ? 'Saving…' : 'Save' }}
+                      </button>
+                    </div>
+                    <p
+                      v-if="websiteSaveError && websiteSaveErrorMerchantId === m.id"
+                      class="muted tiny error-text"
+                      style="margin-top: 0.25rem;"
+                    >
+                      {{ websiteSaveError }}
+                    </p>
+                    <p
+                      v-else-if="websiteSavedMerchantId === m.id"
+                      class="muted tiny"
+                      style="margin-top: 0.25rem;"
+                    >
+                      Website saved.
                     </p>
 
                     <div class="logo-upload-row">
@@ -1326,6 +1388,13 @@ export default {
       logoUploadError: null,
       uploadErrorMerchantId: null,
 
+      // website edit state (per-merchant)
+      websiteDrafts: {},
+      websiteSavingId: null,
+      websiteSaveError: null,
+      websiteSaveErrorMerchantId: null,
+      websiteSavedMerchantId: null,
+
       // merchant tools state
       approvedCoupons: [],
       pendingCoupons: [],
@@ -1514,6 +1583,7 @@ export default {
           role: data.role,
         };
         this.merchants = data.merchants || [];
+        this.syncWebsiteDrafts();
 
         if (this.role === 'customer') {
           this.loadCustomerStats();
@@ -1716,6 +1786,88 @@ export default {
       }
     }
     ,
+
+    syncWebsiteDrafts() {
+      const next = {};
+      for (const m of this.merchants) {
+        next[m.id] = m.website_url || "";
+      }
+      this.websiteDrafts = next;
+    },
+
+    isWebsiteDirty(merchant) {
+      const draft = (this.websiteDrafts[merchant.id] || "").trim();
+      const current = (merchant.website_url || "").trim();
+      return draft !== current;
+    },
+
+    async saveMerchantWebsite(merchant) {
+      const raw = this.websiteDrafts[merchant.id] ?? "";
+      const trimmed = typeof raw === "string" ? raw.trim() : "";
+
+      // Client-side validation: allow empty (clears it) or a valid http(s) URL.
+      if (trimmed !== "") {
+        try {
+          const parsed = new URL(trimmed);
+          if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+            throw new Error("bad protocol");
+          }
+        } catch {
+          this.websiteSaveError = "Please enter a valid http(s) URL.";
+          this.websiteSaveErrorMerchantId = merchant.id;
+          this.websiteSavedMerchantId = null;
+          return;
+        }
+      }
+
+      this.websiteSavingId = merchant.id;
+      this.websiteSaveError = null;
+      this.websiteSaveErrorMerchantId = null;
+      this.websiteSavedMerchantId = null;
+
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(`/api/v1/merchants/${merchant.id}`, {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ website_url: trimmed === "" ? null : trimmed }),
+        });
+
+        if (!res.ok) {
+          let message = "Failed to save website.";
+          try {
+            const errJson = await res.json();
+            if (errJson?.error) message = errJson.error;
+          } catch {
+            // ignore
+          }
+          this.websiteSaveError = message;
+          this.websiteSaveErrorMerchantId = merchant.id;
+          return;
+        }
+
+        const updated = await res.json();
+        const newUrl = updated.website_url ?? updated.websiteUrl ?? null;
+
+        this.merchants = this.merchants.map((m) =>
+          m.id === merchant.id ? { ...m, website_url: newUrl } : m
+        );
+        this.websiteDrafts = {
+          ...this.websiteDrafts,
+          [merchant.id]: newUrl || "",
+        };
+        this.websiteSavedMerchantId = merchant.id;
+      } catch (err) {
+        console.error("Error saving merchant website", err);
+        this.websiteSaveError = "Unexpected error while saving.";
+        this.websiteSaveErrorMerchantId = merchant.id;
+      } finally {
+        this.websiteSavingId = null;
+      }
+    },
 
     signOutNow() {
       signOut();
@@ -2595,30 +2747,54 @@ export default {
 
 .merchant-card {
   border-radius: var(--radius-xl);
-  padding: var(--spacing-md) var(--spacing-lg);
+  padding: var(--spacing-lg) var(--spacing-xl);
   background: var(--color-bg-surface);
   color: var(--color-text-primary);
   box-shadow: var(--shadow-card);
+  border: 1px solid color-mix(in srgb, var(--surface-2) 40%, transparent);
+  transition: box-shadow var(--transition-fast, 150ms ease),
+              border-color var(--transition-fast, 150ms ease);
+}
+
+.merchant-card:hover {
+  box-shadow: var(--shadow-lg, var(--shadow-card));
+  border-color: color-mix(in srgb, var(--color-primary) 25%, transparent);
 }
 
 .merchant-card-header {
   display: flex;
   align-items: center;
-  gap: var(--spacing-md);
-  margin-bottom: var(--spacing-sm);
+  gap: var(--spacing-lg);
+  margin-bottom: var(--spacing-md);
+  padding-bottom: var(--spacing-md);
+  border-bottom: 1px solid color-mix(in srgb, var(--surface-2) 50%, transparent);
 }
 
 .merchant-card-header h3 {
   margin: 0;
   color: var(--color-text-primary);
+  font-size: var(--font-size-xl, 1.25rem);
+  font-weight: var(--font-weight-semibold, 600);
+  line-height: 1.2;
+}
+
+.merchant-card-header .muted.tiny {
+  margin-top: var(--spacing-xs);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+  word-break: break-all;
 }
 
 .merchant-card-body {
   color: var(--color-text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
 }
 
 .merchant-card-body p {
-  margin: var(--spacing-xs) 0;
+  margin: 0;
   color: var(--color-text-primary);
 }
 
@@ -2659,6 +2835,80 @@ export default {
 
 .merchant-logo-placeholder {
   background-color: #FFFFFF !important;
+}
+
+/* Website edit row */
+.website-edit-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--spacing-sm) var(--spacing-md);
+  margin-bottom: var(--spacing-xs);
+}
+
+.website-label {
+  font-size: var(--font-size-sm, 0.875rem);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-primary);
+}
+
+.website-input-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.website-input-icon {
+  position: absolute;
+  left: var(--spacing-sm);
+  color: var(--color-text-light, var(--color-text-secondary));
+  pointer-events: none;
+  font-size: 0.9rem;
+}
+
+.website-input {
+  width: 100%;
+  min-width: 0;
+  padding: var(--spacing-sm) var(--spacing-sm) var(--spacing-sm) 2rem;
+  border-radius: var(--radius-md, 0.5rem);
+  border: 1px solid color-mix(in srgb, var(--surface-2) 60%, transparent);
+  background: color-mix(in srgb, var(--surface-1) 92%, var(--surface-2));
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm, 0.875rem);
+  transition: border-color var(--transition-fast, 150ms ease),
+              box-shadow var(--transition-fast, 150ms ease);
+}
+
+.website-input::placeholder {
+  color: var(--color-text-placeholder, var(--color-text-light));
+}
+
+.website-input:focus {
+  outline: none;
+  border-color: var(--color-primary, #f2542d);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 25%, transparent);
+}
+
+.website-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn.btn-compact {
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-size: var(--font-size-sm, 0.875rem);
+  white-space: nowrap;
+}
+
+@media (max-width: 520px) {
+  .website-edit-row {
+    grid-template-columns: 1fr;
+  }
+  .website-edit-row .btn.btn-compact {
+    justify-self: start;
+  }
 }
 
 /* File upload UI */
@@ -3180,7 +3430,7 @@ export default {
 .merchant-admins-section {
   margin-top: var(--spacing-md, 1rem);
   padding-top: var(--spacing-md, 1rem);
-  border-top: 1px solid var(--surface-2, #eee);
+  border-top: 1px solid color-mix(in srgb, var(--surface-2) 50%, transparent);
 }
 
 .merchant-admins-header {
@@ -3188,6 +3438,34 @@ export default {
   align-items: center;
   justify-content: space-between;
   margin-bottom: var(--spacing-sm, 0.5rem);
+}
+
+.btn-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs, 0.25rem);
+  padding: var(--spacing-xs, 0.25rem) var(--spacing-md, 0.75rem);
+  border: 1px solid color-mix(in srgb, var(--surface-2) 60%, transparent);
+  border-radius: var(--radius-full, 9999px);
+  background: color-mix(in srgb, var(--surface-1) 75%, var(--surface-2));
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs, 0.75rem);
+  font-weight: var(--font-weight-medium, 500);
+  cursor: pointer;
+  transition: background var(--transition-fast, 150ms ease),
+              border-color var(--transition-fast, 150ms ease),
+              color var(--transition-fast, 150ms ease);
+}
+
+.btn-action:hover:not(:disabled) {
+  background: var(--color-primary, #f2542d);
+  color: var(--color-text-on-primary, #fff);
+  border-color: var(--color-primary, #f2542d);
+}
+
+.btn-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .admin-member-list {

@@ -35,18 +35,38 @@
       <div v-if="submitError" class="error-msg">{{ submitError }}</div>
     </div>
 
+    <!-- Redirecting to Stripe -->
+    <div v-else-if="redirectingToCheckout" class="rsvp-loading">
+      <p class="loading-copy">Redirecting to secure checkout…</p>
+    </div>
+
     <!-- RSVP form -->
     <form v-else class="rsvp-form" @submit.prevent="submitRSVP">
       <h3>RSVP for {{ event.name }}</h3>
 
       <div class="form-group">
         <label for="rsvp-name">Your Name</label>
-        <input id="rsvp-name" type="text" v-model="form.guest_name" placeholder="Optional if signed in" />
+        <input
+          id="rsvp-name"
+          type="text"
+          v-model="form.guest_name"
+          placeholder="Your name"
+          @input="touched.guest_name = true"
+        />
       </div>
 
       <div class="form-group">
-        <label for="rsvp-email">Your Email</label>
-        <input id="rsvp-email" type="email" v-model="form.guest_email" placeholder="Optional if signed in" />
+        <label for="rsvp-email">
+          Your Email
+          <span v-if="prefilledFromProfile" class="field-hint">(from your account)</span>
+        </label>
+        <input
+          id="rsvp-email"
+          type="email"
+          v-model="form.guest_email"
+          placeholder="you@example.com"
+          @input="touched.guest_email = true"
+        />
       </div>
 
       <div class="form-group" v-if="event.maxTicketsPerGuest > 1">
@@ -61,47 +81,24 @@
       <div v-if="isPaidEvent" class="payment-policy card">
         <p class="checkout-title">Paid Event Ticket</p>
         <p class="checkout-copy">
-          Your card is charged when checkout completes. Cancellations follow the event refund policy:
+          You'll be redirected to Stripe to complete payment. Cancellations follow the event refund policy:
           72+ hours full refund, 24-72 hours 50% refund, under 24 hours no refund.
         </p>
         <label class="policy-check">
-          <input type="checkbox" v-model="refundPolicyAccepted" :disabled="!!paymentClientSecret" />
+          <input type="checkbox" v-model="refundPolicyAccepted" />
           <span>I acknowledge the refund policy.</span>
         </label>
       </div>
 
-      <button v-if="!paymentClientSecret" type="submit" class="btn btn-primary" :disabled="submitDisabled">
+      <button type="submit" class="btn btn-primary" :disabled="submitDisabled">
         {{ submitting ? 'Submitting…' : isPaidEvent ? 'Continue to Payment' : 'RSVP Now' }}
       </button>
     </form>
-
-    <div v-if="paymentClientSecret" class="payment-card card">
-      <h3>Complete Payment</h3>
-      <p class="checkout-copy">
-        Total: {{ formatMoney(paymentAmountCents, paymentCurrency) }}
-      </p>
-      <div ref="paymentElement" class="payment-element"></div>
-      <div v-if="paymentStatusMessage" class="alert alert-success">{{ paymentStatusMessage }}</div>
-      <div v-if="submitError" class="alert alert-error">{{ submitError }}</div>
-      <div class="checkout-actions">
-        <button type="button" class="btn btn-secondary" :disabled="confirmingPayment" @click="resetPayment">
-          Back
-        </button>
-        <button type="button" class="btn btn-primary" :disabled="confirmingPayment || paymentComplete" @click="confirmPayment">
-          {{ confirmingPayment ? 'Processing…' : 'Pay and RSVP' }}
-        </button>
-      </div>
-    </div>
   </div>
 </template>
 
 <script>
-import { loadStripe } from '@stripe/stripe-js'
 import { createRsvp, cancelRsvp } from '@/services/eventService'
-
-function getStripePublishableKey() {
-  return process.env.VUE_APP_STRIPE_PUBLISHABLE_KEY || import.meta.env?.VITE_STRIPE_PUBLISHABLE_KEY || ''
-}
 
 export default {
   name: 'EventRSVP',
@@ -112,6 +109,7 @@ export default {
     hasMembership: { type: Boolean, default: false },
     existingRsvp: { type: Object, default: null },
     rsvpLoading: { type: Boolean, default: false },
+    userProfile: { type: Object, default: null },
   },
 
   emits: ['rsvp-submitted', 'rsvp-cancelled', 'login-requested'],
@@ -124,7 +122,7 @@ export default {
       return this.event?.isFree === false
     },
     submitDisabled() {
-      return this.submitting || (this.isPaidEvent && !this.refundPolicyAccepted)
+      return this.submitting || this.redirectingToCheckout || (this.isPaidEvent && !this.refundPolicyAccepted)
     },
     activeRsvp() {
       return this.rsvpResult || this.existingRsvp
@@ -135,6 +133,9 @@ export default {
       if (this.activeRsvp?.status === 'checked_in') return 'Checked in'
       return 'RSVP confirmed'
     },
+    prefilledFromProfile() {
+      return !!(this.userProfile && this.userProfile.email)
+    },
   },
 
   data() {
@@ -144,24 +145,43 @@ export default {
         guest_email: '',
         attendees: 1,
       },
+      touched: {
+        guest_name: false,
+        guest_email: false,
+      },
       rsvpResult: null,
       submitting: false,
-      confirmingPayment: false,
+      redirectingToCheckout: false,
       submitError: null,
       refundPolicyAccepted: false,
-      stripe: null,
-      elements: null,
-      paymentElement: null,
-      paymentClientSecret: null,
-      paymentOrderId: null,
-      paymentAmountCents: 0,
-      paymentCurrency: 'usd',
-      paymentComplete: false,
-      paymentStatusMessage: '',
     }
   },
 
+  created() {
+    this.applyProfileToForm()
+  },
+
+  watch: {
+    userProfile: {
+      immediate: true,
+      handler() {
+        this.applyProfileToForm()
+      },
+    },
+  },
+
   methods: {
+    applyProfileToForm() {
+      const profile = this.userProfile
+      if (!profile) return
+      if (!this.touched.guest_name && !this.form.guest_name && profile.name) {
+        this.form.guest_name = profile.name
+      }
+      if (!this.touched.guest_email && !this.form.guest_email && profile.email) {
+        this.form.guest_email = profile.email
+      }
+    },
+
     async submitRSVP() {
       if (this.isPaidEvent && !this.refundPolicyAccepted) {
         this.submitError = 'Please acknowledge the refund policy before payment.'
@@ -177,12 +197,9 @@ export default {
           refund_policy_accepted: this.refundPolicyAccepted || undefined,
         }
         const result = await createRsvp(this.event.id, payload)
-        if (result.requiresPayment) {
-          this.paymentClientSecret = result.clientSecret
-          this.paymentOrderId = result.orderId
-          this.paymentAmountCents = result.amountCents
-          this.paymentCurrency = result.currency || 'usd'
-          await this.mountPaymentElement()
+        if (result.requiresPayment && result.checkoutUrl) {
+          this.redirectingToCheckout = true
+          window.location.assign(result.checkoutUrl)
           return
         }
         this.rsvpResult = result
@@ -193,72 +210,6 @@ export default {
       } finally {
         this.submitting = false
       }
-    },
-
-    async mountPaymentElement() {
-      const publishableKey = getStripePublishableKey()
-      if (!publishableKey) {
-        this.submitError = 'Stripe publishable key is not configured.'
-        return
-      }
-      this.stripe = this.stripe || await loadStripe(publishableKey)
-      if (!this.stripe) {
-        this.submitError = 'Could not load Stripe. Please try again.'
-        return
-      }
-      this.elements = this.stripe.elements({ clientSecret: this.paymentClientSecret })
-      this.paymentElement = this.elements.create('payment')
-      await this.$nextTick()
-      this.paymentElement.mount(this.$refs.paymentElement)
-    },
-
-    async confirmPayment() {
-      if (!this.stripe || !this.elements) return
-      this.confirmingPayment = true
-      this.submitError = null
-      try {
-        const { error, paymentIntent } = await this.stripe.confirmPayment({
-          elements: this.elements,
-          redirect: 'if_required',
-        })
-        if (error) {
-          this.submitError = error.message || 'Payment failed. Please try again.'
-          return
-        }
-        this.paymentComplete = true
-        this.paymentStatusMessage = paymentIntent?.status === 'succeeded'
-          ? 'Payment received. Your RSVP will be confirmed shortly.'
-          : 'Payment is processing. Your RSVP will update when Stripe confirms it.'
-        this.$emit('rsvp-submitted', {
-          requiresPayment: true,
-          status: paymentIntent?.status || 'processing',
-          orderId: this.paymentOrderId,
-        })
-      } catch (err) {
-        console.error('[EventRSVP] confirmPayment error', err)
-        this.submitError = err.message || 'Payment failed. Please try again.'
-      } finally {
-        this.confirmingPayment = false
-      }
-    },
-
-    resetPayment() {
-      if (this.paymentElement) {
-        this.paymentElement.unmount()
-      }
-      this.elements = null
-      this.paymentElement = null
-      this.paymentClientSecret = null
-      this.paymentOrderId = null
-      this.paymentComplete = false
-      this.paymentStatusMessage = ''
-    },
-
-    formatMoney(amountCents, currency = 'usd') {
-      return new Intl.NumberFormat(undefined, {
-        style: 'currency',
-        currency: currency.toUpperCase(),
-      }).format((amountCents || 0) / 100)
     },
 
     async cancelConfirmed() {
@@ -306,6 +257,13 @@ label {
   color: var(--color-text-primary);
 }
 
+.field-hint {
+  margin-left: var(--spacing-xs);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
 input, select {
   background: var(--color-bg-primary);
   border: none;
@@ -350,25 +308,6 @@ input:focus, select:focus {
 .btn.primary:hover:not(:disabled) { background: var(--color-secondary-hover); }
 .btn.secondary { background: var(--color-error); color: var(--color-text-on-error); margin-top: var(--spacing-sm); }
 .btn.secondary:hover:not(:disabled) { background: var(--color-error-hover); }
-
-.btn.checkout-btn {
-  background: var(--color-primary);
-  color: var(--color-text-on-primary);
-}
-
-.btn.checkout-btn:hover:not(:disabled) {
-  background: var(--color-primary-hover);
-}
-
-.secondary-outline {
-  background: transparent;
-  border: 1px solid var(--color-border-light);
-  color: var(--color-text-primary);
-}
-
-.secondary-outline:hover:not(:disabled) {
-  background: var(--color-bg-secondary);
-}
 
 .rsvp-success {
   text-align: center;
@@ -416,13 +355,6 @@ input:focus, select:focus {
   line-height: var(--line-height-relaxed);
 }
 
-.checkout-placeholder {
-  margin-bottom: var(--spacing-md);
-  padding: var(--spacing-md);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-secondary);
-}
-
 .checkout-title {
   margin: 0 0 var(--spacing-xs);
   color: var(--color-text-primary);
@@ -436,33 +368,18 @@ input:focus, select:focus {
   line-height: var(--line-height-relaxed);
 }
 
-.checkout-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+.policy-check {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 999;
+  gap: var(--spacing-xs);
+  align-items: flex-start;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.payment-policy {
+  margin-bottom: var(--spacing-md);
   padding: var(--spacing-md);
-}
-
-.checkout-modal {
-  width: min(420px, 100%);
-  background: var(--color-bg-surface);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  padding: var(--spacing-lg);
-}
-
-.checkout-modal h4 {
-  margin: 0 0 var(--spacing-sm);
-  color: var(--color-text-primary);
-}
-
-.checkout-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--spacing-sm);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
 }
 </style>

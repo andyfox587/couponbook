@@ -223,6 +223,7 @@ export async function createPaidEventOrder({
 
   const amountCents = price.amountCents * quantity;
   const now = nowIso();
+  const customerEmail = guestEmail || dbUser?.email || null;
   const [order] = await database
     .insert(eventOrder)
     .values({
@@ -232,7 +233,7 @@ export async function createPaidEventOrder({
       merchantId: eventRow.merchantId,
       quantity,
       guestName: guestName || null,
-      guestEmail: guestEmail || dbUser?.email || null,
+      guestEmail: customerEmail,
       emailConfirmationStatus: dbUser ? 'not_required' : 'confirmed',
       emailConfirmedAt: dbUser ? null : now,
       amountCents,
@@ -242,39 +243,64 @@ export async function createPaidEventOrder({
       refundPolicyVersion: EVENT_REFUND_POLICY_VERSION,
       refundPolicyAcknowledgedAt,
       metadata: {
-        createdVia: 'event-rsvp-payment-intent',
+        createdVia: 'event-rsvp-checkout-session',
         unitAmountCents: price.amountCents,
       },
     })
     .returning();
 
   try {
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: amountCents,
-      currency: price.currency,
-      automatic_payment_methods: { enabled: true },
-      receipt_email: guestEmail || dbUser?.email || undefined,
-      statement_descriptor_suffix: makeStatementDescriptorSuffix(eventRow),
-      metadata: {
-        payment_type: 'event_ticket',
-        event_order_id: order.id,
-        event_id: eventRow.id,
-        restaurant_id: eventRow.merchantId,
-        merchant_id: eventRow.merchantId,
-        group_id: eventRow.groupId,
-        user_id: dbUser?.id || '',
-        guest_email: guestEmail || dbUser?.email || '',
-        event_date: new Date(eventRow.startDatetime).toISOString(),
-        refund_policy_version: EVENT_REFUND_POLICY_VERSION,
-        refund_policy_acknowledged_at: refundPolicyAcknowledgedAt,
+    const base = appUrl().replace(/\/$/, '');
+    const eventPath = eventRow.slug ? `/e/${eventRow.slug}` : `/events/${eventRow.id}`;
+    const successUrl = `${base}${eventPath}?checkout=success&session_id={CHECKOUT_SESSION_ID}`;
+    const cancelUrl = `${base}${eventPath}?checkout=canceled`;
+
+    const metadata = {
+      payment_type: 'event_ticket',
+      event_order_id: order.id,
+      event_id: eventRow.id,
+      restaurant_id: eventRow.merchantId,
+      merchant_id: eventRow.merchantId,
+      group_id: eventRow.groupId,
+      user_id: dbUser?.id || '',
+      guest_email: customerEmail || '',
+      event_date: new Date(eventRow.startDatetime).toISOString(),
+      refund_policy_version: EVENT_REFUND_POLICY_VERSION,
+      refund_policy_acknowledged_at: refundPolicyAcknowledgedAt,
+    };
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      customer_email: customerEmail || undefined,
+      line_items: [
+        {
+          quantity,
+          price_data: {
+            currency: price.currency,
+            unit_amount: price.amountCents,
+            product_data: {
+              name: eventRow.name || 'Event Ticket',
+              ...(eventRow.description ? { description: String(eventRow.description).slice(0, 500) } : {}),
+            },
+          },
+        },
+      ],
+      metadata,
+      payment_intent_data: {
+        receipt_email: customerEmail || undefined,
+        statement_descriptor_suffix: makeStatementDescriptorSuffix(eventRow),
+        metadata,
       },
     });
 
     const [updatedOrder] = await database
       .update(eventOrder)
       .set({
-        stripePaymentIntentId: paymentIntent.id,
-        stripeCustomerId: typeof paymentIntent.customer === 'string' ? paymentIntent.customer : null,
+        stripeCheckoutSessionId: session.id,
+        stripePaymentIntentId: typeof session.payment_intent === 'string' ? session.payment_intent : null,
+        stripeCustomerId: typeof session.customer === 'string' ? session.customer : null,
         updatedAt: nowIso(),
       })
       .where(eq(eventOrder.id, order.id))
@@ -282,8 +308,8 @@ export async function createPaidEventOrder({
 
     return {
       order: updatedOrder,
-      paymentIntentId: paymentIntent.id,
-      clientSecret: paymentIntent.client_secret,
+      checkoutUrl: session.url,
+      checkoutSessionId: session.id,
       amountCents,
       currency: price.currency,
     };
@@ -312,21 +338,14 @@ function makeStatementDescriptorSuffix(eventRow) {
   return merchantOrEvent ? `${merchantOrEvent} EVENT`.slice(0, 22) : 'EVENT TICKET';
 }
 
-export async function confirmPaidEventOrderFromPaymentIntent(paymentIntent, { database = defaultDb } = {}) {
-  if (paymentIntent.metadata?.payment_type !== 'event_ticket') return null;
-
-  const orderId = paymentIntent.metadata?.event_order_id;
-  const [order] = await database
-    .select()
-    .from(eventOrder)
-    .where(orderId ? eq(eventOrder.id, orderId) : eq(eventOrder.stripePaymentIntentId, paymentIntent.id))
-    .limit(1);
-
-  if (!order) {
-    console.warn('🎟️  No event order found for payment intent:', paymentIntent.id);
-    return null;
-  }
-
+async function finalizeConfirmedEventOrder({
+  database,
+  order,
+  paymentIntentId = null,
+  latestChargeId = null,
+  stripeCustomerId = null,
+  source = 'unknown',
+}) {
   if (order.status === 'paid' && order.rsvpId) {
     return order;
   }
@@ -339,10 +358,6 @@ export async function confirmPaidEventOrderFromPaymentIntent(paymentIntent, { da
 
   if (!eventRow) return order;
 
-  const latestCharge = typeof paymentIntent.latest_charge === 'string'
-    ? paymentIntent.latest_charge
-    : paymentIntent.latest_charge?.id || null;
-
   const confirmedSeats = await getConfirmedSeatCount({ database, eventId: order.eventId });
   const remaining = eventRow.capacity > 0 ? eventRow.capacity - confirmedSeats : Infinity;
 
@@ -351,8 +366,9 @@ export async function confirmPaidEventOrderFromPaymentIntent(paymentIntent, { da
       .update(eventOrder)
       .set({
         status: 'paid',
-        stripeChargeId: latestCharge,
-        stripeCustomerId: typeof paymentIntent.customer === 'string' ? paymentIntent.customer : order.stripeCustomerId,
+        stripePaymentIntentId: paymentIntentId || order.stripePaymentIntentId,
+        stripeChargeId: latestChargeId || order.stripeChargeId,
+        stripeCustomerId: stripeCustomerId || order.stripeCustomerId,
         metadata: {
           ...(order.metadata || {}),
           paidButUnconfirmedReason: eventRow.status !== 'published' ? 'event_not_published' : 'capacity_unavailable',
@@ -395,8 +411,9 @@ export async function confirmPaidEventOrderFromPaymentIntent(paymentIntent, { da
     .set({
       rsvpId,
       status: 'paid',
-      stripeChargeId: latestCharge,
-      stripeCustomerId: typeof paymentIntent.customer === 'string' ? paymentIntent.customer : order.stripeCustomerId,
+      stripePaymentIntentId: paymentIntentId || order.stripePaymentIntentId,
+      stripeChargeId: latestChargeId || order.stripeChargeId,
+      stripeCustomerId: stripeCustomerId || order.stripeCustomerId,
       updatedAt: nowIso(),
     })
     .where(eq(eventOrder.id, order.id))
@@ -411,7 +428,7 @@ export async function confirmPaidEventOrderFromPaymentIntent(paymentIntent, { da
       eventRsvpId: rsvpId,
       purpose: 'cancellation',
       expiresAt: new Date(eventRow.startDatetime).toISOString(),
-      metadata: { createdVia: 'payment_intent.succeeded' },
+      metadata: { createdVia: source },
     });
     guestCancellationToken = createdToken.rawToken;
   }
@@ -423,6 +440,108 @@ export async function confirmPaidEventOrderFromPaymentIntent(paymentIntent, { da
   });
 
   return updatedOrder;
+}
+
+export async function confirmPaidEventOrderFromPaymentIntent(paymentIntent, { database = defaultDb } = {}) {
+  if (paymentIntent.metadata?.payment_type !== 'event_ticket') return null;
+
+  const orderId = paymentIntent.metadata?.event_order_id;
+  const [order] = await database
+    .select()
+    .from(eventOrder)
+    .where(orderId ? eq(eventOrder.id, orderId) : eq(eventOrder.stripePaymentIntentId, paymentIntent.id))
+    .limit(1);
+
+  if (!order) {
+    console.warn('🎟️  No event order found for payment intent:', paymentIntent.id);
+    return null;
+  }
+
+  const latestCharge = typeof paymentIntent.latest_charge === 'string'
+    ? paymentIntent.latest_charge
+    : paymentIntent.latest_charge?.id || null;
+
+  return finalizeConfirmedEventOrder({
+    database,
+    order,
+    paymentIntentId: paymentIntent.id,
+    latestChargeId: latestCharge,
+    stripeCustomerId: typeof paymentIntent.customer === 'string' ? paymentIntent.customer : null,
+    source: 'payment_intent.succeeded',
+  });
+}
+
+export async function confirmPaidEventOrderFromCheckoutSession(session, { database = defaultDb } = {}) {
+  if (session?.metadata?.payment_type !== 'event_ticket') return null;
+  if (session.payment_status && session.payment_status !== 'paid' && session.payment_status !== 'no_payment_required') {
+    return null;
+  }
+
+  const orderId = session.metadata?.event_order_id;
+  const [order] = await database
+    .select()
+    .from(eventOrder)
+    .where(orderId ? eq(eventOrder.id, orderId) : eq(eventOrder.stripeCheckoutSessionId, session.id))
+    .limit(1);
+
+  if (!order) {
+    console.warn('🎟️  No event order found for checkout session:', session.id);
+    return null;
+  }
+
+  const paymentIntentId = typeof session.payment_intent === 'string'
+    ? session.payment_intent
+    : session.payment_intent?.id || null;
+  const stripeCustomerId = typeof session.customer === 'string'
+    ? session.customer
+    : session.customer?.id || null;
+
+  if (!order.stripeCheckoutSessionId) {
+    await database
+      .update(eventOrder)
+      .set({ stripeCheckoutSessionId: session.id, updatedAt: nowIso() })
+      .where(eq(eventOrder.id, order.id));
+    order.stripeCheckoutSessionId = session.id;
+  }
+
+  return finalizeConfirmedEventOrder({
+    database,
+    order,
+    paymentIntentId,
+    stripeCustomerId,
+    source: 'checkout.session.completed',
+  });
+}
+
+export async function markPaidEventOrderFromSessionExpired(session, { database = defaultDb } = {}) {
+  if (session?.metadata?.payment_type !== 'event_ticket') return null;
+
+  const orderId = session.metadata?.event_order_id;
+  const [order] = await database
+    .select()
+    .from(eventOrder)
+    .where(orderId ? eq(eventOrder.id, orderId) : eq(eventOrder.stripeCheckoutSessionId, session.id))
+    .limit(1);
+
+  if (!order) return null;
+  if (order.status === 'paid' || order.status === 'refunded' || order.status === 'partially_refunded') {
+    return order;
+  }
+
+  const [updated] = await database
+    .update(eventOrder)
+    .set({
+      status: 'payment_failed',
+      metadata: {
+        ...(order.metadata || {}),
+        checkoutSessionExpiredAt: nowIso(),
+      },
+      updatedAt: nowIso(),
+    })
+    .where(eq(eventOrder.id, order.id))
+    .returning();
+
+  return updated || null;
 }
 
 async function notifyEventRsvpConfirmed({ order, eventRow, cancellationToken = null }) {

@@ -1,31 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mount } from '@vue/test-utils';
-process.env.VUE_APP_STRIPE_PUBLISHABLE_KEY = 'STRIPE_PUBLISHABLE_KEY=pk_test_51SChFzAaYydeEQyK5sHEuqNkPDJQNqYg9ZSg85PfO7A3f5OZ62W12rs2DciO9NQwpXd7XMtXJBgBwugxzplAnpTx00XrHWZ6TI';
 import EventRSVP from '../../../../../src/components/Events/EventRSVP.vue';
 
 vi.mock('../../../../../src/services/eventService.js', () => ({
   createRsvp: vi.fn(),
   cancelRsvp: vi.fn(),
-}));
-
-const { stripeElementMock, stripeMock } = vi.hoisted(() => {
-  const stripeElementMock = {
-    mount: vi.fn(),
-    unmount: vi.fn(),
-  };
-  const stripeMock = {
-    elements: vi.fn(() => ({
-      create: vi.fn(() => stripeElementMock),
-    })),
-    confirmPayment: vi.fn().mockResolvedValue({
-      paymentIntent: { id: 'pi_test_paid', status: 'succeeded' },
-    }),
-  };
-  return { stripeElementMock, stripeMock };
-});
-
-vi.mock('@stripe/stripe-js', () => ({
-  loadStripe: vi.fn().mockResolvedValue(stripeMock),
 }));
 
 import { createRsvp, cancelRsvp } from '../../../../../src/services/eventService.js';
@@ -55,11 +34,17 @@ describe('EventRSVP', () => {
     visibility: 'members_only',
   };
 
+  let originalLocation;
+
   beforeEach(() => {
     vi.clearAllMocks();
-    stripeMock.confirmPayment.mockResolvedValue({
-      paymentIntent: { id: 'pi_test_paid', status: 'succeeded' },
-    });
+    originalLocation = window.location;
+    delete window.location;
+    window.location = { assign: vi.fn(), href: '' };
+  });
+
+  afterEach(() => {
+    window.location = originalLocation;
   });
 
   it('submits RSVP and shows success state', async () => {
@@ -108,8 +93,6 @@ describe('EventRSVP', () => {
     expect(cancelRsvp).toHaveBeenCalledWith('evt-1', 'r-existing');
     expect(wrapper.emitted('rsvp-cancelled')?.[0]?.[0]).toMatchObject({ id: 'r-existing' });
   });
-
-  // ── Members-only gating ────────────────────────────────────────
 
   it('shows sign-in gate for members-only event when not authenticated', () => {
     const wrapper = mount(EventRSVP, {
@@ -163,11 +146,12 @@ describe('EventRSVP', () => {
     expect(wrapper.find('button[type="submit"]').attributes('disabled')).toBeDefined();
   });
 
-  it('starts Stripe Payment Element checkout for paid events', async () => {
+  it('redirects to Stripe Checkout URL for paid events', async () => {
     createRsvp.mockResolvedValueOnce({
       requiresPayment: true,
       orderId: 'eo_1',
-      clientSecret: 'pi_secret',
+      checkoutUrl: 'https://checkout.stripe.com/test/cs_123',
+      checkoutSessionId: 'cs_123',
       amountCents: 4200,
       currency: 'usd',
     });
@@ -179,36 +163,38 @@ describe('EventRSVP', () => {
     await wrapper.vm.$nextTick();
 
     expect(createRsvp).toHaveBeenCalledWith('evt-paid-1', expect.objectContaining({ refund_policy_accepted: true }));
-    expect(stripeMock.elements).toHaveBeenCalledWith({ clientSecret: 'pi_secret' });
-    expect(stripeElementMock.mount).toHaveBeenCalled();
-    expect(wrapper.text()).toContain('Complete Payment');
-    expect(wrapper.text()).toContain('$42.00');
+    expect(window.location.assign).toHaveBeenCalledWith('https://checkout.stripe.com/test/cs_123');
+    expect(wrapper.text()).toContain('Redirecting to secure checkout');
   });
 
-  it('confirms payment and shows pending RSVP confirmation message', async () => {
-    createRsvp.mockResolvedValueOnce({
-      requiresPayment: true,
-      orderId: 'eo_1',
-      clientSecret: 'pi_secret',
-      amountCents: 4200,
-      currency: 'usd',
+  it('prefills name and email from userProfile for signed-in users', () => {
+    const wrapper = mount(EventRSVP, {
+      props: {
+        event: publicEvent,
+        isAuthenticated: true,
+        userProfile: { name: 'Ada Lovelace', email: 'ada@example.com' },
+      },
     });
-    const wrapper = mount(EventRSVP, { props: { event: paidPublicEvent } });
 
-    await wrapper.find('input[type="checkbox"]').setValue(true);
-    await wrapper.find('form').trigger('submit.prevent');
-    await flushPromises();
+    const nameInput = wrapper.find('#rsvp-name').element;
+    const emailInput = wrapper.find('#rsvp-email').element;
+    expect(nameInput.value).toBe('Ada Lovelace');
+    expect(emailInput.value).toBe('ada@example.com');
+    expect(wrapper.text()).toContain('from your account');
+  });
+
+  it('does not clobber user-edited fields when profile resolves later', async () => {
+    const wrapper = mount(EventRSVP, {
+      props: { event: publicEvent, isAuthenticated: true, userProfile: null },
+    });
+
+    const nameInput = wrapper.find('#rsvp-name');
+    await nameInput.setValue('Custom Name');
+
+    await wrapper.setProps({ userProfile: { name: 'Profile Name', email: 'profile@example.com' } });
     await wrapper.vm.$nextTick();
 
-    const payBtn = wrapper.findAll('button').find((btn) => btn.text().includes('Pay and RSVP'));
-    await payBtn.trigger('click');
-    await flushPromises();
-    await wrapper.vm.$nextTick();
-
-    expect(stripeMock.confirmPayment).toHaveBeenCalledWith({
-      elements: wrapper.vm.elements,
-      redirect: 'if_required',
-    });
-    expect(wrapper.text()).toContain('Payment received');
+    expect(wrapper.find('#rsvp-name').element.value).toBe('Custom Name');
+    expect(wrapper.find('#rsvp-email').element.value).toBe('profile@example.com');
   });
 });

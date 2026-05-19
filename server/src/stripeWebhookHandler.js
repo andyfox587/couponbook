@@ -7,7 +7,9 @@ import { eq, and } from 'drizzle-orm';
 import { stripe } from './config/stripe.js';
 import {
   applyChargeRefundToEventOrder,
+  confirmPaidEventOrderFromCheckoutSession,
   confirmPaidEventOrderFromPaymentIntent,
+  markPaidEventOrderFromSessionExpired,
   markPaidEventOrderPaymentFailed,
 } from './services/eventPaymentService.js';
 
@@ -127,6 +129,20 @@ export async function handleWebhook(rawBody, signature) {
 
 async function handleCheckoutSessionCompleted(event) {
   const session = event.data.object;
+
+  if (session.metadata?.payment_type === 'event_ticket') {
+    console.log('💳  Processing checkout.session.completed for event ticket:', session.id);
+    const order = await confirmPaidEventOrderFromCheckoutSession(session);
+    if (order) {
+      await db
+        .update(paymentEvent)
+        .set({ eventOrderId: order.id })
+        .where(eq(paymentEvent.eventId, event.id));
+      console.log('💳  Event order marked paid via checkout session:', order.id);
+    }
+    return;
+  }
+
   const checkoutType = session.metadata?.checkoutType || 'one_time';
   console.log('💳  Processing checkout.session.completed:', session.id, { checkoutType });
 
@@ -472,6 +488,18 @@ async function handleSubscriptionDeleted(event) {
 async function handleCheckoutSessionExpired(event) {
   const session = event.data.object;
   console.log('💳  Processing checkout.session.expired:', session.id);
+
+  if (session.metadata?.payment_type === 'event_ticket') {
+    const order = await markPaidEventOrderFromSessionExpired(session);
+    if (order) {
+      await db
+        .update(paymentEvent)
+        .set({ eventOrderId: order.id })
+        .where(eq(paymentEvent.eventId, event.id));
+      console.log('💳  Event order marked payment_failed (session expired):', order.id);
+    }
+    return;
+  }
 
   const [purchaseRow] = await db
     .select()

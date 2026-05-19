@@ -63,6 +63,7 @@ router.get('/mine', auth(), resolveLocalUser, async (req, res, next) => {
         id: merchant.id,
         name: merchant.name,
         logoUrl: merchant.logoUrl,
+        websiteUrl: merchant.websiteUrl,
         ownerId: merchant.ownerId,
         createdAt: merchant.createdAt,
         updatedAt: merchant.updatedAt,
@@ -234,6 +235,33 @@ router.put('/:id', auth(), resolveLocalUser, async (req, res, next) => {
     if (req.body.name !== undefined) updates.name = req.body.name;
     if (req.body.logo_url !== undefined) updates.logoUrl = req.body.logo_url;
     if (req.body.owner_id !== undefined) updates.ownerId = req.body.owner_id;
+    if (req.body.website_url !== undefined) {
+      const raw = req.body.website_url;
+      if (raw === null || raw === '') {
+        updates.websiteUrl = null;
+      } else if (typeof raw === 'string') {
+        const trimmed = raw.trim();
+        if (trimmed === '') {
+          updates.websiteUrl = null;
+        } else {
+          // Require an http(s) URL; reject anything else.
+          try {
+            const parsed = new URL(trimmed);
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+              return res.status(400).json({ error: 'website_url must be an http(s) URL' });
+            }
+            if (trimmed.length > 500) {
+              return res.status(400).json({ error: 'website_url is too long (max 500 chars)' });
+            }
+            updates.websiteUrl = trimmed;
+          } catch {
+            return res.status(400).json({ error: 'website_url must be a valid URL' });
+          }
+        }
+      } else {
+        return res.status(400).json({ error: 'website_url must be a string' });
+      }
+    }
 
     const [updated] = await db
       .update(merchant)
@@ -246,7 +274,13 @@ router.put('/:id', auth(), resolveLocalUser, async (req, res, next) => {
       return res.status(404).json({ message: 'Merchant not found' });
     }
     console.log('📦  updated merchant id:', updated.id);
-    res.json(updated);
+    res.json({
+      id: updated.id,
+      name: updated.name,
+      logo_url: updated.logoUrl,
+      website_url: updated.websiteUrl,
+      owner_id: updated.ownerId,
+    });
   } catch (err) {
     console.error('📦  error in PUT /merchant/:id', err);
     next(err);

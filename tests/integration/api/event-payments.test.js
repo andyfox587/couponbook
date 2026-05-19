@@ -36,6 +36,17 @@ const stripeMock = {
       customer: 'cus_test_customer',
     }),
   },
+  checkout: {
+    sessions: {
+      create: vi.fn().mockResolvedValue({
+        id: 'cs_test_event_ticket',
+        url: 'https://checkout.stripe.com/test/cs_test_event_ticket',
+        payment_intent: null,
+        customer: null,
+        payment_status: 'unpaid',
+      }),
+    },
+  },
   refunds: {
     create: vi.fn().mockResolvedValue({
       id: 're_test_event_refund',
@@ -79,10 +90,11 @@ describe('Paid event payments', () => {
 
   beforeEach(async () => {
     stripeMock.paymentIntents.create.mockClear();
+    stripeMock.checkout.sessions.create.mockClear();
     await resetTestDb();
   }, HOOK_TIMEOUT_MS);
 
-  it('returns a Payment Intent for paid RSVPs and waits for webhook confirmation', async () => {
+  it('returns a Checkout Session URL for paid RSVPs and waits for webhook confirmation', async () => {
     const owner = await seedHelpers.createUser(db, { cognitoSub: 'paid-event-owner' });
     const group = await seedHelpers.createFoodieGroup(db);
     const merchant = await seedHelpers.createMerchant(db, owner.id);
@@ -106,7 +118,17 @@ describe('Paid event payments', () => {
     expect(res.status).toBe(201);
     expect(res.body.requiresPayment).toBe(true);
     expect(res.body.amountCents).toBe(5000);
-    expect(res.body.clientSecret).toBe('pi_test_event_ticket_secret');
+    expect(res.body.checkoutUrl).toBe('https://checkout.stripe.com/test/cs_test_event_ticket');
+    expect(res.body.checkoutSessionId).toBe('cs_test_event_ticket');
+    expect(res.body.clientSecret).toBeUndefined();
+
+    expect(stripeMock.checkout.sessions.create).toHaveBeenCalledTimes(1);
+    const sessionArgs = stripeMock.checkout.sessions.create.mock.calls[0][0];
+    expect(sessionArgs.mode).toBe('payment');
+    expect(sessionArgs.customer_email).toBe('guest@example.com');
+    expect(sessionArgs.success_url).toContain('checkout=success');
+    expect(sessionArgs.cancel_url).toContain('checkout=canceled');
+    expect(sessionArgs.metadata.payment_type).toBe('event_ticket');
 
     const rsvpsBeforeWebhook = await db.select().from(schema.eventRsvp).where(eq(schema.eventRsvp.eventId, evt.id));
     expect(rsvpsBeforeWebhook).toHaveLength(0);
@@ -115,15 +137,16 @@ describe('Paid event payments', () => {
     expect(order.status).toBe('pending_payment');
     expect(order.quantity).toBe(2);
     expect(order.amountCents).toBe(5000);
+    expect(order.stripeCheckoutSessionId).toBe('cs_test_event_ticket');
 
     const webhookResult = await handleWebhook(JSON.stringify({
-      id: 'evt_pi_succeeded',
-      type: 'payment_intent.succeeded',
+      id: 'evt_cs_completed',
+      type: 'checkout.session.completed',
       data: {
         object: {
-          id: 'pi_test_event_ticket',
-          status: 'succeeded',
-          latest_charge: 'ch_test_event_ticket',
+          id: 'cs_test_event_ticket',
+          payment_status: 'paid',
+          payment_intent: 'pi_test_event_ticket',
           customer: 'cus_test_customer',
           metadata: {
             payment_type: 'event_ticket',
@@ -138,11 +161,58 @@ describe('Paid event payments', () => {
     const [confirmedOrder] = await db.select().from(schema.eventOrder).where(eq(schema.eventOrder.id, order.id));
     expect(confirmedOrder.status).toBe('paid');
     expect(confirmedOrder.rsvpId).toBeTruthy();
-    expect(confirmedOrder.stripeChargeId).toBe('ch_test_event_ticket');
+    expect(confirmedOrder.stripePaymentIntentId).toBe('pi_test_event_ticket');
 
     const [rsvp] = await db.select().from(schema.eventRsvp).where(eq(schema.eventRsvp.id, confirmedOrder.rsvpId));
     expect(rsvp.status).toBe('going');
     expect(rsvp.attendees).toBe(2);
+  }, TEST_TIMEOUT_MS);
+
+  it('still confirms RSVPs via the legacy payment_intent.succeeded webhook', async () => {
+    const owner = await seedHelpers.createUser(db, { cognitoSub: 'legacy-pi-owner' });
+    const group = await seedHelpers.createFoodieGroup(db);
+    const merchant = await seedHelpers.createMerchant(db, owner.id);
+    await seedHelpers.createMerchantBillingProfile(db, merchant.id);
+    const evt = await seedHelpers.createEvent(db, group.id, merchant.id, {
+      isFree: false,
+      priceCents: 2500,
+      capacity: 5,
+    });
+
+    const order = await seedHelpers.createEventOrder(db, evt, {
+      quantity: 1,
+      guestEmail: 'legacy@example.com',
+      amountCents: 2500,
+      stripePaymentIntentId: 'pi_legacy_event_ticket',
+      status: 'pending_payment',
+    });
+
+    const webhookResult = await handleWebhook(JSON.stringify({
+      id: 'evt_pi_succeeded_legacy',
+      type: 'payment_intent.succeeded',
+      data: {
+        object: {
+          id: 'pi_legacy_event_ticket',
+          status: 'succeeded',
+          latest_charge: 'ch_legacy_event_ticket',
+          customer: 'cus_legacy_customer',
+          metadata: {
+            payment_type: 'event_ticket',
+            event_order_id: order.id,
+          },
+        },
+      },
+    }), 'sig');
+
+    expect(webhookResult.status).toBe(200);
+
+    const [confirmedOrder] = await db.select().from(schema.eventOrder).where(eq(schema.eventOrder.id, order.id));
+    expect(confirmedOrder.status).toBe('paid');
+    expect(confirmedOrder.rsvpId).toBeTruthy();
+    expect(confirmedOrder.stripeChargeId).toBe('ch_legacy_event_ticket');
+
+    const [rsvp] = await db.select().from(schema.eventRsvp).where(eq(schema.eventRsvp.id, confirmedOrder.rsvpId));
+    expect(rsvp.status).toBe('going');
   }, TEST_TIMEOUT_MS);
 
   it('blocks duplicate active paid ticket orders before webhook confirmation', async () => {

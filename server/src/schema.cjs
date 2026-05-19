@@ -174,6 +174,7 @@ exports.merchant = (0, pg_core_1.pgTable)("merchant", {
     id: (0, pg_core_1.uuid)().defaultRandom().primaryKey().notNull(),
     name: (0, pg_core_1.varchar)({ length: 255 }).notNull(),
     logoUrl: (0, pg_core_1.varchar)("logo_url", { length: 500 }),
+    websiteUrl: (0, pg_core_1.varchar)("website_url", { length: 500 }),
     ownerId: (0, pg_core_1.uuid)("owner_id").notNull(),
     deletedAt: (0, pg_core_1.timestamp)("deleted_at", { mode: 'string' }),
     createdAt: (0, pg_core_1.timestamp)("created_at", { mode: 'string' }).defaultNow().notNull(),

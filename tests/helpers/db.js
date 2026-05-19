@@ -274,6 +274,20 @@ async function runMigrations(pg) {
       try { await pg.exec(stmt); } catch (_) { /* continue */ }
     }
   }
+
+  // Migration 17: add stripe_checkout_session_id to event_order
+  const migration17 = readFileSync(join(drizzleDir, '0017_add_event_order_checkout_session.sql'), 'utf-8');
+  const stmts17 = migration17
+    .split(';')
+    .map(s => s.trim())
+    .filter(s => {
+      if (!s) return false;
+      const noComments = s.split('\n').filter(l => !l.trim().startsWith('--')).join('\n').trim();
+      return noComments.length > 0;
+    });
+  for (const stmt of stmts17) {
+    try { await pg.exec(stmt); } catch (_) { /* continue */ }
+  }
 }
 
 /**

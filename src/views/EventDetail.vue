@@ -67,12 +67,16 @@
 
         <!-- RSVP Panel -->
         <div class="rsvp-panel" v-if="!evt.inviteOnly && evt.status !== 'cancelled'">
+          <div v-if="checkoutBanner" class="checkout-banner" :class="`checkout-banner-${checkoutBanner.kind}`">
+            {{ checkoutBanner.message }}
+          </div>
           <EventRSVP
             :event="evt"
             :is-authenticated="isAuthenticated"
             :has-membership="hasMembership"
             :existing-rsvp="myRsvp"
             :rsvp-loading="myRsvpLoading"
+            :user-profile="userProfile"
             @rsvp-submitted="onRsvpSubmitted"
             @rsvp-cancelled="onRsvpCancelled"
             @login-requested="onLoginRequested"
@@ -112,12 +116,20 @@ export default {
       hasMembership: false,
       myRsvp: null,
       myRsvpLoading: false,
+      checkoutBanner: null,
+      checkoutPollTimer: null,
     }
   },
 
   computed: {
     isAuthenticated() {
       return this.$store?.getters['auth/isAuthenticated'] ?? false
+    },
+
+    userProfile() {
+      const p = this.$store?.getters?.['auth/profile']
+      if (!p) return null
+      return { name: p.name || '', email: p.email || '' }
     },
 
     confirmedCount() {
@@ -156,6 +168,11 @@ export default {
 
   async created() {
     await this.load()
+    this.handleCheckoutReturn()
+  },
+
+  beforeUnmount() {
+    this.stopCheckoutPolling()
   },
 
   watch: {
@@ -170,6 +187,9 @@ export default {
     },
     '$route.query.token'() {
       this.load()
+    },
+    '$route.query.checkout'() {
+      this.handleCheckoutReturn()
     },
     isAuthenticated(val) {
       if (val) {
@@ -247,9 +267,53 @@ export default {
       }
     },
 
-    onRsvpSubmitted(result) {
-      if (result?.requiresPayment) return
+    onRsvpSubmitted() {
       this.load()
+    },
+
+    handleCheckoutReturn() {
+      const checkout = this.$route.query.checkout
+      if (!checkout) return
+
+      if (checkout === 'success') {
+        this.checkoutBanner = {
+          kind: 'success',
+          message: 'Payment received. Your RSVP will appear here shortly.',
+        }
+        this.startCheckoutPolling()
+      } else if (checkout === 'canceled' || checkout === 'cancelled') {
+        this.checkoutBanner = {
+          kind: 'info',
+          message: 'Payment canceled. You can try again whenever you are ready.',
+        }
+      }
+
+      const { checkout: _c, session_id: _s, ...rest } = this.$route.query
+      void _c; void _s;
+      this.$router.replace({ query: rest }).catch(() => {})
+    },
+
+    startCheckoutPolling() {
+      this.stopCheckoutPolling()
+      let attempts = 0
+      const maxAttempts = 4
+      const reload = async () => {
+        attempts += 1
+        await this.load()
+        if (this.myRsvp || attempts >= maxAttempts) {
+          this.stopCheckoutPolling()
+          return
+        }
+        this.checkoutPollTimer = setTimeout(reload, 3000)
+      }
+      this.checkoutPollTimer = setTimeout(reload, 2500)
+    },
+
+    stopCheckoutPolling() {
+      if (this.checkoutPollTimer) {
+        clearTimeout(this.checkoutPollTimer)
+        this.checkoutPollTimer = null
+      }
     },
 
     onRsvpCancelled() {
@@ -393,6 +457,24 @@ export default {
   position: sticky;
   top: var(--spacing-xl);
   align-self: start;
+}
+
+.checkout-banner {
+  padding: var(--spacing-md);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--spacing-md);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+}
+
+.checkout-banner-success {
+  background: var(--color-success-light, #e6f4ea);
+  color: var(--color-success, #1f7a3c);
+}
+
+.checkout-banner-info {
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
 }
 
 .back-row {
