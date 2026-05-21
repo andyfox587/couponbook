@@ -304,10 +304,27 @@ input:focus, select:focus {
 }
 
 .btn:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
-.btn.primary { background: var(--color-secondary); color: var(--color-text-on-secondary); }
-.btn.primary:hover:not(:disabled) { background: var(--color-secondary-hover); }
+.btn.primary {
+  background: var(--color-primary);
+  color: var(--color-text-on-primary);
+  box-shadow: 0 2px 6px rgba(242, 84, 45, 0.25);
+}
+.btn.primary:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+  box-shadow: 0 4px 10px rgba(242, 84, 45, 0.35);
+}
 .btn.secondary { background: var(--color-error); color: var(--color-text-on-error); margin-top: var(--spacing-sm); }
 .btn.secondary:hover:not(:disabled) { background: var(--color-error-hover); }
+
+/* Dark mode: card gets primary-tinted border for definition against dark surfaces */
+:root[data-theme="dark"] .event-rsvp {
+  border: 1px solid rgba(217, 75, 41, 0.2);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .event-rsvp {
+    border: 1px solid rgba(217, 75, 41, 0.2);
+  }
+}
 
 .rsvp-success {
   text-align: center;

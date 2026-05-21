@@ -237,27 +237,30 @@ a.btn,
 router-link.btn {
   display: inline-block;
   padding: var(--spacing-md) var(--spacing-xl);
-  background-color: var(--color-secondary);
-  color: var(--color-text-on-secondary) !important;
+  background-color: var(--color-primary);
+  color: var(--color-text-on-primary) !important;
   text-decoration: none !important;
   border-radius: var(--radius-md);
-  transition: background-color var(--transition-base), color var(--transition-base);
+  transition: background-color var(--transition-base), color var(--transition-base), box-shadow var(--transition-base), transform var(--transition-base);
   min-height: var(--button-height-md);
-  font-weight: var(--font-weight-medium);
+  font-weight: var(--font-weight-semibold);
+  box-shadow: 0 2px 6px rgba(242, 84, 45, 0.25);
 }
 
 .btn:hover,
 a.btn:hover,
 router-link.btn:hover {
-  background-color: var(--color-secondary-hover);
-  color: var(--color-text-on-secondary) !important;
+  background-color: var(--color-primary-hover);
+  color: var(--color-text-on-primary) !important;
   text-decoration: none !important;
+  box-shadow: 0 4px 12px rgba(242, 84, 45, 0.35);
+  transform: translateY(-1px);
 }
 
 .btn:visited,
 a.btn:visited,
 router-link.btn:visited {
-  color: var(--color-text-on-secondary) !important;
+  color: var(--color-text-on-primary) !important;
 }
 
 .error {

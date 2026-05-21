@@ -311,33 +311,39 @@ export default {
 }
 
 .btn-primary {
-  background-color: var(--color-secondary);
-  color: var(--color-text-on-secondary);
+  background-color: var(--color-primary);
+  color: var(--color-text-on-primary);
+  box-shadow: 0 2px 6px rgba(242, 84, 45, 0.25);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background-color: var(--color-secondary-hover);
-  color: var(--color-text-on-secondary);
+  background-color: var(--color-primary-hover);
+  color: var(--color-text-on-primary);
+  box-shadow: 0 4px 10px rgba(242, 84, 45, 0.35);
 }
 
 .btn-secondary {
   background-color: var(--color-success);
   color: var(--color-text-on-success);
+  box-shadow: 0 2px 6px rgba(34, 148, 110, 0.25);
 }
 
 .btn-secondary:hover:not(:disabled) {
   background-color: var(--color-success-hover);
   color: var(--color-text-on-success);
+  box-shadow: 0 4px 10px rgba(34, 148, 110, 0.35);
 }
 
 .btn-tertiary {
   background-color: var(--color-primary);
   color: var(--color-text-on-primary);
+  box-shadow: 0 2px 6px rgba(242, 84, 45, 0.25);
 }
 
 .btn-tertiary:hover:not(:disabled) {
   background-color: var(--color-primary-hover);
   color: var(--color-text-on-primary);
+  box-shadow: 0 4px 10px rgba(242, 84, 45, 0.35);
 }
 
 .btn-gray {

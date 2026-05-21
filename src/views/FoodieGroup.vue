@@ -913,33 +913,69 @@ export default {
 
 .purchase-banner {
   background: var(--color-bg-muted);
-  padding: var(--spacing-lg);
+  padding: var(--spacing-xl);
   text-align: center;
   border-radius: var(--radius-lg);
   margin-bottom: var(--spacing-lg);
   box-shadow: var(--shadow-xs);
 }
 
+.purchase-banner > p {
+  margin: 0 0 var(--spacing-md);
+  color: var(--color-text-primary);
+}
+
+.purchase-buttons {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+  margin-top: var(--spacing-md);
+}
+
 .purchase-btn {
-  margin-top: var(--spacing-sm);
-  background: var(--color-secondary);
-  color: var(--color-text-inverse);
-  border: none;
+  background: var(--color-primary);
+  color: var(--color-text-on-primary);
+  border: 2px solid var(--color-primary);
   padding: var(--spacing-md) var(--spacing-xl);
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: background var(--transition-slow);
+  transition: background var(--transition-base), box-shadow var(--transition-base), transform var(--transition-base), color var(--transition-base), border-color var(--transition-base);
   min-height: var(--button-height-md);
-  font-weight: var(--font-weight-medium);
+  font-weight: var(--font-weight-semibold);
+  box-shadow: 0 2px 8px rgba(242, 84, 45, 0.3);
 }
 
 .purchase-btn:hover:not(:disabled) {
-  background: var(--color-secondary-hover);
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+  box-shadow: 0 4px 14px rgba(242, 84, 45, 0.4);
+  transform: translateY(-1px);
 }
 
 .purchase-btn:disabled {
-  opacity: 0.7;
+  opacity: 0.55;
   cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* Gift = secondary action: outlined ghost so Subscribe is clearly the primary CTA */
+.purchase-btn.gift-btn {
+  background: transparent;
+  color: var(--color-primary);
+  box-shadow: none;
+}
+
+.purchase-btn.gift-btn:hover:not(:disabled) {
+  background: rgba(242, 84, 45, 0.12);
+  color: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+  box-shadow: 0 2px 8px rgba(242, 84, 45, 0.2);
+}
+
+:root[data-theme="dark"] .purchase-btn.gift-btn:hover:not(:disabled) {
+  background: rgba(217, 75, 41, 0.18);
 }
 
 .promo-code-row {
@@ -983,24 +1019,27 @@ export default {
   flex-shrink: 0;
   background: var(--color-primary);
   color: var(--color-text-on-primary);
-  border: none;
+  border: 1px solid var(--color-primary);
   border-radius: var(--radius-md);
   padding: var(--spacing-sm) var(--spacing-lg);
   font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
+  font-weight: var(--font-weight-semibold);
   font-family: var(--font-family-base);
   min-height: var(--button-height-md);
   cursor: pointer;
-  transition: background var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
   white-space: nowrap;
 }
 
 .promo-btn:hover:not(:disabled) {
   background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
 }
 
 .promo-btn:disabled {
-  opacity: 0.5;
+  background: transparent;
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
   cursor: not-allowed;
 }
 

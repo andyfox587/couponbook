@@ -259,7 +259,7 @@ export default {
 
 .capacity-bar-fill {
   height: 100%;
-  background: var(--color-secondary);
+  background: var(--color-primary);
   border-radius: var(--radius-full);
   transition: width var(--transition-base);
 }
@@ -299,8 +299,16 @@ export default {
   min-height: 36px;
 }
 
-.btn.primary { background: var(--color-primary); color: var(--color-text-on-primary); }
-.btn.primary:hover { background: var(--color-primary-hover); }
+.btn.primary {
+  background: var(--color-primary);
+  color: var(--color-text-on-primary);
+  box-shadow: 0 2px 6px rgba(242, 84, 45, 0.25);
+}
+.btn.primary:hover {
+  background: var(--color-primary-hover);
+  box-shadow: 0 4px 10px rgba(242, 84, 45, 0.35);
+  transform: translateY(-1px);
+}
 
 .invite-badge,
 .members-badge {

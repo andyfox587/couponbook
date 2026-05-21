@@ -68,7 +68,7 @@
               <i class="pi pi-calendar-plus icon-spacing-sm"></i>
               {{ calendarDownloading ? 'Preparing…' : 'Add to Calendar' }}
             </button>
-            <span class="calendar-hint">Opens in Google, Apple, or Outlook calendar.</span>
+            <span class="calendar-hint">Downloads a calendar file (.ics) to import into Google, Apple, or Outlook.</span>
             <span v-if="calendarError" class="calendar-error">{{ calendarError }}</span>
           </div>
 
@@ -427,6 +427,14 @@ export default {
   gap: var(--spacing-2xl);
   padding: 0 var(--spacing-xl);
   margin-bottom: var(--spacing-2xl);
+  align-items: start;
+}
+
+.detail-main {
+  background: var(--color-bg-surface);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-xl);
+  box-shadow: var(--shadow-card);
 }
 
 @media (max-width: 700px) {
@@ -474,7 +482,7 @@ export default {
 
 .capacity-bar-fill {
   height: 100%;
-  background: var(--color-secondary);
+  background: var(--color-primary);
   border-radius: var(--radius-full);
   transition: width var(--transition-base);
 }
@@ -569,6 +577,49 @@ export default {
 
 .btn.primary { background: var(--color-primary); color: var(--color-text-on-primary); }
 .btn.primary:hover { background: var(--color-primary-hover); }
-.btn.secondary { background: var(--color-bg-secondary); color: var(--color-text-primary); }
-.btn.secondary:hover { background: var(--color-border-light); }
+.btn.secondary {
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+}
+.btn.secondary:hover {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border-dark);
+}
+
+/* Dark mode: secondary buttons use primary color for contrast against #0f1720 */
+:root[data-theme="dark"] .btn.secondary {
+  background: transparent;
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+:root[data-theme="dark"] .btn.secondary:hover {
+  background: rgba(217, 75, 41, 0.12);
+  border-color: var(--color-primary-hover);
+  color: var(--color-primary-hover);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .btn.secondary {
+    background: transparent;
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+  }
+  :root:not([data-theme="light"]) .btn.secondary:hover {
+    background: rgba(217, 75, 41, 0.12);
+    border-color: var(--color-primary-hover);
+    color: var(--color-primary-hover);
+  }
+}
+
+/* Dark mode: detail card gets a faint primary-tinted border for definition */
+:root[data-theme="dark"] .detail-main {
+  border: 1px solid rgba(217, 75, 41, 0.2);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .detail-main {
+    border: 1px solid rgba(217, 75, 41, 0.2);
+  }
+}
 </style>
