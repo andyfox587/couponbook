@@ -16,6 +16,7 @@ import {
   markGuestTokenUsed,
   paidEventPaymentsEnabled,
 } from '../services/eventPaymentService.js';
+import { buildEventIcs } from '../utils/icsBuilder.js';
 
 const router = express.Router();
 
@@ -895,6 +896,54 @@ router.post('/:id/rsvp/cancel-by-token', async (req, res, next) => {
       refundPolicyWindow: result.refundQuote?.policyWindow || null,
       refundPolicyReason: result.refundQuote?.reason || null,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/v1/events/:id/rsvp/:rsvpId/calendar.ics
+// Auth: a signed-in user who owns the RSVP. The n8n email flow does not call
+// this route; it receives the .ics body inline in the notification webhook
+// payload, so no out-of-band token mechanism is needed.
+router.get('/:id/rsvp/:rsvpId/calendar.ics', auth(), resolveLocalUser, async (req, res, next) => {
+  const { id: eventId, rsvpId } = req.params;
+  try {
+    const [rsvp] = await db
+      .select()
+      .from(eventRsvp)
+      .where(and(eq(eventRsvp.id, rsvpId), eq(eventRsvp.eventId, eventId)))
+      .limit(1);
+    if (!rsvp) return res.status(404).json({ message: 'RSVP not found' });
+
+    const [foundEvent] = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.id, eventId), isNull(event.deletedAt)))
+      .limit(1);
+    if (!foundEvent) return res.status(404).json({ message: 'Event not found' });
+
+    if (!rsvp.userId || rsvp.userId !== req.dbUser?.id) {
+      return res.status(403).json({ error: 'Not authorized to download this calendar invite' });
+    }
+
+    const order = await findEventOrderForRsvp({ rsvpId });
+    const method = rsvp.status === 'cancelled' || rsvp.deletedAt ? 'CANCEL' : 'REQUEST';
+    const base = (process.env.APP_PUBLIC_URL || process.env.APP_URL || 'https://vivaspot.app').replace(/\/$/, '');
+    const eventUrl = foundEvent.slug ? `${base}/e/${foundEvent.slug}` : `${base}/events/${foundEvent.id}`;
+
+    const icsBody = buildEventIcs({
+      event: foundEvent,
+      rsvp,
+      order,
+      method,
+      eventUrl,
+    });
+
+    const filename = `vivaspot-${foundEvent.slug || foundEvent.id}.ics`;
+    res.setHeader('Content-Type', `text/calendar; method=${method}; charset=utf-8`);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(icsBody);
   } catch (err) {
     next(err);
   }

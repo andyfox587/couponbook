@@ -1,0 +1,122 @@
+{
+  "name": "VivaSpot Notification Webhook",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "7ff60e19-5c41-4794-bac3-40d47a517761",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "641c8f89-016f-4f5a-8dc3-5e5c70f6c801",
+      "name": "Notification Webhook1",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [880, 288],
+      "webhookId": "15ec7821-ffc6-4f99-9933-6aacda973764"
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $json.body || $json;\n\nconst template = payload.template || 'notification';\nconst recipient = payload.recipient || {};\nconst data = payload.data || {};\nconst calendar = data.calendar || null;\n\nconst LOGO_URL = 'https://couponbook.vercel.app/img/logo.a3225aed.png';\n\nconst brand = {\n  orange: '#f2542d',\n  orangeHover: '#f76a43',\n  slate: '#38424c',\n  bg: '#EDF1F5',\n  surface: '#FFFFFF',\n  muted: '#4B5563',\n  text: '#1F2933',\n  border: '#D7DEE8',\n  success: '#22946e',\n  danger: '#9c2121',\n  warning: '#a87a2a',\n};\n\nconst escapeHtml = (value = '') =>\n  String(value)\n    .replaceAll('&', '&amp;')\n    .replaceAll('<', '&lt;')\n    .replaceAll('>', '&gt;')\n    .replaceAll('\"', '&quot;')\n    .replaceAll(\"'\", '&#039;');\n\nconst formatDate = (value) => {\n  if (!value) return '';\n  return new Date(value).toLocaleString('en-US', {\n    weekday: 'short',\n    month: 'short',\n    day: 'numeric',\n    hour: 'numeric',\n    minute: '2-digit',\n  });\n};\n\nconst formatMoney = (amountCents = 0, currency = 'usd') =>\n  new Intl.NumberFormat('en-US', {\n    style: 'currency',\n    currency: String(currency || 'usd').toUpperCase(),\n  }).format(Number(amountCents || 0) / 100);\n\nconst button = (href, label, variant = 'primary') => {\n  if (!href) return '';\n  const bg = variant === 'secondary' ? brand.slate : brand.orange;\n  return `\\n    <a href=\"${escapeHtml(href)}\" style=\"display:inline-block;background:${bg};color:#ffffff;text-decoration:none;font-weight:600;border-radius:999px;padding:12px 18px;margin:8px 8px 0 0;\">\\n      ${escapeHtml(label)}\\n    </a>\\n  `;\n};\n\nconst detailRow = (label, value) => {\n  if (!value) return '';\n  return `\\n    <tr>\\n      <td style=\"padding:8px 0;color:${brand.muted};font-size:14px;width:92px;\">${escapeHtml(label)}</td>\\n      <td style=\"padding:8px 0;color:${brand.text};font-size:14px;font-weight:600;\">${escapeHtml(value)}</td>\\n    </tr>\\n  `;\n};\n\nlet subject = 'VivaSpot Notification';\nlet eyebrow = 'VivaSpot';\nlet title = 'You have a new notification';\nlet intro = `Hi ${escapeHtml(recipient.name || 'there')},`;\nlet plainMessage = 'You have a new VivaSpot notification.';\nlet body = `<p style=\"margin:0;color:#394452;line-height:1.6;\">${plainMessage}</p>`;\nlet accentColor = brand.orange;\n\nif (template === 'event_rsvp_confirmation') {\n  const eventName = data.event?.name || 'your event';\n  subject = `You're confirmed for ${eventName}`;\n  eyebrow = 'RSVP Confirmed';\n  title = \"You're in!\";\n  accentColor = brand.success;\n  plainMessage = `Your RSVP is confirmed for ${eventName}.`;\n\n  body = `\\n    <p style=\"margin:0 0 18px;color:#394452;line-height:1.6;\">\\n      Your RSVP is confirmed for <strong style=\"color:${brand.text};\">${escapeHtml(eventName)}</strong>.\\n    </p>\\n\\n    <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;margin:18px 0;padding:0;\">\\n      ${detailRow('When', formatDate(data.event?.startDatetime))}\\n      ${detailRow('Where', data.event?.location)}\\n      ${detailRow('Tickets', data.order?.quantity || 1)}\\n      ${detailRow('Total', data.order?.amountCents ? formatMoney(data.order.amountCents, data.order.currency) : '')}\\n    </table>\\n\\n    <div style=\"margin-top:22px;\">\\n      ${button(data.eventUrl, 'View Event')}\\n      ${button(data.cancellationUrl, 'Cancel RSVP', 'secondary')}\\n    </div>\\n  `;\n}\n\nif (template === 'event_rsvp_cancelled') {\n  const eventName = data.event?.name || 'your event';\n  subject = `RSVP cancelled for ${eventName}`;\n  eyebrow = 'RSVP Cancelled';\n  title = 'Your RSVP was cancelled';\n  accentColor = brand.danger;\n  plainMessage = `Your RSVP for ${eventName} has been cancelled.`;\n\n  const refundCopy = data.refund\n    ? `Refund status: ${data.refund.status}. Amount: ${formatMoney(data.refund.amountCents, data.order?.currency || 'usd')}.`\n    : data.refundQuote?.amountCents === 0\n      ? 'No refund was issued under the event refund policy.'\n      : '';\n\n  body = `\\n    <p style=\"margin:0 0 18px;color:#394452;line-height:1.6;\">\\n      Your RSVP for <strong style=\"color:${brand.text};\">${escapeHtml(eventName)}</strong> has been cancelled.\\n    </p>\\n\\n    <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;margin:18px 0;padding:0;\">\\n      ${detailRow('When', formatDate(data.event?.startDatetime))}\\n      ${detailRow('Where', data.event?.location)}\\n      ${detailRow('Refund', refundCopy)}\\n    </table>\\n  `;\n}\n\nif (template === 'subscription_renewal_reminder') {\n  subject = `Your VivaSpot subscription renews on ${data.renewalDate || 'soon'}`;\n  eyebrow = 'Renewal Reminder';\n  title = 'Your subscription renews soon';\n  accentColor = brand.orange;\n  plainMessage = `Your VivaSpot subscription will automatically renew on ${data.renewalDate || 'your upcoming renewal date'}.`;\n\n  body = `\\n    <p style=\"margin:0 0 18px;color:#394452;line-height:1.6;\">\\n      Your VivaSpot subscription will automatically renew on <strong style=\"color:${brand.text};\">${escapeHtml(data.renewalDate || 'your upcoming renewal date')}</strong>.\\n    </p>\\n    <div style=\"margin-top:22px;\">\\n      ${button(data.profileUrl, 'Manage Subscription')}\\n    </div>\\n  `;\n}\n\nif (template === 'subscription_cancellation_confirmation') {\n  subject = 'Your VivaSpot subscription has been cancelled';\n  eyebrow = 'Subscription Cancelled';\n  title = 'Your subscription was cancelled';\n  accentColor = brand.warning;\n  plainMessage = `Your VivaSpot subscription has been cancelled. You will keep access until ${data.accessUntil || 'the end of your current period'}.`;\n\n  body = `\\n    <p style=\"margin:0 0 18px;color:#394452;line-height:1.6;\">\\n      Your VivaSpot subscription has been cancelled. You will keep access until\\n      <strong style=\"color:${brand.text};\">${escapeHtml(data.accessUntil || 'the end of your current period')}</strong>.\\n    </p>\\n    <div style=\"margin-top:22px;\">\\n      ${button(data.profileUrl, 'View Profile')}\\n    </div>\\n  `;\n}\n\nif (template === 'subscription_payment_failed') {\n  subject = 'Action required: VivaSpot payment failed';\n  eyebrow = 'Payment Failed';\n  title = 'Please update your payment method';\n  accentColor = brand.danger;\n  plainMessage = 'We could not process your VivaSpot subscription payment. Please update your payment method to avoid interruption.';\n\n  body = `\\n    <p style=\"margin:0 0 18px;color:#394452;line-height:1.6;\">\\n      We could not process your VivaSpot subscription payment. Please update your payment method to avoid interruption.\\n    </p>\\n    <div style=\"margin-top:22px;\">\\n      ${button(data.profileUrl, 'Update Payment Method')}\\n    </div>\\n  `;\n}\n\nif (template === 'gift_access_notification') {\n  const gifterName = data.gifterName || 'Someone';\n  subject = `${gifterName} sent you VivaSpot access`;\n  eyebrow = 'Gift Access';\n  title = 'You received a VivaSpot gift';\n  accentColor = brand.success;\n  plainMessage = `${gifterName} gifted you VivaSpot access. Your membership is active and ready to use.`;\n\n  body = `\\n    <p style=\"margin:0 0 18px;color:#394452;line-height:1.6;\">\\n      <strong style=\"color:${brand.text};\">${escapeHtml(gifterName)}</strong> gifted you VivaSpot access. Your membership is active and ready to use.\\n    </p>\\n    <div style=\"margin-top:22px;\">\\n      ${button(data.profileUrl, 'Open VivaSpot')}\\n    </div>\\n  `;\n}\n\nconst html = `\\n  <div style=\"margin:0;padding:0;background:${brand.bg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:${brand.text};\">\\n    <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:${brand.bg};padding:32px 16px;\">\\n      <tr>\\n        <td align=\"center\">\\n          <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:640px;background:${brand.surface};border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.10);\">\\n            <tr>\\n              <td align=\"center\" style=\"background:${brand.surface};padding:24px 28px;border-bottom:1px solid ${brand.border};\">\\n                <img src=\"${LOGO_URL}\" alt=\"VivaSpot\" width=\"140\" style=\"display:block;border:0;outline:none;text-decoration:none;height:auto;max-width:140px;\" />\\n              </td>\\n            </tr>\\n\\n            <tr>\\n              <td style=\"padding:32px 28px 28px;\">\\n                <div style=\"display:inline-block;background:${accentColor};color:#ffffff;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:18px;\">\\n                  ${escapeHtml(eyebrow)}\\n                </div>\\n\\n                <h1 style=\"margin:0 0 12px;font-size:28px;line-height:1.2;color:${brand.text};font-weight:700;\">\\n                  ${escapeHtml(title)}\\n                </h1>\\n\\n                <p style=\"margin:0 0 18px;color:${brand.text};font-size:16px;line-height:1.5;\">\\n                  ${intro}\\n                </p>\\n\\n                <div style=\"background:#F7F9FC;border:1px solid ${brand.border};border-radius:12px;padding:20px;margin-top:18px;\">\\n                  ${body}\\n                </div>\\n              </td>\\n            </tr>\\n\\n            <tr>\\n              <td style=\"padding:20px 28px;background:#F7F9FC;color:${brand.muted};font-size:12px;line-height:1.5;\">\\n                You received this email because of activity on VivaSpot.\\n                <br />\\n                Template: ${escapeHtml(template)}\\n              </td>\\n            </tr>\\n          </table>\\n        </td>\\n      </tr>\\n    </table>\\n  </div>\\n`;\n\nreturn [{\n  json: {\n    template,\n    eventType: payload.eventType,\n    to: recipient.email,\n    recipientName: recipient.name,\n    fromEmail: 'support@ivalu8.com',\n    fromName: 'VivaSpot',\n    subject,\n    html,\n    text: `${subject}\\n\\n${recipient.name ? `Hi ${recipient.name},\\n\\n` : ''}${plainMessage}`,\n    calendar,\n    hasCalendar: Boolean(calendar?.icsBase64),\n    payload,\n  }\n}];"
+      },
+      "id": "c05476d0-07c4-4741-bbd2-81ded6b3bd3e",
+      "name": "Map Email Content1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1104, 288]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{ \"message\": \"Workflow was started\" }",
+        "options": {}
+      },
+      "id": "b4c45c73-58e9-47a5-b57c-8f167077990c",
+      "name": "Respond OK1",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1344, 128]
+    },
+    {
+      "parameters": {
+        "jsCode": "const m = $json;\n\nconst rand = () => `${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;\nconst boundaryMixed = `mixed_${rand()}`;\nconst boundaryAlt = `alt_${rand()}`;\n\nconst encodeHeader = (s) => `=?UTF-8?B?${Buffer.from(String(s), 'utf8').toString('base64')}?=`;\nconst b64Wrap = (b64) => b64.match(/.{1,76}/g).join('\\r\\n');\n\nconst headers = [\n  `From: ${m.fromName ? `${encodeHeader(m.fromName)} <${m.fromEmail}>` : m.fromEmail}`,\n  `To: ${m.to}`,\n  `Subject: ${encodeHeader(m.subject)}`,\n  `MIME-Version: 1.0`,\n  `Content-Type: multipart/mixed; boundary=\"${boundaryMixed}\"`,\n].join('\\r\\n');\n\nconst altPart = [\n  `--${boundaryMixed}`,\n  `Content-Type: multipart/alternative; boundary=\"${boundaryAlt}\"`, '',\n  `--${boundaryAlt}`,\n  `Content-Type: text/plain; charset=UTF-8`,\n  `Content-Transfer-Encoding: 7bit`, '',\n  m.text || '', '',\n  `--${boundaryAlt}`,\n  `Content-Type: text/html; charset=UTF-8`,\n  `Content-Transfer-Encoding: 7bit`, '',\n  m.html, '',\n  `--${boundaryAlt}--`, '',\n].join('\\r\\n');\n\nlet attachmentPart = '';\nif (m.hasCalendar && m.calendar?.icsBase64) {\n  const method = (m.calendar.method || 'REQUEST').toUpperCase();\n  const filename = m.calendar.filename || 'invite.ics';\n  attachmentPart = [\n    '',\n    `--${boundaryMixed}`,\n    `Content-Type: text/calendar; charset=UTF-8; method=${method}; name=\"${filename}\"`,\n    `Content-Transfer-Encoding: base64`,\n    `Content-Disposition: attachment; filename=\"${filename}\"`, '',\n    b64Wrap(m.calendar.icsBase64), '',\n  ].join('\\r\\n');\n}\n\nconst raw = `${headers}\\r\\n\\r\\n${altPart}${attachmentPart}--${boundaryMixed}--\\r\\n`;\nconst rawBase64 = Buffer.from(raw, 'utf8').toString('base64');\n\nreturn [{ json: { rawBase64, to: m.to, fromEmail: m.fromEmail, subject: m.subject } }];"
+      },
+      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "name": "Build MIME",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1344, 432]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://email.us-east-1.amazonaws.com/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "aws",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "Action", "value": "SendRawEmail" },
+            { "name": "Source", "value": "={{ $json.fromEmail }}" },
+            { "name": "Destinations.member.1", "value": "={{ $json.to }}" },
+            { "name": "RawMessage.Data", "value": "={{ $json.rawBase64 }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "893f2a63-b9cc-415c-b610-1259ce8cc310",
+      "name": "SES SendRawEmail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1584, 432],
+      "credentials": {
+        "aws": {
+          "id": "yypHpWDEwjqGEzJB",
+          "name": "AWS account 3"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Notification Webhook1": {
+      "main": [
+        [
+          { "node": "Map Email Content1", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Map Email Content1": {
+      "main": [
+        [
+          { "node": "Respond OK1", "type": "main", "index": 0 },
+          { "node": "Build MIME", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Build MIME": {
+      "main": [
+        [
+          { "node": "SES SendRawEmail", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "76e6b121-6977-4ddf-a3a9-9339e9db233b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "f7e47766d1cfb8d0e904ad4406ed69bd455efb2005b7193fdc8c679d5fc2e4b1"
+  },
+  "id": "VGRheOABoITEJYPM",
+  "tags": [
+    {
+      "createdAt": "2025-07-18T15:28:48.703Z",
+      "updatedAt": "2025-07-18T15:28:48.703Z",
+      "id": "zIOfyht0tdarst9c",
+      "name": "Coupon Book"
+    }
+  ]
+}

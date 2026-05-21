@@ -58,6 +58,20 @@
             <span class="capacity-sub-label">{{ capacityStateLabel }}</span>
           </div>
 
+          <div v-if="hasConfirmedRsvp" class="calendar-row">
+            <button
+              type="button"
+              class="btn secondary calendar-btn"
+              :disabled="calendarDownloading"
+              @click="downloadCalendarInvite"
+            >
+              <i class="pi pi-calendar-plus icon-spacing-sm"></i>
+              {{ calendarDownloading ? 'Preparing…' : 'Add to Calendar' }}
+            </button>
+            <span class="calendar-hint">Opens in Google, Apple, or Outlook calendar.</span>
+            <span v-if="calendarError" class="calendar-error">{{ calendarError }}</span>
+          </div>
+
           <div v-if="evt.inviteOnly" class="invite-badge">Invite Only</div>
           <div v-else-if="evt.visibility === 'members_only'" class="members-badge">Members Only</div>
           <div v-if="evt.status === 'cancelled'" class="alert alert-warning cancelled-alert">
@@ -118,6 +132,8 @@ export default {
       myRsvpLoading: false,
       checkoutBanner: null,
       checkoutPollTimer: null,
+      calendarDownloading: false,
+      calendarError: null,
     }
   },
 
@@ -163,6 +179,11 @@ export default {
     memberPriceLabel() {
       if (!this.evt?.membersOnlyPriceCents) return null
       return `$${(this.evt.membersOnlyPriceCents / 100).toFixed(2)}`
+    },
+
+    hasConfirmedRsvp() {
+      const status = this.myRsvp?.status
+      return Boolean(this.myRsvp?.id && this.evt?.id && (status === 'going' || status === 'checked_in'))
     },
   },
 
@@ -323,6 +344,35 @@ export default {
     onLoginRequested() {
       this.$store?.dispatch('auth/login')
     },
+
+    async downloadCalendarInvite() {
+      if (!this.hasConfirmedRsvp || this.calendarDownloading) return
+      this.calendarDownloading = true
+      this.calendarError = null
+      try {
+        const token = await getAccessToken()
+        const url = `/api/v1/events/${this.evt.id}/rsvp/${this.myRsvp.id}/calendar.ics`
+        const res = await fetch(url, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        })
+        if (!res.ok) throw new Error(`Calendar download failed (${res.status})`)
+        const blob = await res.blob()
+        const filename = `vivaspot-${this.evt.slug || this.evt.id}.ics`
+        const objectUrl = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = objectUrl
+        link.download = filename
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+      } catch (err) {
+        console.error('[EventDetail] calendar download failed', err)
+        this.calendarError = 'Could not download calendar invite. Please try again.'
+      } finally {
+        this.calendarDownloading = false
+      }
+    },
   },
 }
 </script>
@@ -447,6 +497,30 @@ export default {
   border-radius: var(--radius-full);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
+}
+
+.calendar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  margin: var(--spacing-lg) 0;
+  flex-wrap: wrap;
+}
+
+.calendar-btn {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+.calendar-hint {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.calendar-error {
+  font-size: var(--font-size-sm);
+  color: var(--color-error);
 }
 
 .invite-badge { background: var(--color-error-light); color: var(--color-error); }

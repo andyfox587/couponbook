@@ -12,6 +12,7 @@ import {
 import { hasEntitlement } from '../authz/index.js';
 import { stripe } from '../config/stripe.js';
 import { sendNotificationWebhook } from './notificationService.js';
+import { buildEventIcs, buildEventIcsUid } from '../utils/icsBuilder.js';
 
 export const EVENT_REFUND_POLICY_VERSION = 'event-refunds-v1';
 export const PAID_EVENT_TERMS_VERSION = 'paid-events-v1';
@@ -544,6 +545,31 @@ export async function markPaidEventOrderFromSessionExpired(session, { database =
   return updated || null;
 }
 
+// Build the calendar block for the n8n webhook payload. The .ics body is
+// emitted inline as base64 so the workflow can attach it directly without
+// needing to call back into our API (which removes the need for a public
+// URL during local dev and for the HMAC download token altogether).
+function buildCalendarPayload({ eventRow, rsvp, order = null, method }) {
+  if (!rsvp?.id) return null;
+  const base = appUrl().replace(/\/$/, '');
+  const eventUrl = eventRow.slug ? `${base}/e/${eventRow.slug}` : `${base}/events/${eventRow.id}`;
+  const filename = `vivaspot-${eventRow.slug || eventRow.id}.ics`;
+  let icsBase64 = null;
+  try {
+    const icsBody = buildEventIcs({ event: eventRow, rsvp, order, method, eventUrl });
+    icsBase64 = Buffer.from(icsBody, 'utf8').toString('base64');
+  } catch (err) {
+    console.warn('🗓️  Failed to build .ics body for webhook payload:', err.message);
+    return null;
+  }
+  return {
+    method,
+    uid: buildEventIcsUid({ eventId: eventRow.id, rsvpId: rsvp.id }),
+    filename,
+    icsBase64,
+  };
+}
+
 async function notifyEventRsvpConfirmed({ order, eventRow, cancellationToken = null }) {
   const recipientEmail = order.guestEmail;
   if (!recipientEmail) return;
@@ -551,6 +577,15 @@ async function notifyEventRsvpConfirmed({ order, eventRow, cancellationToken = n
   const cancellationUrl = cancellationToken
     ? `${appUrl()}/events/${eventRow.id}/cancel?token=${encodeURIComponent(cancellationToken)}`
     : null;
+
+  const calendar = buildCalendarPayload({
+    eventRow,
+    rsvp: order.rsvpId
+      ? { id: order.rsvpId, guestName: order.guestName, guestEmail: order.guestEmail }
+      : null,
+    order,
+    method: 'REQUEST',
+  });
 
   await sendNotificationWebhook({
     template: 'event_rsvp_confirmation',
@@ -582,6 +617,7 @@ async function notifyEventRsvpConfirmed({ order, eventRow, cancellationToken = n
       eventUrl: eventRow.slug ? `${appUrl()}/e/${eventRow.slug}` : `${appUrl()}/events/${eventRow.id}`,
       cancellationUrl,
       refundPolicyVersion: order.refundPolicyVersion,
+      calendar,
     },
     metadata: {
       channel: 'email',
@@ -593,6 +629,18 @@ async function notifyEventRsvpConfirmed({ order, eventRow, cancellationToken = n
 async function notifyEventRsvpCancelled({ order, eventRow, refund = null, refundQuote = null, rsvp = null }) {
   const recipientEmail = order?.guestEmail || rsvp?.guestEmail;
   if (!recipientEmail) return;
+
+  const rsvpForCalendar = rsvp
+    ? rsvp
+    : order?.rsvpId
+      ? { id: order.rsvpId, guestName: order.guestName, guestEmail: order.guestEmail }
+      : null;
+  const calendar = buildCalendarPayload({
+    eventRow,
+    rsvp: rsvpForCalendar,
+    order,
+    method: 'CANCEL',
+  });
 
   await sendNotificationWebhook({
     template: 'event_rsvp_cancelled',
@@ -627,6 +675,7 @@ async function notifyEventRsvpCancelled({ order, eventRow, refund = null, refund
         policyWindow: refund.policyWindow,
       } : null,
       refundQuote,
+      calendar,
     },
     metadata: {
       channel: 'email',
