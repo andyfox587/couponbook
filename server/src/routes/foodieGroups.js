@@ -5,7 +5,7 @@ import { foodieGroup, purchase, user, foodieGroupMembership, couponBookPrice, co
 import { eq, and, count, isNull, or, sql, desc } from 'drizzle-orm';
 import auth from '../middleware/auth.js';
 import { resolveLocalUser, requireAdmin, canManageGroup } from '../authz/index.js';
-import { stripe } from '../config/stripe.js';
+import { stripe, getStripeMode } from '../config/stripe.js';
 import { getValidatedStripeIds, prepareStripeIdFields, getStripeRecurringPriceId } from '../utils/stripeIdHelper.js';
 import { resolveBaseUrl } from '../utils/appUrl.js';
 import { getFoodieGroupRedemptionOverview, getGroupSubscriptionOverview } from '../redemptionAnalytics.js';
@@ -479,6 +479,24 @@ router.put('/:id/price', auth(), async (req, res, next) => {
       stripeProductId = productId;
     }
 
+    // Self-heal: if the stored product ID doesn't exist in the current Stripe
+    // account (e.g. after a sandbox→live cutover, or DB restored from another
+    // env), drop it so the next branch creates a fresh product.
+    if (stripeProductId) {
+      try {
+        await stripe.products.retrieve(stripeProductId);
+      } catch (retrieveErr) {
+        if (retrieveErr?.raw?.code === 'resource_missing' || retrieveErr?.code === 'resource_missing') {
+          console.warn(
+            `📦  Stored Stripe product "${stripeProductId}" not found in current Stripe account (mode=${getStripeMode()}). Creating a new one.`
+          );
+          stripeProductId = null;
+        } else {
+          throw retrieveErr;
+        }
+      }
+    }
+
     if (!stripeProductId) {
       console.log('📦  Creating new Stripe Product for group', groupId);
       const product = await stripe.products.create({
@@ -599,6 +617,13 @@ router.put('/:id/price', auth(), async (req, res, next) => {
     });
   } catch (err) {
     console.error('📦  error in PUT /groups/:id/price', err);
+    if (err?.type && typeof err.type === 'string' && err.type.startsWith('Stripe')) {
+      return res.status(502).json({
+        error: 'stripe_error',
+        code: err.code || err.raw?.code || null,
+        message: err.message || 'Stripe request failed',
+      });
+    }
     next(err);
   }
 });
