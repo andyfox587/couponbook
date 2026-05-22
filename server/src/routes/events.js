@@ -17,6 +17,7 @@ import {
   paidEventPaymentsEnabled,
 } from '../services/eventPaymentService.js';
 import { buildEventIcs } from '../utils/icsBuilder.js';
+import { resolveBaseUrl } from '../utils/appUrl.js';
 
 const router = express.Router();
 
@@ -753,6 +754,7 @@ router.post('/:id/rsvp', optionalAuth(), async (req, res, next) => {
           guestName: guest_name || null,
           guestEmail: guest_email || dbUser?.email || null,
           refundPolicyAcknowledgedAt,
+          baseUrl: resolveBaseUrl(req),
         });
 
         return res.status(201).json({
@@ -928,7 +930,7 @@ router.get('/:id/rsvp/:rsvpId/calendar.ics', auth(), resolveLocalUser, async (re
 
     const order = await findEventOrderForRsvp({ rsvpId });
     const method = rsvp.status === 'cancelled' || rsvp.deletedAt ? 'CANCEL' : 'REQUEST';
-    const base = (process.env.APP_PUBLIC_URL || process.env.APP_URL || 'https://vivaspot.app').replace(/\/$/, '');
+    const base = resolveBaseUrl(req).replace(/\/$/, '');
     const eventUrl = foundEvent.slug ? `${base}/e/${foundEvent.slug}` : `${base}/events/${foundEvent.id}`;
 
     const icsBody = buildEventIcs({

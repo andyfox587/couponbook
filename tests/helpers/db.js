@@ -275,6 +275,13 @@ async function runMigrations(pg) {
     }
   }
 
+  // Migration 16: merchant_membership table
+  const migration16 = readFileSync(join(drizzleDir, '0016_add_merchant_membership.sql'), 'utf-8');
+  const stmts16 = migration16.split('--> statement-breakpoint').map(s => s.trim()).filter(Boolean);
+  for (const stmt of stmts16) {
+    try { await pg.exec(stmt); } catch (_) { /* continue */ }
+  }
+
   // Migration 17: add stripe_checkout_session_id to event_order
   const migration17 = readFileSync(join(drizzleDir, '0017_add_event_order_checkout_session.sql'), 'utf-8');
   const stmts17 = migration17
@@ -286,6 +293,20 @@ async function runMigrations(pg) {
       return noComments.length > 0;
     });
   for (const stmt of stmts17) {
+    try { await pg.exec(stmt); } catch (_) { /* continue */ }
+  }
+
+  // Migration 18: add website_url to merchant
+  const migration18 = readFileSync(join(drizzleDir, '0018_add_merchant_website_url.sql'), 'utf-8');
+  const stmts18 = migration18
+    .split(';')
+    .map(s => s.trim())
+    .filter(s => {
+      if (!s) return false;
+      const noComments = s.split('\n').filter(l => !l.trim().startsWith('--')).join('\n').trim();
+      return noComments.length > 0;
+    });
+  for (const stmt of stmts18) {
     try { await pg.exec(stmt); } catch (_) { /* continue */ }
   }
 }

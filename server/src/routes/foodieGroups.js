@@ -7,6 +7,7 @@ import auth from '../middleware/auth.js';
 import { resolveLocalUser, requireAdmin, canManageGroup } from '../authz/index.js';
 import { stripe } from '../config/stripe.js';
 import { getValidatedStripeIds, prepareStripeIdFields, getStripeRecurringPriceId } from '../utils/stripeIdHelper.js';
+import { resolveBaseUrl } from '../utils/appUrl.js';
 import { getFoodieGroupRedemptionOverview, getGroupSubscriptionOverview } from '../redemptionAnalytics.js';
 import { getFoodieGroupEventOverview, getEventSubmissionCounts } from '../eventAnalytics.js';
 
@@ -723,8 +724,7 @@ router.post('/:id/checkout', auth(), async (req, res, next) => {
     isSubscriptionGroup = resolvedGroup.billingModel === 'subscription';
 
     // 5) Build success and cancel URLs
-    // Use APP_PUBLIC_URL to prevent redirect issues with proxies/CDNs
-    const baseUrl = process.env.APP_PUBLIC_URL || process.env.APP_URL || 'http://localhost:8080';
+    const baseUrl = resolveBaseUrl(req);
     const successUrl = `${baseUrl}/checkout/success/${groupRow.slug}?session_id={CHECKOUT_SESSION_ID}`;
     const cancelUrl = `${baseUrl}/foodie-group/${groupRow.slug}?cancelled=true`;
 
@@ -1316,7 +1316,7 @@ router.post('/:id/gift', auth(), resolveLocalUser, async (req, res, next) => {
       return res.status(400).json({ error: 'No recurring Stripe price configured for this group' });
     }
 
-    const baseUrl = process.env.APP_PUBLIC_URL || process.env.APP_URL || 'http://localhost:8080';
+    const baseUrl = resolveBaseUrl(req);
     const successUrl = `${baseUrl}/checkout/success/${groupRow.slug}?session_id={CHECKOUT_SESSION_ID}&gift=true`;
     const cancelUrl = `${baseUrl}/foodie-group/${groupRow.slug}?cancelled=true`;
 
@@ -1426,7 +1426,7 @@ router.post('/:id/billing-portal', auth(), resolveLocalUser, async (req, res, ne
       });
     }
 
-    const baseUrl = process.env.APP_PUBLIC_URL || process.env.APP_URL || 'http://localhost:8080';
+    const baseUrl = resolveBaseUrl(req);
     const returnUrl = `${baseUrl}/foodie-group/${groupRow.slug}`;
 
     const session = await stripe.billingPortal.sessions.create({

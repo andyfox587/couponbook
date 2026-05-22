@@ -184,7 +184,9 @@ Create a `.env` file in the root directory. Key variables include:
 | `STRIPE_SECRET_KEY` | Secret key (`sk_test_...` or `sk_live_...`) |
 | `STRIPE_PUBLISHABLE_KEY` | Publishable key (`pk_test_...` or `pk_live_...`) |
 | `STRIPE_WEBHOOK_SECRET` | Per-environment: dev = from `stripe listen`; production = from Dashboard webhook endpoint |
-| `APP_URL` | App base URL for redirects (e.g. `https://your-app.vercel.app` in production) |
+| `APP_URL` | Legacy alias for `APP_PUBLIC_URL`. Either works; `APP_PUBLIC_URL` takes precedence. |
+| `APP_PUBLIC_URL` | Public base URL for this environment. Used for Stripe redirects and transactional email links when there's no request context. Set per Vercel environment: prod = your prod URL; preview = leave unset so the per-deployment `VERCEL_URL` is used; dev = `http://localhost:8080`. |
+| `ALLOWED_APP_ORIGINS` | Comma-separated allowlist of `Origin` headers permitted to drive Stripe checkout success/cancel URLs. Supports exact origins and wildcard subdomain patterns (e.g. `https://*.vercel.app`). Set once across all environments. |
 
 ### Email & Cron (subscription billing)
 | Variable | Description |

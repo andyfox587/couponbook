@@ -15,6 +15,7 @@ import { db } from '../db.js';
 import { user } from '../schema.js';
 import { eq } from 'drizzle-orm';
 import { sendNotificationWebhook } from './notificationService.js';
+import { serverBaseUrl } from '../utils/appUrl.js';
 
 /**
  * Low-level n8n notification helper. Returns true on success, false on failure.
@@ -75,7 +76,7 @@ export async function sendRenewalReminderEmail(purchaseRow) {
       })
     : 'soon';
 
-  const appUrl = process.env.APP_PUBLIC_URL || process.env.APP_URL || 'https://vivaspot.app';
+  const appUrl = serverBaseUrl();
 
   return requestEmail({
     template: 'subscription_renewal_reminder',
@@ -123,7 +124,7 @@ export async function sendCancellationConfirmationEmail(purchaseRow) {
       })
     : 'the end of your current period';
 
-  const appUrl = process.env.APP_PUBLIC_URL || process.env.APP_URL || 'https://vivaspot.app';
+  const appUrl = serverBaseUrl();
   return requestEmail({
     template: 'subscription_cancellation_confirmation',
     eventType: 'subscription.cancelled',
@@ -171,7 +172,7 @@ export async function sendGiftAccessNotificationEmail(purchaseRow) {
     if (gifter?.name) gifterName = gifter.name;
   }
 
-  const appUrl = process.env.APP_PUBLIC_URL || process.env.APP_URL || 'https://vivaspot.app';
+  const appUrl = serverBaseUrl();
   return requestEmail({
     template: 'gift_access_notification',
     eventType: 'gift.access_granted',
@@ -208,7 +209,7 @@ export async function sendPaymentFailedEmail(purchaseRow) {
 
   if (!purchaseUser) return false;
 
-  const appUrl = process.env.APP_PUBLIC_URL || process.env.APP_URL || 'https://vivaspot.app';
+  const appUrl = serverBaseUrl();
   return requestEmail({
     template: 'subscription_payment_failed',
     eventType: 'subscription.payment_failed',

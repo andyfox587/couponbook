@@ -168,6 +168,114 @@ describe('Paid event payments', () => {
     expect(rsvp.attendees).toBe(2);
   }, TEST_TIMEOUT_MS);
 
+  it('uses the request Origin for success_url when it matches the allowlist', async () => {
+    const previousAllowlist = process.env.ALLOWED_APP_ORIGINS;
+    process.env.ALLOWED_APP_ORIGINS = 'https://couponbook.vercel.app,https://*.vercel.app';
+
+    try {
+      const owner = await seedHelpers.createUser(db, { cognitoSub: 'origin-allowed-owner' });
+      const group = await seedHelpers.createFoodieGroup(db);
+      const merchant = await seedHelpers.createMerchant(db, owner.id);
+      await seedHelpers.createMerchantBillingProfile(db, merchant.id);
+      const evt = await seedHelpers.createEvent(db, group.id, merchant.id, {
+        isFree: false,
+        priceCents: 2500,
+        capacity: 5,
+      });
+
+      const previewOrigin = 'https://viva-spot-events-abc123.vercel.app';
+      const res = await request(app)
+        .post(`/api/v1/events/${evt.id}/rsvp`)
+        .set('Origin', previewOrigin)
+        .send({
+          attendees: 1,
+          guest_name: 'Preview Guest',
+          guest_email: 'preview@example.com',
+          refund_policy_accepted: true,
+        });
+
+      expect(res.status).toBe(201);
+      const sessionArgs = stripeMock.checkout.sessions.create.mock.calls.at(-1)[0];
+      expect(sessionArgs.success_url.startsWith(previewOrigin)).toBe(true);
+      expect(sessionArgs.cancel_url.startsWith(previewOrigin)).toBe(true);
+    } finally {
+      if (previousAllowlist === undefined) delete process.env.ALLOWED_APP_ORIGINS;
+      else process.env.ALLOWED_APP_ORIGINS = previousAllowlist;
+    }
+  }, TEST_TIMEOUT_MS);
+
+  it('falls back to the configured base URL when Origin is not on the allowlist', async () => {
+    const previousAllowlist = process.env.ALLOWED_APP_ORIGINS;
+    const previousAppUrl = process.env.APP_PUBLIC_URL;
+    process.env.ALLOWED_APP_ORIGINS = 'https://couponbook.vercel.app';
+    process.env.APP_PUBLIC_URL = 'https://prod.example.com';
+
+    try {
+      const owner = await seedHelpers.createUser(db, { cognitoSub: 'origin-disallowed-owner' });
+      const group = await seedHelpers.createFoodieGroup(db);
+      const merchant = await seedHelpers.createMerchant(db, owner.id);
+      await seedHelpers.createMerchantBillingProfile(db, merchant.id);
+      const evt = await seedHelpers.createEvent(db, group.id, merchant.id, {
+        isFree: false,
+        priceCents: 2500,
+        capacity: 5,
+      });
+
+      const res = await request(app)
+        .post(`/api/v1/events/${evt.id}/rsvp`)
+        .set('Origin', 'https://evil.example.com')
+        .send({
+          attendees: 1,
+          guest_name: 'Evil Guest',
+          guest_email: 'evil@example.com',
+          refund_policy_accepted: true,
+        });
+
+      expect(res.status).toBe(201);
+      const sessionArgs = stripeMock.checkout.sessions.create.mock.calls.at(-1)[0];
+      expect(sessionArgs.success_url.startsWith('https://prod.example.com')).toBe(true);
+      expect(sessionArgs.success_url).not.toContain('evil.example.com');
+    } finally {
+      if (previousAllowlist === undefined) delete process.env.ALLOWED_APP_ORIGINS;
+      else process.env.ALLOWED_APP_ORIGINS = previousAllowlist;
+      if (previousAppUrl === undefined) delete process.env.APP_PUBLIC_URL;
+      else process.env.APP_PUBLIC_URL = previousAppUrl;
+    }
+  }, TEST_TIMEOUT_MS);
+
+  it('falls back to the configured base URL when no Origin header is present', async () => {
+    const previousAppUrl = process.env.APP_PUBLIC_URL;
+    process.env.APP_PUBLIC_URL = 'https://prod.example.com';
+
+    try {
+      const owner = await seedHelpers.createUser(db, { cognitoSub: 'no-origin-owner' });
+      const group = await seedHelpers.createFoodieGroup(db);
+      const merchant = await seedHelpers.createMerchant(db, owner.id);
+      await seedHelpers.createMerchantBillingProfile(db, merchant.id);
+      const evt = await seedHelpers.createEvent(db, group.id, merchant.id, {
+        isFree: false,
+        priceCents: 2500,
+        capacity: 5,
+      });
+
+      const res = await request(app)
+        .post(`/api/v1/events/${evt.id}/rsvp`)
+        .send({
+          attendees: 1,
+          guest_name: 'No Origin Guest',
+          guest_email: 'no-origin@example.com',
+          refund_policy_accepted: true,
+        });
+
+      expect(res.status).toBe(201);
+      const sessionArgs = stripeMock.checkout.sessions.create.mock.calls.at(-1)[0];
+      expect(sessionArgs.success_url.startsWith('https://prod.example.com')).toBe(true);
+    } finally {
+      if (previousAppUrl === undefined) delete process.env.APP_PUBLIC_URL;
+      else process.env.APP_PUBLIC_URL = previousAppUrl;
+    }
+  }, TEST_TIMEOUT_MS);
+
   it('still confirms RSVPs via the legacy payment_intent.succeeded webhook', async () => {
     const owner = await seedHelpers.createUser(db, { cognitoSub: 'legacy-pi-owner' });
     const group = await seedHelpers.createFoodieGroup(db);

@@ -13,6 +13,7 @@ import { hasEntitlement } from '../authz/index.js';
 import { stripe } from '../config/stripe.js';
 import { sendNotificationWebhook } from './notificationService.js';
 import { buildEventIcs, buildEventIcsUid } from '../utils/icsBuilder.js';
+import { serverBaseUrl } from '../utils/appUrl.js';
 
 export const EVENT_REFUND_POLICY_VERSION = 'event-refunds-v1';
 export const PAID_EVENT_TERMS_VERSION = 'paid-events-v1';
@@ -25,9 +26,6 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function appUrl() {
-  return process.env.APP_PUBLIC_URL || process.env.APP_URL || 'https://vivaspot.app';
-}
 
 function hashToken(rawToken) {
   return crypto.createHash('sha256').update(rawToken).digest('hex');
@@ -187,6 +185,7 @@ export async function createPaidEventOrder({
   guestName = null,
   guestEmail = null,
   refundPolicyAcknowledgedAt,
+  baseUrl,
 }) {
   if (!paidEventPaymentsEnabled()) {
     const error = new Error('Paid event payments are not enabled');
@@ -251,7 +250,7 @@ export async function createPaidEventOrder({
     .returning();
 
   try {
-    const base = appUrl().replace(/\/$/, '');
+    const base = (baseUrl || serverBaseUrl()).replace(/\/$/, '');
     const eventPath = eventRow.slug ? `/e/${eventRow.slug}` : `/events/${eventRow.id}`;
     const successUrl = `${base}${eventPath}?checkout=success&session_id={CHECKOUT_SESSION_ID}`;
     const cancelUrl = `${base}${eventPath}?checkout=canceled`;
@@ -551,7 +550,7 @@ export async function markPaidEventOrderFromSessionExpired(session, { database =
 // URL during local dev and for the HMAC download token altogether).
 function buildCalendarPayload({ eventRow, rsvp, order = null, method }) {
   if (!rsvp?.id) return null;
-  const base = appUrl().replace(/\/$/, '');
+  const base = serverBaseUrl().replace(/\/$/, '');
   const eventUrl = eventRow.slug ? `${base}/e/${eventRow.slug}` : `${base}/events/${eventRow.id}`;
   const filename = `vivaspot-${eventRow.slug || eventRow.id}.ics`;
   let icsBase64 = null;
@@ -575,7 +574,7 @@ async function notifyEventRsvpConfirmed({ order, eventRow, cancellationToken = n
   if (!recipientEmail) return;
 
   const cancellationUrl = cancellationToken
-    ? `${appUrl()}/events/${eventRow.id}/cancel?token=${encodeURIComponent(cancellationToken)}`
+    ? `${serverBaseUrl()}/events/${eventRow.id}/cancel?token=${encodeURIComponent(cancellationToken)}`
     : null;
 
   const calendar = buildCalendarPayload({
@@ -614,7 +613,7 @@ async function notifyEventRsvpConfirmed({ order, eventRow, cancellationToken = n
         currency: order.currency,
         pricingBasis: order.pricingBasis,
       },
-      eventUrl: eventRow.slug ? `${appUrl()}/e/${eventRow.slug}` : `${appUrl()}/events/${eventRow.id}`,
+      eventUrl: eventRow.slug ? `${serverBaseUrl()}/e/${eventRow.slug}` : `${serverBaseUrl()}/events/${eventRow.id}`,
       cancellationUrl,
       refundPolicyVersion: order.refundPolicyVersion,
       calendar,
