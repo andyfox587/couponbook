@@ -1,121 +1,136 @@
 <!-- src/views/EventDetail.vue -->
 <template>
   <div class="event-detail">
-    <div v-if="loading" class="state-card">
-      <p class="muted">Loading event…</p>
-    </div>
-
-    <div v-else-if="error" class="state-card error-card">
-      <p>{{ error }}</p>
-      <button class="btn primary" @click="$router.push('/events')">Back to Events</button>
-    </div>
-
-    <template v-else-if="evt">
-      <!-- Hero -->
-      <div
-        class="hero"
-        :style="evt.bannerImageUrl ? `background-image: url('${evt.bannerImageUrl}')` : ''"
-        :class="{ 'hero-no-image': !evt.bannerImageUrl }"
-      >
-        <div class="hero-overlay">
-          <h1>{{ evt.name }}</h1>
-          <p class="merchant-name" v-if="evt.merchantName">by {{ evt.merchantName }}</p>
+    <ComingSoonOverlay v-if="!eventsEnabled">
+      <div class="coming-soon-placeholder">
+        <div class="hero hero-no-image"></div>
+        <div class="detail-body">
+          <div class="detail-main">
+            <p class="description muted">Event details will be available when events launch.</p>
+          </div>
         </div>
       </div>
+    </ComingSoonOverlay>
 
-      <!-- Details -->
-      <div class="detail-body">
-        <div class="detail-main">
-          <p class="description">{{ evt.description }}</p>
+    <template v-else>
+      <div v-if="loading" class="state-card">
+        <p class="muted">Loading event…</p>
+      </div>
 
-          <dl class="meta-list">
-            <template v-if="evt.location">
-              <dt><i class="pi pi-map-marker"></i> Location</dt>
-              <dd>{{ evt.location }}</dd>
-            </template>
-            <dt><i class="pi pi-calendar"></i> Starts</dt>
-            <dd>{{ formatDate(evt.startDatetime) }}</dd>
-            <template v-if="evt.endDatetime">
-              <dt><i class="pi pi-calendar"></i> Ends</dt>
-              <dd>{{ formatDate(evt.endDatetime) }}</dd>
-            </template>
-            <dt><i class="pi pi-users"></i> Capacity</dt>
-            <dd>{{ evt.capacity > 0 ? evt.capacity + ' spots' : 'Unlimited' }}</dd>
-            <dt><i class="pi pi-tag"></i> Price</dt>
-            <dd>
-              {{ priceLabel }}
-              <span v-if="memberPriceLabel" class="member-price">
-                (Members: {{ memberPriceLabel }})
-              </span>
-            </dd>
-          </dl>
+      <div v-else-if="error" class="state-card error-card">
+        <p>{{ error }}</p>
+        <button class="btn primary" @click="$router.push('/events')">Back to Events</button>
+      </div>
 
-          <div v-if="evt.capacity > 0" class="capacity-section">
-            <div class="capacity-bar">
-              <div class="capacity-bar-fill" :style="{ width: capacityPercent + '%' }"></div>
+      <template v-else-if="evt">
+        <!-- Hero -->
+        <div
+          class="hero"
+          :style="evt.bannerImageUrl ? `background-image: url('${evt.bannerImageUrl}')` : ''"
+          :class="{ 'hero-no-image': !evt.bannerImageUrl }"
+        >
+          <div class="hero-overlay">
+            <h1>{{ evt.name }}</h1>
+            <p class="merchant-name" v-if="evt.merchantName">by {{ evt.merchantName }}</p>
+          </div>
+        </div>
+
+        <!-- Details -->
+        <div class="detail-body">
+          <div class="detail-main">
+            <p class="description">{{ evt.description }}</p>
+
+            <dl class="meta-list">
+              <template v-if="evt.location">
+                <dt><i class="pi pi-map-marker"></i> Location</dt>
+                <dd>{{ evt.location }}</dd>
+              </template>
+              <dt><i class="pi pi-calendar"></i> Starts</dt>
+              <dd>{{ formatDate(evt.startDatetime) }}</dd>
+              <template v-if="evt.endDatetime">
+                <dt><i class="pi pi-calendar"></i> Ends</dt>
+                <dd>{{ formatDate(evt.endDatetime) }}</dd>
+              </template>
+              <dt><i class="pi pi-users"></i> Capacity</dt>
+              <dd>{{ evt.capacity > 0 ? evt.capacity + ' spots' : 'Unlimited' }}</dd>
+              <dt><i class="pi pi-tag"></i> Price</dt>
+              <dd>
+                {{ priceLabel }}
+                <span v-if="memberPriceLabel" class="member-price">
+                  (Members: {{ memberPriceLabel }})
+                </span>
+              </dd>
+            </dl>
+
+            <div v-if="evt.capacity > 0" class="capacity-section">
+              <div class="capacity-bar">
+                <div class="capacity-bar-fill" :style="{ width: capacityPercent + '%' }"></div>
+              </div>
+              <span class="capacity-label">{{ confirmedCount }} / {{ evt.capacity }} spots filled</span>
+              <span class="capacity-sub-label">{{ capacityStateLabel }}</span>
             </div>
-            <span class="capacity-label">{{ confirmedCount }} / {{ evt.capacity }} spots filled</span>
-            <span class="capacity-sub-label">{{ capacityStateLabel }}</span>
+
+            <div v-if="hasConfirmedRsvp" class="calendar-row">
+              <button
+                type="button"
+                class="btn secondary calendar-btn"
+                :disabled="calendarDownloading"
+                @click="downloadCalendarInvite"
+              >
+                <i class="pi pi-calendar-plus icon-spacing-sm"></i>
+                {{ calendarDownloading ? 'Preparing…' : 'Add to Calendar' }}
+              </button>
+              <span class="calendar-hint">Downloads a calendar file (.ics) to import into Google, Apple, or Outlook.</span>
+              <span v-if="calendarError" class="calendar-error">{{ calendarError }}</span>
+            </div>
+
+            <div v-if="evt.inviteOnly" class="invite-badge">Invite Only</div>
+            <div v-else-if="evt.visibility === 'members_only'" class="members-badge">Members Only</div>
+            <div v-if="evt.status === 'cancelled'" class="alert alert-warning cancelled-alert">
+              This event has been cancelled. Existing paid RSVPs are eligible for a full refund.
+            </div>
           </div>
 
-          <div v-if="hasConfirmedRsvp" class="calendar-row">
-            <button
-              type="button"
-              class="btn secondary calendar-btn"
-              :disabled="calendarDownloading"
-              @click="downloadCalendarInvite"
-            >
-              <i class="pi pi-calendar-plus icon-spacing-sm"></i>
-              {{ calendarDownloading ? 'Preparing…' : 'Add to Calendar' }}
-            </button>
-            <span class="calendar-hint">Downloads a calendar file (.ics) to import into Google, Apple, or Outlook.</span>
-            <span v-if="calendarError" class="calendar-error">{{ calendarError }}</span>
-          </div>
-
-          <div v-if="evt.inviteOnly" class="invite-badge">Invite Only</div>
-          <div v-else-if="evt.visibility === 'members_only'" class="members-badge">Members Only</div>
-          <div v-if="evt.status === 'cancelled'" class="alert alert-warning cancelled-alert">
-            This event has been cancelled. Existing paid RSVPs are eligible for a full refund.
+          <!-- RSVP Panel -->
+          <div class="rsvp-panel" v-if="!evt.inviteOnly && evt.status !== 'cancelled'">
+            <div v-if="checkoutBanner" class="checkout-banner" :class="`checkout-banner-${checkoutBanner.kind}`">
+              {{ checkoutBanner.message }}
+            </div>
+            <EventRSVP
+              :event="evt"
+              :is-authenticated="isAuthenticated"
+              :has-membership="hasMembership"
+              :existing-rsvp="myRsvp"
+              :rsvp-loading="myRsvpLoading"
+              :user-profile="userProfile"
+              @rsvp-submitted="onRsvpSubmitted"
+              @rsvp-cancelled="onRsvpCancelled"
+              @login-requested="onLoginRequested"
+            />
           </div>
         </div>
 
-        <!-- RSVP Panel -->
-        <div class="rsvp-panel" v-if="!evt.inviteOnly && evt.status !== 'cancelled'">
-          <div v-if="checkoutBanner" class="checkout-banner" :class="`checkout-banner-${checkoutBanner.kind}`">
-            {{ checkoutBanner.message }}
-          </div>
-          <EventRSVP
-            :event="evt"
-            :is-authenticated="isAuthenticated"
-            :has-membership="hasMembership"
-            :existing-rsvp="myRsvp"
-            :rsvp-loading="myRsvpLoading"
-            :user-profile="userProfile"
-            @rsvp-submitted="onRsvpSubmitted"
-            @rsvp-cancelled="onRsvpCancelled"
-            @login-requested="onLoginRequested"
-          />
+        <!-- Back -->
+        <div class="back-row">
+          <button class="btn secondary" @click="$router.push('/events')">
+            <i class="pi pi-arrow-left icon-spacing-sm"></i>All Events
+          </button>
         </div>
-      </div>
-
-      <!-- Back -->
-      <div class="back-row">
-        <button class="btn secondary" @click="$router.push('/events')">
-          <i class="pi pi-arrow-left icon-spacing-sm"></i>All Events
-        </button>
-      </div>
+      </template>
     </template>
   </div>
 </template>
 
 <script>
 import EventRSVP from '@/components/Events/EventRSVP.vue'
+import ComingSoonOverlay from '@/components/Common/ComingSoonOverlay.vue'
 import { getEvent, getEventBySlug, getMyRsvpForEvent } from '@/services/eventService'
 import { getAccessToken } from '@/services/authService'
+import { FEATURES } from '@/config/features'
 
 export default {
   name: 'EventDetail',
-  components: { EventRSVP },
+  components: { EventRSVP, ComingSoonOverlay },
 
   props: {
     id:   { type: String, default: null },
@@ -124,6 +139,7 @@ export default {
 
   data() {
     return {
+      eventsEnabled: FEATURES.EVENTS_ENABLED,
       evt: null,
       loading: true,
       error: null,
@@ -382,6 +398,10 @@ export default {
   max-width: 900px;
   margin: 0 auto;
   color: var(--color-text-primary);
+}
+
+.coming-soon-placeholder {
+  min-height: 400px;
 }
 
 .state-card {

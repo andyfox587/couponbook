@@ -1,7 +1,16 @@
 <!-- src/views/EventPage.vue -->
 <template>
   <div class="event-page-view">
-    <section class="featured-events">
+    <ComingSoonOverlay v-if="!eventsEnabled">
+      <section class="featured-events">
+        <h1>Upcoming Events</h1>
+        <div class="state-card">
+          <p class="muted">No upcoming events right now. Check back soon!</p>
+        </div>
+      </section>
+    </ComingSoonOverlay>
+
+    <section v-else class="featured-events">
       <h1>Upcoming Events</h1>
 
       <div v-if="loading" class="state-card">
@@ -28,14 +37,17 @@
 
 <script>
 import EventList from '@/components/Events/EventList.vue'
+import ComingSoonOverlay from '@/components/Common/ComingSoonOverlay.vue'
 import { listEvents, getMyRsvps } from '@/services/eventService'
+import { FEATURES } from '@/config/features'
 
 export default {
   name: 'EventPage',
-  components: { EventList },
+  components: { EventList, ComingSoonOverlay },
 
   data() {
     return {
+      eventsEnabled: FEATURES.EVENTS_ENABLED,
       events: [],
       loading: true,
       error: null,

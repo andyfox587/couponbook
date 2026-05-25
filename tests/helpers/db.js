@@ -309,6 +309,20 @@ async function runMigrations(pg) {
   for (const stmt of stmts18) {
     try { await pg.exec(stmt); } catch (_) { /* continue */ }
   }
+
+  // Migration 19: multi-tier subscription prices
+  const migration19 = readFileSync(join(drizzleDir, '0019_multi_tier_prices.sql'), 'utf-8');
+  const stmts19 = migration19
+    .split(';')
+    .map(s => s.trim())
+    .filter(s => {
+      if (!s) return false;
+      const noComments = s.split('\n').filter(l => !l.trim().startsWith('--')).join('\n').trim();
+      return noComments.length > 0;
+    });
+  for (const stmt of stmts19) {
+    try { await pg.exec(stmt); } catch (_) { /* continue */ }
+  }
 }
 
 /**

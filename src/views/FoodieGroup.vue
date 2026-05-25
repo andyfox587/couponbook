@@ -41,9 +41,35 @@
           </div>
           <p v-if="showPurchaseControls && promoError" class="promo-error">{{ promoError }}</p>
 
+          <!-- Multi-tier plan picker for subscription groups with 2+ active tiers -->
+          <div v-if="showPurchaseControls && showPlanPicker" class="plan-picker">
+            <label
+              v-for="tier in activeTiers"
+              :key="tier.id"
+              class="plan-card"
+              :class="{ 'plan-card-selected': selectedTierId === tier.id }"
+            >
+              <input
+                type="radio"
+                name="planTier"
+                :value="tier.id"
+                v-model="selectedTierId"
+                class="plan-radio"
+              />
+              <div class="plan-card-body">
+                <div class="plan-card-row">
+                  <span class="plan-card-label">{{ tier.label || formatTierLabel(tier) }}</span>
+                  <span v-if="tier.savingsPct > 0" class="plan-card-savings">Save {{ tier.savingsPct }}%</span>
+                </div>
+                <div class="plan-card-price">{{ tier.display }}</div>
+                <div class="plan-card-cadence">{{ formatTierCadence(tier) }}</div>
+              </div>
+            </label>
+          </div>
+
           <div class="purchase-buttons">
             <button v-if="showPurchaseControls" @click="onPurchaseClick" :disabled="checkoutLoading" class="purchase-btn">
-              {{ checkoutLoading ? 'Processing...' : `${isSubscriptionGroup ? 'Subscribe' : 'Buy Coupon Book'} — ${groupPriceDisplay}${billingCadenceSuffix}` }}
+              {{ purchaseButtonLabel }}
             </button>
             <button
               v-if="showGiftActions"
@@ -64,6 +90,16 @@
             <div class="gift-modal">
               <h3>Gift a Subscription</h3>
               <p>Enter the email address of the person you'd like to gift access to <strong>{{ group.name }}</strong>.</p>
+              <!-- Gift tier picker (only when there's a real choice) -->
+              <div v-if="activeTiers.length > 1" class="gift-tier-list">
+                <label v-for="tier in activeTiers" :key="tier.id" class="gift-tier-option">
+                  <input type="radio" name="giftTier" :value="tier.id" v-model="giftTierId" />
+                  <span>
+                    <strong>{{ tier.label || formatTierLabel(tier) }}</strong>
+                    — {{ tier.display }} · {{ formatTierCadence(tier) }}
+                  </span>
+                </label>
+              </div>
               <input
                 v-model="giftEmail"
                 type="email"
@@ -128,11 +164,19 @@
       </section>
 
       <section class="events-section section-card">
-        <h2>Group Events</h2>
-        <p v-if="loadingEvents">Loading events...</p>
-        <p v-else-if="eventError" class="error">{{ eventError }}</p>
-        <p v-else-if="events.length === 0" class="muted">No upcoming events published for this group yet.</p>
-        <EventList v-else :events="events" />
+        <ComingSoonOverlay v-if="!eventsEnabled">
+          <div class="events-coming-soon-placeholder">
+            <h2>Group Events</h2>
+            <p class="muted">No upcoming events published for this group yet.</p>
+          </div>
+        </ComingSoonOverlay>
+        <template v-else>
+          <h2>Group Events</h2>
+          <p v-if="loadingEvents">Loading events...</p>
+          <p v-else-if="eventError" class="error">{{ eventError }}</p>
+          <p v-else-if="events.length === 0" class="muted">No upcoming events published for this group yet.</p>
+          <EventList v-else :events="events" />
+        </template>
       </section>
 
       <!-- Map Section -->
@@ -149,18 +193,22 @@
 <script>
 import CouponList from '@/components/Coupons/CouponList.vue';
 import EventList from '@/components/Events/EventList.vue';
+import ComingSoonOverlay from '@/components/Common/ComingSoonOverlay.vue';
 import SidebarFilters from '@/components/Coupons/SidebarFilters.vue';
 import { mapGetters } from 'vuex';
 import { signIn, getAccessToken } from '@/services/authService';
 import { ensureCouponsHaveCuisine } from '@/utils/helpers';
 import { listEvents } from '@/services/eventService';
+import { FEATURES } from '@/config/features';
+import { listGroupPrices } from '@/services/subscriptionService';
 
 export default {
   name: 'FoodieGroupView',
-  components: { CouponList, EventList, SidebarFilters },
+  components: { CouponList, EventList, ComingSoonOverlay, SidebarFilters },
 
   data() {
     return {
+      eventsEnabled: FEATURES.EVENTS_ENABLED,
       group: null,
       hasPurchasedCouponBook: false,
       coupons: [],
@@ -177,9 +225,13 @@ export default {
       promoCode: '',
       promoLoading: false,
       promoError: null,
+      // Multi-tier pricing
+      tiers: [],
+      selectedTierId: null,
       // Gift state
       showGiftModal: false,
       giftEmail: '',
+      giftTierId: null,
       giftLoading: false,
       giftError: null,
       filters: {
@@ -253,31 +305,46 @@ export default {
     },
 
     /**
-     * Gifts are only allowed when the current subscription cadence is >= 6 months.
+     * Gifts now use one-time payment mode, so any active tier can be gifted
+     * (the gifter is charged once, recipient gets N months of access). The
+     * old 6-month minimum is gone — eligibility just requires a subscription
+     * group with at least one published tier.
      */
-    giftCadenceMonths() {
-      if (!this.isSubscriptionGroup) return null;
-      const interval = this.groupPrice?.billingInterval;
-      const count = Number(this.groupPrice?.billingIntervalCount || 0);
-      if (!interval || !count) return null;
-      return interval === 'year' ? count * 12 : count;
-    },
-
     canGiftSubscription() {
-      return this.isSubscriptionGroup && this.giftCadenceMonths !== null && this.giftCadenceMonths >= 6;
+      return this.isSubscriptionGroup && this.activeTiers.length > 0;
     },
 
     giftIneligibleMessage() {
       if (!this.isSubscriptionGroup || this.canGiftSubscription) return '';
-      if (this.giftCadenceMonths === null) {
-        return 'Gifting is unavailable until this group configures a subscription cadence.';
-      }
-      return `Gifting is available only for plans billed every 6+ months. This group is currently billed ${this.billingCadenceLabel}.`;
+      return 'Gifting is unavailable until this group publishes at least one subscription tier.';
     },
 
     giftButtonTooltip() {
       if (!this.isSubscriptionGroup) return '';
       return this.canGiftSubscription ? 'Gift this subscription to another user' : this.giftIneligibleMessage;
+    },
+
+    activeTiers() {
+      return (this.tiers || []).filter((t) => t.status === 'active');
+    },
+
+    showPlanPicker() {
+      return this.isSubscriptionGroup && this.activeTiers.length >= 2;
+    },
+
+    selectedTier() {
+      return this.activeTiers.find((t) => t.id === this.selectedTierId) || null;
+    },
+
+    purchaseButtonLabel() {
+      if (this.checkoutLoading) return 'Processing...';
+      const verb = this.isSubscriptionGroup ? 'Subscribe' : 'Buy Coupon Book';
+      // When a tier is picked from the plan picker, show its price/cadence
+      // instead of the legacy default-tier display.
+      if (this.selectedTier) {
+        return `${verb} — ${this.selectedTier.display} ${this.formatTierCadence(this.selectedTier)}`.trim();
+      }
+      return `${verb} — ${this.groupPriceDisplay}${this.billingCadenceSuffix}`;
     },
 
     showPurchaseBanner() {
@@ -419,6 +486,7 @@ export default {
         this.fetchCoupons(groupId);
         this.fetchEvents(groupId);
         this.fetchPrice(idOrSlug); // Price endpoint already supports slug
+        this.fetchTiers(idOrSlug);
 
         if (this.isAuthenticated) {
           this.fetchAccess(idOrSlug); // Access endpoint already supports slug
@@ -595,6 +663,47 @@ export default {
       this.coupons.splice(idx, 1, updated);
     },
 
+    // Fetch the active pricing tiers; populates the multi-tier plan picker.
+    // Falls back silently if the endpoint is unavailable — the legacy single
+    // /price call still drives the button label in that case.
+    async fetchTiers(groupId) {
+      try {
+        const data = await listGroupPrices(groupId);
+        this.tiers = Array.isArray(data?.tiers) ? data.tiers : [];
+        // Pre-select the default tier (or the first active one) so the
+        // Subscribe button works immediately even before the user interacts.
+        const active = this.activeTiers;
+        const def = active.find((t) => t.isDefault) || active[0] || null;
+        this.selectedTierId = def ? def.id : null;
+        this.giftTierId = def ? def.id : null;
+      } catch (e) {
+        console.warn('[FoodieGroup] failed to fetch tiers', e);
+      }
+    },
+
+    formatTierLabel(tier) {
+      if (!tier) return '';
+      const interval = tier.billingInterval;
+      const count = tier.billingIntervalCount;
+      if (interval === 'month' && count === 1) return 'Monthly';
+      if (interval === 'month' && count === 6) return '6 months';
+      if (interval === 'month' && count === 12) return 'Annual';
+      if (interval === 'year' && count === 1) return 'Annual';
+      return 'Plan';
+    },
+
+    formatTierCadence(tier) {
+      if (!tier) return '';
+      const interval = tier.billingInterval;
+      const count = tier.billingIntervalCount;
+      if (!interval || !count) return '';
+      if (interval === 'month' && count === 1) return '/ month';
+      if (interval === 'month' && count === 6) return 'every 6 months';
+      if (interval === 'month' && count === 12) return '/ year';
+      if (interval === 'year' && count === 1) return '/ year';
+      return `every ${count} ${interval}${count > 1 ? 's' : ''}`;
+    },
+
     // Fetch coupon book price for this group
     async fetchPrice(groupId) {
       try {
@@ -650,7 +759,10 @@ export default {
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`
-          }
+          },
+          body: JSON.stringify(
+            this.selectedTierId ? { couponBookPriceId: this.selectedTierId } : {}
+          )
         });
 
         if (!res.ok) {
@@ -710,7 +822,10 @@ export default {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ recipientEmail: this.giftEmail.trim() }),
+          body: JSON.stringify({
+            recipientEmail: this.giftEmail.trim(),
+            ...(this.giftTierId ? { couponBookPriceId: this.giftTierId } : {}),
+          }),
         });
         const data = await res.json();
         if (!res.ok) {
@@ -1050,6 +1165,107 @@ export default {
   margin-bottom: 0;
 }
 
+/* Multi-tier plan picker (subscription groups with 2+ active tiers) */
+.plan-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--spacing-md);
+  margin: var(--spacing-md) 0 var(--spacing-lg);
+  max-width: 720px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.plan-card {
+  display: block;
+  background: var(--surface-1);
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-md);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), transform var(--transition-fast),
+    box-shadow var(--transition-fast);
+  text-align: left;
+  position: relative;
+}
+
+.plan-card:hover {
+  border-color: var(--color-primary-light);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-sm);
+}
+
+.plan-card-selected {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(242, 84, 45, 0.18);
+}
+
+.plan-radio {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.plan-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.plan-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+}
+
+.plan-card-label {
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-base);
+  color: var(--color-text-primary);
+}
+
+.plan-card-savings {
+  display: inline-block;
+  background: var(--clr-success-a20);
+  color: var(--clr-success-a0);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-full);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.plan-card-price {
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-primary);
+}
+
+.plan-card-cadence {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.gift-tier-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin: var(--spacing-sm) 0 var(--spacing-md);
+  padding: var(--spacing-sm);
+  background: var(--surface-2);
+  border-radius: var(--radius-md);
+}
+
+.gift-tier-option {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+}
+
 .gift-modal-overlay {
   position: fixed;
   inset: 0;
@@ -1129,6 +1345,11 @@ export default {
 .map-section iframe {
   border: none;
   border-radius: var(--radius-lg);
+}
+
+.events-coming-soon-placeholder {
+  min-height: 140px;
+  padding: var(--spacing-sm) 0;
 }
 
 .coupons-layout {

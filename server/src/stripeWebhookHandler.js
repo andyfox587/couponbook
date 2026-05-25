@@ -175,6 +175,10 @@ async function handleCheckoutSessionCompleted(event) {
     const userId = session.metadata?.userId;
     const groupId = session.metadata?.groupId;
     const giftedByUserId = session.metadata?.giftedByUserId || null;
+    // For one-time gift purchases the gift route stamps expiresAtIso into
+    // session metadata so the fallback-create path (no pre-inserted purchase
+    // row) still gets the correct N-month access window.
+    const giftExpiresAtIso = checkoutType === 'gift' ? (session.metadata?.expiresAtIso || null) : null;
 
     if (userId && groupId) {
       console.log('💳  Creating purchase from webhook metadata:', { userId, groupId, checkoutType });
@@ -192,6 +196,7 @@ async function handleCheckoutSessionCompleted(event) {
           purchasedAt: new Date().toISOString(),
           giftedByUserId,
           ...subscriptionFields,
+          ...(giftExpiresAtIso && !subscriptionFields.expiresAt ? { expiresAt: giftExpiresAtIso } : {}),
           metadata: { createdVia: 'webhook', checkoutType },
         });
         await ensureFoodieGroupMembership(userId, groupId);

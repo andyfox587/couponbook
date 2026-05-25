@@ -16,13 +16,87 @@ export async function getGroupPrice(groupId) {
 }
 
 /**
- * Initiate a gift subscription checkout for a recipient.
+ * Initiate a gift checkout for a recipient. With multi-tier pricing the
+ * gifter can pick any active tier (monthly / 6mo / annual); omitting
+ * `couponBookPriceId` falls back to the group's default tier on the server.
  * @param {string} groupId - Group UUID or slug
  * @param {string} recipientEmail - Email of the gift recipient
+ * @param {{ couponBookPriceId?: string }} [opts]
  * @returns {{ checkoutUrl: string, sessionId: string, recipientEmail: string }}
  */
-export async function initiateGiftCheckout(groupId, recipientEmail) {
-  const response = await apiService.post(`/groups/${groupId}/gift`, { recipientEmail });
+export async function initiateGiftCheckout(groupId, recipientEmail, opts = {}) {
+  const body = { recipientEmail };
+  if (opts.couponBookPriceId) body.couponBookPriceId = opts.couponBookPriceId;
+  const response = await apiService.post(`/groups/${groupId}/gift`, body);
+  return response.data;
+}
+
+/**
+ * List pricing tiers for a group. By default only published tiers are
+ * returned; admins can pass { includeDrafts: true } to also see suggested
+ * draft tiers from the seed script.
+ * @param {string} groupId - Group UUID or slug
+ * @param {{ includeDrafts?: boolean }} [opts]
+ * @returns {Promise<{ groupId: string, billingModel: string, tiers: Array }>}
+ */
+export async function listGroupPrices(groupId, opts = {}) {
+  const qs = opts.includeDrafts ? '?include=all' : '';
+  const response = await apiService.get(`/groups/${groupId}/prices${qs}`);
+  return response.data;
+}
+
+/**
+ * Create a new pricing tier on a group. Admins use this from the tier list
+ * editor. Pass status='draft' to skip Stripe Price creation, or 'active' to
+ * create the Stripe Price(s) immediately.
+ * @param {string} groupId
+ * @param {object} tier - { label, amountCents, billingInterval, billingIntervalCount, status, isDefault, sortOrder, currency }
+ */
+export async function createTier(groupId, tier) {
+  const response = await apiService.post(`/groups/${groupId}/prices`, tier);
+  return response.data;
+}
+
+/**
+ * Patch a tier's label / sort / default / status. Use this to publish a
+ * draft (status: 'active') or to promote a tier to the group's default.
+ * @param {string} groupId
+ * @param {string} priceId
+ * @param {object} patch - subset of { label, sortOrder, isDefault, status }
+ */
+export async function updateTier(groupId, priceId, patch) {
+  const response = await apiService.patch(`/groups/${groupId}/prices/${priceId}`, patch);
+  return response.data;
+}
+
+/**
+ * Archive a tier so it disappears from the user-facing plan picker.
+ * Existing Stripe subscriptions on that tier keep renewing.
+ */
+export async function archiveTier(groupId, priceId) {
+  const response = await apiService.delete(`/groups/${groupId}/prices/${priceId}`);
+  return response.data;
+}
+
+/**
+ * Convenience: promote a tier to the group's default. Equivalent to
+ * updateTier(groupId, priceId, { isDefault: true }).
+ */
+export async function setDefaultTier(groupId, priceId) {
+  return updateTier(groupId, priceId, { isDefault: true });
+}
+
+/**
+ * Kick off a Stripe Checkout for a group's coupon book. Pass an explicit
+ * `couponBookPriceId` for multi-tier subscription groups so the server lines
+ * up the right Stripe Price; omit it to fall back to the default tier.
+ * @param {string} groupId
+ * @param {{ couponBookPriceId?: string }} [opts]
+ */
+export async function startCheckout(groupId, opts = {}) {
+  const body = {};
+  if (opts.couponBookPriceId) body.couponBookPriceId = opts.couponBookPriceId;
+  const response = await apiService.post(`/groups/${groupId}/checkout`, body);
   return response.data;
 }
 

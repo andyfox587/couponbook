@@ -2,11 +2,11 @@
 import express from 'express';
 import { db } from '../db.js';
 import { foodieGroup, purchase, user, foodieGroupMembership, couponBookPrice, coupon, event, billingModel } from '../schema.js';
-import { eq, and, count, isNull, or, sql, desc } from 'drizzle-orm';
+import { eq, and, count, isNull, or, sql, desc, asc, inArray } from 'drizzle-orm';
 import auth from '../middleware/auth.js';
 import { resolveLocalUser, requireAdmin, canManageGroup } from '../authz/index.js';
 import { stripe, getStripeMode } from '../config/stripe.js';
-import { getValidatedStripeIds, prepareStripeIdFields, getStripeRecurringPriceId } from '../utils/stripeIdHelper.js';
+import { getValidatedStripeIds, prepareStripeIdFields, getStripeRecurringPriceId, getStripePriceId, getStripeProductId } from '../utils/stripeIdHelper.js';
 import { resolveBaseUrl } from '../utils/appUrl.js';
 import { getFoodieGroupRedemptionOverview, getGroupSubscriptionOverview } from '../redemptionAnalytics.js';
 import { getFoodieGroupEventOverview, getEventSubmissionCounts } from '../eventAnalytics.js';
@@ -357,16 +357,11 @@ router.get('/:id/price', async (req, res, next) => {
 
     const groupId = groupRow.id;
 
-    // Look up active price for this group
-    const [activePrice] = await db
-      .select()
-      .from(couponBookPrice)
-      .where(
-        and(
-          eq(couponBookPrice.groupId, groupId),
-          eq(couponBookPrice.isActive, true)
-        )
-      );
+    // Look up the *default* active tier for this group. After the multi-tier
+    // migration (0019) a group can have many active prices, so /price now
+    // returns whichever one the admin marked as default; falls back to the
+    // lowest sort_order active row for groups that haven't been backfilled.
+    const activePrice = await findDefaultActiveTier(groupId);
 
     if (!activePrice) {
       // No price configured - return fallback (Chapel Hill default: $9.99)
@@ -628,6 +623,460 @@ router.put('/:id/price', auth(), async (req, res, next) => {
   }
 });
 
+// ─── /api/v1/groups/:id/prices  (multi-tier subscription pricing) ─────────
+// These endpoints supersede the single-row /price endpoint for groups that
+// expose multiple subscription cadences (monthly + 6mo + annual). The old
+// /price endpoint is kept as a back-compat shim that operates on the default
+// tier of the group.
+
+// Cadences we allow admins to publish. Stripe enforces a small allow-list;
+// keep this aligned with the constant used by the legacy PUT /price.
+const ALLOWED_INTERVAL_COUNTS = [1, 6, 12];
+
+// Helper: find the default active tier for a group, falling back to the
+// lowest-sort-order active row when no row is explicitly flagged default
+// (covers freshly-created subscription groups that haven't been backfilled).
+async function findDefaultActiveTier(groupId) {
+  const rows = await db
+    .select()
+    .from(couponBookPrice)
+    .where(
+      and(
+        eq(couponBookPrice.groupId, groupId),
+        eq(couponBookPrice.status, 'active'),
+        eq(couponBookPrice.isActive, true)
+      )
+    )
+    .orderBy(desc(couponBookPrice.isDefault), asc(couponBookPrice.sortOrder), asc(couponBookPrice.createdAt));
+  return rows[0] || null;
+}
+
+// Helper: turn a tier DB row into the JSON shape returned to clients.
+function serializeTier(tier) {
+  return {
+    id: tier.id,
+    groupId: tier.groupId,
+    label: tier.label,
+    amountCents: tier.amountCents,
+    currency: tier.currency,
+    display: formatPrice(tier.amountCents, tier.currency),
+    isDefault: !!tier.isDefault,
+    sortOrder: tier.sortOrder,
+    status: tier.status,
+    billingInterval: tier.billingInterval || null,
+    billingIntervalCount: tier.billingIntervalCount || null,
+    stripePriceId: getStripePriceId(tier),
+    stripeProductId: getStripeProductId(tier),
+    stripeRecurringPriceId: getStripeRecurringPriceId(tier),
+    createdAt: tier.createdAt,
+    updatedAt: tier.updatedAt,
+  };
+}
+
+// Helper: resolve group by UUID or slug → row (or null).
+async function resolveGroup(idOrSlug) {
+  const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrSlug);
+  const [row] = await db
+    .select()
+    .from(foodieGroup)
+    .where(isUUID ? eq(foodieGroup.id, idOrSlug) : eq(foodieGroup.slug, idOrSlug));
+  return row || null;
+}
+
+// Helper: authorize that the current Cognito sub can manage the given group.
+// Returns { ok: true, dbUser } or { ok: false, status, error }.
+async function authorizeGroupManager(req, groupId) {
+  const sub = req.user && req.user.sub;
+  if (!sub) return { ok: false, status: 401, error: 'Unauthorized' };
+  const [dbUser] = await db.select().from(user).where(eq(user.cognitoSub, sub));
+  if (!dbUser) return { ok: false, status: 404, error: 'User not found' };
+  const isSuper = dbUser.role === 'super_admin';
+  const isGroupAdmin = await checkFoodieGroupAdmin(dbUser.id, groupId);
+  if (!isSuper && !isGroupAdmin) return { ok: false, status: 403, error: 'Not authorized to manage pricing' };
+  return { ok: true, dbUser };
+}
+
+// Get-or-create the shared Stripe Product for a group. Mirrors the self-heal
+// logic in PUT /price so tier creation reuses the same product row.
+async function ensureStripeProductForGroup(groupRow, existingTierWithProduct) {
+  let stripeProductId = null;
+  if (existingTierWithProduct) {
+    const { productId } = getValidatedStripeIds(existingTierWithProduct);
+    stripeProductId = productId;
+    if (stripeProductId) {
+      try {
+        await stripe.products.retrieve(stripeProductId);
+      } catch (e) {
+        if (e?.raw?.code === 'resource_missing' || e?.code === 'resource_missing') {
+          stripeProductId = null;
+        } else {
+          throw e;
+        }
+      }
+    }
+  }
+  if (!stripeProductId) {
+    const product = await stripe.products.create({
+      name: `${groupRow.name} Coupon Book`,
+      description: `Access to exclusive coupons and events for ${groupRow.name}`,
+      metadata: { groupId: groupRow.id, groupSlug: groupRow.slug },
+    });
+    stripeProductId = product.id;
+  }
+  return stripeProductId;
+}
+
+// Create the one-time + (optionally) recurring Stripe Prices for a tier.
+// Returns { stripePrice, stripeRecurringPrice } where the recurring price is
+// null for one-time groups.
+async function createStripePricesForTier(groupRow, stripeProductId, { amountCents, currency, billingInterval, billingIntervalCount }) {
+  const isSubscriptionGroup = groupRow.billingModel === 'subscription';
+  const stripePrice = await stripe.prices.create({
+    product: stripeProductId,
+    unit_amount: amountCents,
+    currency: currency.toLowerCase(),
+    metadata: { groupId: groupRow.id, groupSlug: groupRow.slug },
+  });
+  let stripeRecurringPrice = null;
+  if (isSubscriptionGroup && billingInterval) {
+    stripeRecurringPrice = await stripe.prices.create({
+      product: stripeProductId,
+      unit_amount: amountCents,
+      currency: currency.toLowerCase(),
+      recurring: { interval: billingInterval, interval_count: billingIntervalCount },
+      metadata: {
+        groupId: groupRow.id,
+        groupSlug: groupRow.slug,
+        billing_interval: billingInterval,
+        billing_interval_count: String(billingIntervalCount),
+      },
+    });
+  }
+  return { stripePrice, stripeRecurringPrice };
+}
+
+// Validate tier cadence input for a subscription group.
+function validateCadence({ billingInterval, billingIntervalCount }) {
+  if (!billingInterval || !['month', 'year'].includes(billingInterval)) {
+    return 'billingInterval must be "month" or "year"';
+  }
+  const n = Number(billingIntervalCount);
+  if (!n || !ALLOWED_INTERVAL_COUNTS.includes(n)) {
+    return `billingIntervalCount must be one of: ${ALLOWED_INTERVAL_COUNTS.join(', ')}`;
+  }
+  return null;
+}
+
+// ─── GET /api/v1/groups/:id/prices ────────────────────────────────────────
+// Public read. Returns all non-archived tiers, sorted, with computed savings
+// vs the cheapest monthly tier so the user-facing plan picker can render
+// "save 17%" badges without recomputing on the client.
+router.get('/:id/prices', async (req, res, next) => {
+  const idOrSlug = req.params.id;
+  const includeDrafts = req.query.include === 'all' || req.query.includeDrafts === 'true';
+
+  try {
+    const groupRow = await resolveGroup(idOrSlug);
+    if (!groupRow) return res.status(404).json({ error: 'Foodie group not found' });
+
+    const statusFilter = includeDrafts
+      ? inArray(couponBookPrice.status, ['active', 'draft'])
+      : eq(couponBookPrice.status, 'active');
+
+    const rows = await db
+      .select()
+      .from(couponBookPrice)
+      .where(and(eq(couponBookPrice.groupId, groupRow.id), statusFilter))
+      .orderBy(asc(couponBookPrice.sortOrder), asc(couponBookPrice.createdAt));
+
+    // Use the smallest "per-month equivalent" active tier as the baseline for
+    // the savings comparison so badges work even if monthly isn't published.
+    const activeRows = rows.filter((r) => r.status === 'active');
+    const baseline = activeRows.reduce((min, r) => {
+      const months =
+        r.billingInterval === 'year'
+          ? (r.billingIntervalCount || 1) * 12
+          : (r.billingIntervalCount || 1);
+      const perMonth = r.amountCents / Math.max(months, 1);
+      if (!min || perMonth > min.perMonth) return { perMonth, row: r };
+      return min;
+    }, null);
+
+    const tiers = rows.map((tier) => {
+      const out = serializeTier(tier);
+      if (baseline && tier.status === 'active') {
+        const months =
+          tier.billingInterval === 'year'
+            ? (tier.billingIntervalCount || 1) * 12
+            : (tier.billingIntervalCount || 1);
+        const perMonth = tier.amountCents / Math.max(months, 1);
+        const savingsPct = baseline.perMonth > 0
+          ? Math.max(0, Math.round((1 - perMonth / baseline.perMonth) * 100))
+          : 0;
+        out.savingsPct = savingsPct;
+      } else {
+        out.savingsPct = 0;
+      }
+      return out;
+    });
+
+    res.json({
+      groupId: groupRow.id,
+      billingModel: groupRow.billingModel || 'one_time',
+      tiers,
+    });
+  } catch (err) {
+    console.error('📦  error in GET /groups/:id/prices', err);
+    next(err);
+  }
+});
+
+// ─── POST /api/v1/groups/:id/prices ───────────────────────────────────────
+// Admin endpoint to add a new pricing tier. Drafts skip Stripe entirely;
+// active tiers create one-time (and recurring for subscription groups) Prices
+// on the group's shared Stripe Product.
+router.post('/:id/prices', auth(), async (req, res, next) => {
+  const idOrSlug = req.params.id;
+  const {
+    label,
+    amountCents,
+    currency = 'usd',
+    billingInterval = null,
+    billingIntervalCount = null,
+    status = 'draft',
+    isDefault = false,
+    sortOrder = 0,
+  } = req.body || {};
+
+  try {
+    const groupRow = await resolveGroup(idOrSlug);
+    if (!groupRow) return res.status(404).json({ error: 'Foodie group not found' });
+
+    const authz = await authorizeGroupManager(req, groupRow.id);
+    if (!authz.ok) return res.status(authz.status).json({ error: authz.error });
+
+    if (!amountCents || typeof amountCents !== 'number' || amountCents < 50 || amountCents > 99999) {
+      return res.status(400).json({ error: 'amountCents must be a number between 50 and 99999' });
+    }
+    if (!['draft', 'active'].includes(status)) {
+      return res.status(400).json({ error: 'status must be "draft" or "active"' });
+    }
+
+    const isSubscriptionGroup = groupRow.billingModel === 'subscription';
+    if (isSubscriptionGroup) {
+      const cadenceErr = validateCadence({ billingInterval, billingIntervalCount });
+      if (cadenceErr) return res.status(400).json({ error: cadenceErr });
+    }
+
+    // Stripe Prices are only created for tiers that ship to users now. Drafts
+    // are admin-curated suggestions (e.g. seeded by scripts/seedSubscriptionTiers.js)
+    // and remain Stripe-less until they're published via PATCH.
+    let stripeIdFields = {};
+    if (status === 'active') {
+      const [anyTierWithProduct] = await db
+        .select()
+        .from(couponBookPrice)
+        .where(
+          and(
+            eq(couponBookPrice.groupId, groupRow.id),
+            sql`(${couponBookPrice.stripeProductId} IS NOT NULL OR ${couponBookPrice.stripeProductIdTest} IS NOT NULL OR ${couponBookPrice.stripeProductIdLive} IS NOT NULL)`
+          )
+        )
+        .limit(1);
+
+      const stripeProductId = await ensureStripeProductForGroup(groupRow, anyTierWithProduct || null);
+      const { stripePrice, stripeRecurringPrice } = await createStripePricesForTier(
+        groupRow,
+        stripeProductId,
+        { amountCents, currency, billingInterval, billingIntervalCount }
+      );
+      stripeIdFields = prepareStripeIdFields(stripeProductId, stripePrice.id, stripeRecurringPrice?.id ?? null);
+    }
+
+    const inserted = await db.transaction(async (tx) => {
+      // Enforce "one default per group" before inserting a new default.
+      if (isDefault && status === 'active') {
+        await tx
+          .update(couponBookPrice)
+          .set({ isDefault: false, updatedAt: new Date().toISOString() })
+          .where(
+            and(
+              eq(couponBookPrice.groupId, groupRow.id),
+              eq(couponBookPrice.isDefault, true)
+            )
+          );
+      }
+
+      const [row] = await tx
+        .insert(couponBookPrice)
+        .values({
+          groupId: groupRow.id,
+          amountCents,
+          currency: currency.toLowerCase(),
+          isActive: true,
+          isDefault: !!isDefault && status === 'active',
+          status,
+          label: label || null,
+          sortOrder: Number(sortOrder) || 0,
+          billingInterval: billingInterval || null,
+          billingIntervalCount: billingIntervalCount ? Number(billingIntervalCount) : null,
+          createdByUserId: authz.dbUser.id,
+          ...stripeIdFields,
+        })
+        .returning();
+      return row;
+    });
+
+    res.status(201).json(serializeTier(inserted));
+  } catch (err) {
+    console.error('📦  error in POST /groups/:id/prices', err);
+    if (err?.type && typeof err.type === 'string' && err.type.startsWith('Stripe')) {
+      return res.status(502).json({ error: 'stripe_error', message: err.message });
+    }
+    next(err);
+  }
+});
+
+// ─── PATCH /api/v1/groups/:id/prices/:priceId ─────────────────────────────
+// Admin endpoint to update a tier's label / sort / default / status. Amount
+// changes are not allowed (Stripe Prices are immutable); the admin must
+// archive the tier and create a new one instead.
+router.patch('/:id/prices/:priceId', auth(), async (req, res, next) => {
+  const idOrSlug = req.params.id;
+  const priceId = req.params.priceId;
+  const { label, sortOrder, isDefault, status } = req.body || {};
+
+  try {
+    const groupRow = await resolveGroup(idOrSlug);
+    if (!groupRow) return res.status(404).json({ error: 'Foodie group not found' });
+
+    const authz = await authorizeGroupManager(req, groupRow.id);
+    if (!authz.ok) return res.status(authz.status).json({ error: authz.error });
+
+    const [existing] = await db
+      .select()
+      .from(couponBookPrice)
+      .where(and(eq(couponBookPrice.id, priceId), eq(couponBookPrice.groupId, groupRow.id)));
+    if (!existing) return res.status(404).json({ error: 'Price tier not found for this group' });
+
+    if (status && !['draft', 'active', 'archived'].includes(status)) {
+      return res.status(400).json({ error: 'status must be draft, active, or archived' });
+    }
+
+    // Draft → active transition needs to lazily create the Stripe Prices that
+    // the seeding script intentionally skipped.
+    let stripeIdFields = {};
+    const becomingActive = status === 'active' && existing.status === 'draft';
+    if (becomingActive && !existing.stripePriceId && !existing.stripePriceIdTest && !existing.stripePriceIdLive) {
+      const isSubscriptionGroup = groupRow.billingModel === 'subscription';
+      if (isSubscriptionGroup) {
+        const cadenceErr = validateCadence({
+          billingInterval: existing.billingInterval,
+          billingIntervalCount: existing.billingIntervalCount,
+        });
+        if (cadenceErr) return res.status(400).json({ error: cadenceErr });
+      }
+      const [anyTierWithProduct] = await db
+        .select()
+        .from(couponBookPrice)
+        .where(
+          and(
+            eq(couponBookPrice.groupId, groupRow.id),
+            sql`(${couponBookPrice.stripeProductId} IS NOT NULL OR ${couponBookPrice.stripeProductIdTest} IS NOT NULL OR ${couponBookPrice.stripeProductIdLive} IS NOT NULL)`
+          )
+        )
+        .limit(1);
+      const stripeProductId = await ensureStripeProductForGroup(groupRow, anyTierWithProduct || null);
+      const { stripePrice, stripeRecurringPrice } = await createStripePricesForTier(
+        groupRow,
+        stripeProductId,
+        {
+          amountCents: existing.amountCents,
+          currency: existing.currency,
+          billingInterval: existing.billingInterval,
+          billingIntervalCount: existing.billingIntervalCount,
+        }
+      );
+      stripeIdFields = prepareStripeIdFields(stripeProductId, stripePrice.id, stripeRecurringPrice?.id ?? null);
+    }
+
+    const updated = await db.transaction(async (tx) => {
+      // Enforce the partial unique index on is_default when promoting a tier.
+      if (isDefault === true) {
+        await tx
+          .update(couponBookPrice)
+          .set({ isDefault: false, updatedAt: new Date().toISOString() })
+          .where(
+            and(
+              eq(couponBookPrice.groupId, groupRow.id),
+              eq(couponBookPrice.isDefault, true)
+            )
+          );
+      }
+
+      const patch = { updatedAt: new Date().toISOString() };
+      if (label !== undefined) patch.label = label;
+      if (sortOrder !== undefined) patch.sortOrder = Number(sortOrder) || 0;
+      if (isDefault !== undefined) patch.isDefault = !!isDefault;
+      if (status !== undefined) {
+        patch.status = status;
+        patch.isActive = status !== 'archived';
+        if (status === 'archived') patch.archivedAt = new Date().toISOString();
+      }
+      Object.assign(patch, stripeIdFields);
+
+      const [row] = await tx
+        .update(couponBookPrice)
+        .set(patch)
+        .where(eq(couponBookPrice.id, priceId))
+        .returning();
+      return row;
+    });
+
+    res.json(serializeTier(updated));
+  } catch (err) {
+    console.error('📦  error in PATCH /groups/:id/prices/:priceId', err);
+    if (err?.type && typeof err.type === 'string' && err.type.startsWith('Stripe')) {
+      return res.status(502).json({ error: 'stripe_error', message: err.message });
+    }
+    next(err);
+  }
+});
+
+// ─── DELETE /api/v1/groups/:id/prices/:priceId ────────────────────────────
+// Soft-archives the tier (status='archived'). Existing Stripe subscriptions
+// on this Price keep renewing — Stripe doesn't cancel them when a Price is
+// hidden. This only stops new users from picking this tier.
+router.delete('/:id/prices/:priceId', auth(), async (req, res, next) => {
+  const idOrSlug = req.params.id;
+  const priceId = req.params.priceId;
+  try {
+    const groupRow = await resolveGroup(idOrSlug);
+    if (!groupRow) return res.status(404).json({ error: 'Foodie group not found' });
+
+    const authz = await authorizeGroupManager(req, groupRow.id);
+    if (!authz.ok) return res.status(authz.status).json({ error: authz.error });
+
+    const [existing] = await db
+      .select()
+      .from(couponBookPrice)
+      .where(and(eq(couponBookPrice.id, priceId), eq(couponBookPrice.groupId, groupRow.id)));
+    if (!existing) return res.status(404).json({ error: 'Price tier not found for this group' });
+
+    const now = new Date().toISOString();
+    const [updated] = await db
+      .update(couponBookPrice)
+      .set({ status: 'archived', isActive: false, isDefault: false, archivedAt: now, updatedAt: now })
+      .where(eq(couponBookPrice.id, priceId))
+      .returning();
+
+    res.json(serializeTier(updated));
+  } catch (err) {
+    console.error('📦  error in DELETE /groups/:id/prices/:priceId', err);
+    next(err);
+  }
+});
+
 // Helper: Check if user is a foodie_group_admin for a specific group
 async function checkFoodieGroupAdmin(userId, groupId) {
   const [membership] = await db
@@ -649,7 +1098,8 @@ async function checkFoodieGroupAdmin(userId, groupId) {
 // :id can be either a UUID or a slug
 router.post('/:id/checkout', auth(), async (req, res, next) => {
   const groupIdOrSlug = req.params.id;
-  console.log('📦  POST /api/v1/groups/:id/checkout', { groupIdOrSlug });
+  const { couponBookPriceId: requestedPriceId = null } = req.body || {};
+  console.log('📦  POST /api/v1/groups/:id/checkout', { groupIdOrSlug, requestedPriceId });
 
   try {
     const sub = req.user && req.user.sub;
@@ -713,16 +1163,30 @@ router.post('/:id/checkout', auth(), async (req, res, next) => {
     // 3) Use the already-resolved group info
     const groupRow = resolvedGroup;
 
-    // 4) Get active price for this group
-    const [activePrice] = await db
-      .select()
-      .from(couponBookPrice)
-      .where(
-        and(
-          eq(couponBookPrice.groupId, groupId),
-          eq(couponBookPrice.isActive, true)
-        )
-      );
+    // 4) Pick the tier the user is checking out on. When the client explicitly
+    // selects a tier (multi-tier subscription groups send couponBookPriceId
+    // from the plan picker), validate it belongs to this group and is active.
+    // Otherwise fall back to the group's default tier (back-compat for the
+    // existing single-button UX on one-time groups and legacy clients).
+    let activePrice = null;
+    if (requestedPriceId) {
+      const [selected] = await db
+        .select()
+        .from(couponBookPrice)
+        .where(
+          and(
+            eq(couponBookPrice.id, requestedPriceId),
+            eq(couponBookPrice.groupId, groupId),
+            eq(couponBookPrice.status, 'active')
+          )
+        );
+      if (!selected) {
+        return res.status(400).json({ error: 'Selected price tier is not available for this group.' });
+      }
+      activePrice = selected;
+    } else {
+      activePrice = await findDefaultActiveTier(groupId);
+    }
 
     // Determine price to use (active price or default)
     let amountCents = 999; // Default $9.99
@@ -1242,60 +1706,64 @@ router.post('/:id/test-purchase', auth(), async (req, res, next) => {
 });
 
 // ─── POST /api/v1/groups/:id/gift ─────────────────────────────────────
-// Initiate a gift subscription purchase on behalf of a recipient.
-// Only valid for subscription groups with cadence >= 6 months.
-// The gift purchase is created as pending; webhook completion sets it to paid.
+// Initiate a gift purchase on behalf of a recipient.
+//
+// Multi-tier redesign: gifts now use Stripe's *one-time* payment mode
+// against the tier's non-recurring Stripe Price, with an `expires_at`
+// stamped on the recipient's purchase row based on the chosen cadence.
+// The gifter is charged exactly once (no surprise renewals), and the
+// recipient gets exactly N months of access — so monthly gifts are now
+// allowed too. Subscription-mode gifting is gone.
 router.post('/:id/gift', auth(), resolveLocalUser, async (req, res, next) => {
   const groupIdOrSlug = req.params.id;
-  const { recipientEmail } = req.body;
-  console.log('📦  POST /api/v1/groups/:id/gift', { groupIdOrSlug, recipientEmail });
+  const { recipientEmail, couponBookPriceId: requestedPriceId = null } = req.body || {};
+  console.log('📦  POST /api/v1/groups/:id/gift', { groupIdOrSlug, recipientEmail, requestedPriceId });
 
   try {
     if (!recipientEmail) {
       return res.status(400).json({ error: 'recipientEmail is required' });
     }
 
-    // Resolve group
-    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(groupIdOrSlug);
-    const [groupRow] = await db
-      .select()
-      .from(foodieGroup)
-      .where(isUUID ? eq(foodieGroup.id, groupIdOrSlug) : eq(foodieGroup.slug, groupIdOrSlug));
-
-    if (!groupRow) {
-      return res.status(404).json({ error: 'Foodie group not found' });
-    }
+    const groupRow = await resolveGroup(groupIdOrSlug);
+    if (!groupRow) return res.status(404).json({ error: 'Foodie group not found' });
 
     // Gift is only valid for subscription groups
     if (groupRow.billingModel !== 'subscription') {
       return res.status(400).json({ error: 'Gifts are only available for subscription groups' });
     }
 
-    // Get active price and validate cadence (>= 6 months)
-    const [activePrice] = await db
-      .select()
-      .from(couponBookPrice)
-      .where(
-        and(
-          eq(couponBookPrice.groupId, groupRow.id),
-          eq(couponBookPrice.isActive, true)
-        )
-      );
+    // Pick the tier the gifter chose (multi-tier UI) or fall back to default.
+    let activePrice = null;
+    if (requestedPriceId) {
+      const [selected] = await db
+        .select()
+        .from(couponBookPrice)
+        .where(
+          and(
+            eq(couponBookPrice.id, requestedPriceId),
+            eq(couponBookPrice.groupId, groupRow.id),
+            eq(couponBookPrice.status, 'active')
+          )
+        );
+      if (!selected) {
+        return res.status(400).json({ error: 'Selected price tier is not available for this group.' });
+      }
+      activePrice = selected;
+    } else {
+      activePrice = await findDefaultActiveTier(groupRow.id);
+    }
 
     if (!activePrice) {
       return res.status(400).json({ error: 'No active price configured for this group' });
     }
 
-    // Validate cadence: must be >= 6 months
-    const intervalMonths =
-      activePrice.billingInterval === 'year'
-        ? (activePrice.billingIntervalCount || 1) * 12
-        : activePrice.billingIntervalCount || 1;
-
-    if (intervalMonths < 6) {
-      return res.status(400).json({
-        error: 'This group is billed monthly. Gifting is available only for 6-month or yearly plans. Please contact the group admin to update cadence.',
-      });
+    // Gift uses the one-time Stripe Price (not the recurring one) so the
+    // gifter is charged once and the subscription never auto-renews on
+    // their card. Every tier created via /prices already has a one-time
+    // price alongside its recurring price.
+    const { priceId: oneTimeStripePriceId } = getValidatedStripeIds(activePrice);
+    if (!oneTimeStripePriceId) {
+      return res.status(400).json({ error: 'No Stripe price configured for this tier yet. The admin needs to publish it.' });
     }
 
     // Resolve recipient user
@@ -1335,20 +1803,23 @@ router.post('/:id/gift', auth(), resolveLocalUser, async (req, res, next) => {
       return res.status(400).json({ error: 'Recipient already has active access to this group' });
     }
 
-    // Get recurring price ID for checkout
-    const recurringPriceId = getStripeRecurringPriceId(activePrice);
-    if (!recurringPriceId) {
-      return res.status(400).json({ error: 'No recurring Stripe price configured for this group' });
-    }
+    // Compute access window: N months from now. Treats the tier cadence as
+    // a fixed-length gift, not a renewing subscription.
+    const intervalMonths =
+      activePrice.billingInterval === 'year'
+        ? (activePrice.billingIntervalCount || 1) * 12
+        : (activePrice.billingIntervalCount || 1);
+    const expiresAtDate = new Date();
+    expiresAtDate.setMonth(expiresAtDate.getMonth() + intervalMonths);
+    const expiresAtIso = expiresAtDate.toISOString();
 
     const baseUrl = resolveBaseUrl(req);
     const successUrl = `${baseUrl}/checkout/success/${groupRow.slug}?session_id={CHECKOUT_SESSION_ID}&gift=true`;
     const cancelUrl = `${baseUrl}/foodie-group/${groupRow.slug}?cancelled=true`;
 
-    // Create Stripe checkout session in subscription mode
     const session = await stripe.checkout.sessions.create({
-      mode: 'subscription',
-      line_items: [{ price: recurringPriceId, quantity: 1 }],
+      mode: 'payment',
+      line_items: [{ price: oneTimeStripePriceId, quantity: 1 }],
       client_reference_id: req.dbUser.id,
       customer_email: req.dbUser.email,
       metadata: {
@@ -1358,13 +1829,16 @@ router.post('/:id/gift', auth(), resolveLocalUser, async (req, res, next) => {
         groupSlug: groupRow.slug,
         couponBookPriceId: activePrice.id,
         checkoutType: 'gift',
-        billingIntervalCount: activePrice.billingIntervalCount ? String(activePrice.billingIntervalCount) : null,
+        billingInterval: activePrice.billingInterval || '',
+        billingIntervalCount: activePrice.billingIntervalCount ? String(activePrice.billingIntervalCount) : '',
+        expiresAtIso,
       },
       success_url: successUrl,
       cancel_url: cancelUrl,
     });
 
-    // Insert pending gift purchase for recipient
+    // Insert pending gift purchase for recipient with the precomputed
+    // expiresAt; webhook flips status to paid and preserves expiresAt.
     await db.insert(purchase).values({
       userId: recipientUser.id,
       groupId: groupRow.id,
@@ -1374,10 +1848,12 @@ router.post('/:id/gift', auth(), resolveLocalUser, async (req, res, next) => {
       currency: activePrice.currency,
       status: 'pending',
       giftedByUserId: req.dbUser.id,
+      expiresAt: expiresAtIso,
       priceSnapshot: {
         amountCents: activePrice.amountCents,
         currency: activePrice.currency,
         couponBookPriceId: activePrice.id,
+        billingInterval: activePrice.billingInterval,
         billingIntervalCount: activePrice.billingIntervalCount,
       },
       metadata: {
@@ -1385,6 +1861,7 @@ router.post('/:id/gift', auth(), resolveLocalUser, async (req, res, next) => {
         createdVia: 'gift-endpoint',
         giftedByEmail: req.dbUser.email,
         recipientEmail,
+        expiresAtIso,
       },
     });
 

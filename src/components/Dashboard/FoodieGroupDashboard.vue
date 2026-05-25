@@ -383,82 +383,192 @@
       <section class="dashboard-section pricing-section" v-if="groupLoaded">
         <h2>Coupon Book Pricing</h2>
 
-        <div v-if="!editingPrice" class="current-price">
-          <p>
-            Current Price: <strong>{{ currentPriceDisplay }}</strong>
-            <span class="muted tiny"> · {{ billingModeLabel }}</span>
-          </p>
-          <p v-if="priceIsDefault" class="muted tiny">
-            This is the default price. Set a custom price to create a Stripe product.
-          </p>
-          <p v-if="billingModel === 'subscription' && !stripeRecurringPriceId" class="muted tiny warning-text">
-            ⚠ This group is set to subscription billing but has no recurring Stripe price yet.
-            Edit the price to generate one.
-          </p>
-          <button @click="startEditPrice" class="btn-edit-price">
-            <i class="pi pi-pencil icon-spacing-sm"></i>Edit Price
-          </button>
-        </div>
-
-        <div v-else class="price-form">
-          <div class="form-group">
-            <label>Billing Model:</label>
-            <div class="billing-model-options">
-              <label class="radio-option">
-                <input type="radio" value="one_time" v-model="newBillingModel" />
-                <span>One-time purchase</span>
-              </label>
-              <label class="radio-option">
-                <input type="radio" value="subscription" v-model="newBillingModel" />
-                <span>Recurring subscription</span>
-              </label>
-            </div>
-            <p class="help-text muted tiny">
-              Changing the billing model affects new purchases only. Existing
-              purchases remain valid until their current expiration.
+        <!-- One-time groups keep the legacy single-amount editor -->
+        <template v-if="billingModel !== 'subscription'">
+          <div v-if="!editingPrice" class="current-price">
+            <p>
+              Current Price: <strong>{{ currentPriceDisplay }}</strong>
+              <span class="muted tiny"> · {{ billingModeLabel }}</span>
             </p>
-          </div>
-
-          <div v-if="newBillingModel === 'subscription'" class="form-group">
-            <label for="cadenceSelect">Billing Cadence:</label>
-            <select id="cadenceSelect" v-model="newCadenceKey">
-              <option value="monthly">Monthly (every 1 month)</option>
-              <option value="semiannual">Every 6 months</option>
-              <option value="annual">Annually (every 12 months)</option>
-            </select>
-            <p class="help-text muted tiny">
-              Gift subscriptions require at least a 6-month cadence.
+            <p v-if="priceIsDefault" class="muted tiny">
+              This is the default price. Set a custom price to create a Stripe product.
             </p>
-          </div>
-
-          <div class="form-group">
-            <label for="newPrice">
-              {{ newBillingModel === 'subscription' ? 'Price per billing period (USD):' : 'New Price (USD):' }}
-            </label>
-            <div class="price-input-wrapper">
-              <span class="currency-symbol">$</span>
-              <input
-                id="newPrice"
-                type="number"
-                v-model.number="newPriceDollars"
-                min="0.50"
-                max="999.99"
-                step="0.01"
-                placeholder="9.99"
-              />
-            </div>
-          </div>
-
-          <div class="price-form-actions">
-            <button @click="savePrice" :disabled="savingPrice" class="btn primary">
-              {{ savingPrice ? 'Saving...' : 'Save Price' }}
-            </button>
-            <button @click="cancelEditPrice" class="btn secondary" :disabled="savingPrice">
-              Cancel
+            <button @click="startEditPrice" class="btn-edit-price">
+              <i class="pi pi-pencil icon-spacing-sm"></i>Edit Price
             </button>
           </div>
-          <p v-if="priceError" class="error-text tiny">{{ priceError }}</p>
-        </div>
+
+          <div v-else class="price-form">
+            <div class="form-group">
+              <label>Billing Model:</label>
+              <div class="billing-model-options">
+                <label class="radio-option">
+                  <input type="radio" value="one_time" v-model="newBillingModel" />
+                  <span>One-time purchase</span>
+                </label>
+                <label class="radio-option">
+                  <input type="radio" value="subscription" v-model="newBillingModel" />
+                  <span>Recurring subscription</span>
+                </label>
+              </div>
+              <p class="help-text muted tiny">
+                Switching to subscription replaces this editor with a multi-tier
+                list (monthly / 6mo / annual). Existing purchases remain valid.
+              </p>
+            </div>
+
+            <div v-if="newBillingModel === 'subscription'" class="form-group">
+              <label for="cadenceSelect">Initial Cadence:</label>
+              <select id="cadenceSelect" v-model="newCadenceKey">
+                <option value="monthly">Monthly (every 1 month)</option>
+                <option value="semiannual">Every 6 months</option>
+                <option value="annual">Annually (every 12 months)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="newPrice">
+                {{ newBillingModel === 'subscription' ? 'Price per billing period (USD):' : 'New Price (USD):' }}
+              </label>
+              <div class="price-input-wrapper">
+                <span class="currency-symbol">$</span>
+                <input id="newPrice" type="number" v-model.number="newPriceDollars" min="0.50" max="999.99" step="0.01" placeholder="9.99" />
+              </div>
+            </div>
+
+            <div class="price-form-actions">
+              <button @click="savePrice" :disabled="savingPrice" class="btn primary">
+                {{ savingPrice ? 'Saving...' : 'Save Price' }}
+              </button>
+              <button @click="cancelEditPrice" class="btn secondary" :disabled="savingPrice">Cancel</button>
+            </div>
+            <p v-if="priceError" class="error-text tiny">{{ priceError }}</p>
+          </div>
+        </template>
+
+        <!-- Subscription groups: multi-tier editor -->
+        <template v-else>
+          <p class="muted tiny">
+            Subscription tiers backed by a single Stripe Product. Drafts are
+            suggested cadences that aren't visible to users until you publish
+            them.
+          </p>
+          <p v-if="tiersError" class="error-text tiny">{{ tiersError }}</p>
+
+          <div v-if="tiersLoading" class="muted">Loading tiers…</div>
+          <table v-else-if="tiers.length" class="tier-table">
+            <thead>
+              <tr>
+                <th>Label</th>
+                <th>Price</th>
+                <th>Cadence</th>
+                <th>Status</th>
+                <th>Default</th>
+                <th class="tier-actions-col">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="tier in tiers" :key="tier.id" :class="{ 'tier-draft': tier.status === 'draft' }">
+                <td>
+                  <input
+                    type="text"
+                    class="tier-label-input"
+                    :value="tier.label || ''"
+                    @change="onTierLabelChange(tier, $event.target.value)"
+                    :disabled="tier.status === 'archived'"
+                    placeholder="e.g. Monthly"
+                  />
+                </td>
+                <td><strong>{{ tier.display }}</strong></td>
+                <td>{{ formatCadence(tier.billingInterval, tier.billingIntervalCount) }}</td>
+                <td>
+                  <span class="tier-badge" :class="`tier-badge-${tier.status}`">{{ tier.status }}</span>
+                </td>
+                <td>
+                  <button
+                    v-if="tier.status === 'active'"
+                    @click="onSetDefault(tier)"
+                    class="tier-default-toggle"
+                    :class="{ 'is-default': tier.isDefault }"
+                    :disabled="tier.isDefault || tierBusyId === tier.id"
+                    :title="tier.isDefault ? 'Currently the default tier' : 'Promote to default'"
+                  >
+                    <i class="pi" :class="tier.isDefault ? 'pi-star-fill' : 'pi-star'"></i>
+                  </button>
+                  <span v-else class="muted tiny">—</span>
+                </td>
+                <td class="tier-actions">
+                  <button
+                    v-if="tier.status === 'draft'"
+                    @click="onPublishTier(tier)"
+                    :disabled="tierBusyId === tier.id"
+                    class="btn-sm btn-primary-sm"
+                  >
+                    {{ tierBusyId === tier.id ? '…' : 'Publish' }}
+                  </button>
+                  <button
+                    v-if="tier.status !== 'archived'"
+                    @click="onArchiveTier(tier)"
+                    :disabled="tierBusyId === tier.id"
+                    class="btn-sm btn-danger-sm"
+                  >
+                    Archive
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="muted">No tiers yet. Add one below to start accepting subscriptions.</p>
+
+          <div class="tier-add">
+            <button v-if="!addingTier" @click="startAddTier" class="btn primary">
+              <i class="pi pi-plus icon-spacing-sm"></i>Add tier
+            </button>
+
+            <div v-else class="tier-add-form card">
+              <h4>New tier</h4>
+              <div class="tier-add-grid">
+                <div class="form-group">
+                  <label for="newTierLabel">Label</label>
+                  <input id="newTierLabel" type="text" v-model="newTier.label" placeholder="e.g. Annual" />
+                </div>
+                <div class="form-group">
+                  <label for="newTierPrice">Price (USD)</label>
+                  <div class="price-input-wrapper">
+                    <span class="currency-symbol">$</span>
+                    <input id="newTierPrice" type="number" v-model.number="newTier.priceDollars" min="0.50" max="999.99" step="0.01" />
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label for="newTierCadence">Cadence</label>
+                  <select id="newTierCadence" v-model="newTier.cadenceKey">
+                    <option value="monthly">Monthly</option>
+                    <option value="semiannual">Every 6 months</option>
+                    <option value="annual">Annually</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="newTierStatus">Publish state</label>
+                  <select id="newTierStatus" v-model="newTier.status">
+                    <option value="active">Active (creates Stripe price)</option>
+                    <option value="draft">Draft (no Stripe price yet)</option>
+                  </select>
+                </div>
+              </div>
+              <label class="radio-option">
+                <input type="checkbox" v-model="newTier.isDefault" :disabled="newTier.status !== 'active'" />
+                <span>Make this the default tier</span>
+              </label>
+              <p v-if="newTierError" class="error-text tiny">{{ newTierError }}</p>
+              <div class="price-form-actions">
+                <button @click="submitNewTier" :disabled="savingTier" class="btn primary">
+                  {{ savingTier ? 'Saving…' : 'Create tier' }}
+                </button>
+                <button @click="cancelAddTier" :disabled="savingTier" class="btn secondary">Cancel</button>
+              </div>
+            </div>
+          </div>
+        </template>
       </section>
 
       <!-- Coupons Board (Kanban Style) -->
@@ -695,6 +805,12 @@ import { mapGetters } from "vuex";
 import { getAccessToken, signIn } from "@/services/authService";
 import Modal from "@/components/Common/Modal.vue";
 import {
+  listGroupPrices as listGroupPricesApi,
+  createTier as createTierApi,
+  updateTier as updateTierApi,
+  archiveTier as archiveTierApi,
+} from "@/services/subscriptionService";
+import {
   listEvents,
   getEventStats,
 } from "@/services/eventService";
@@ -757,6 +873,22 @@ export default {
       stripeRecurringPriceId: null,
       newBillingModel: 'one_time',
       newCadenceKey: 'monthly',
+
+      // multi-tier subscription editor
+      tiers: [],
+      tiersLoading: false,
+      tiersError: null,
+      tierBusyId: null,
+      addingTier: false,
+      savingTier: false,
+      newTierError: null,
+      newTier: {
+        label: '',
+        priceDollars: 9.99,
+        cadenceKey: 'monthly',
+        status: 'active',
+        isDefault: false,
+      },
 
       // group overview analytics
       groupOverview: {
@@ -872,6 +1004,7 @@ export default {
         this.loadPendingCoupons(),
         this.loadActiveCoupons(),
         this.fetchCurrentPrice(),
+        this.loadTiers(),
         this.loadGroupOverview(),
         this.loadRedemptionOverview(),
         this.loadPendingEvents(),
@@ -940,6 +1073,7 @@ export default {
           this.loadPendingCoupons(),
           this.loadActiveCoupons(),
           this.fetchCurrentPrice(),
+          this.loadTiers(),
           this.loadGroupOverview(),
           this.loadRedemptionOverview(),
           this.loadPendingEvents(),
@@ -1905,6 +2039,140 @@ export default {
       }
     },
 
+    // ─── Multi-tier subscription pricing ──────────────────────────────────
+    // These methods drive the new tier list editor that replaces the single
+    // price form for subscription groups. They round-trip through the
+    // `/groups/:id/prices` CRUD endpoints via subscriptionService.
+    formatCadence(interval, count) {
+      if (!interval || !count) return '—';
+      if (interval === 'month' && count === 1) return 'Monthly';
+      if (interval === 'month' && count === 6) return 'Every 6 months';
+      if (interval === 'month' && count === 12) return 'Annually';
+      if (interval === 'year' && count === 1) return 'Annually';
+      return `Every ${count} ${interval}${count > 1 ? 's' : ''}`;
+    },
+
+    async loadTiers() {
+      if (!this.groupId) return;
+      this.tiersLoading = true;
+      this.tiersError = null;
+      try {
+        // Admins see drafts so they can review/publish the seeded suggestions.
+        const data = await listGroupPricesApi(this.groupId, { includeDrafts: true });
+        this.tiers = Array.isArray(data?.tiers) ? data.tiers : [];
+      } catch (err) {
+        console.error('[FoodieGroupDashboard] loadTiers error', err);
+        this.tiersError = err?.response?.data?.error || 'Failed to load tiers.';
+      } finally {
+        this.tiersLoading = false;
+      }
+    },
+
+    startAddTier() {
+      this.addingTier = true;
+      this.newTierError = null;
+      this.newTier = {
+        label: '',
+        priceDollars: 9.99,
+        cadenceKey: 'monthly',
+        status: 'active',
+        isDefault: false,
+      };
+    },
+
+    cancelAddTier() {
+      this.addingTier = false;
+      this.newTierError = null;
+    },
+
+    async submitNewTier() {
+      this.newTierError = null;
+      const dollars = Number(this.newTier.priceDollars);
+      if (!dollars || dollars < 0.5 || dollars > 999.99) {
+        this.newTierError = 'Price must be between $0.50 and $999.99.';
+        return;
+      }
+      const { interval, count } = this.intervalFromCadenceKey(this.newTier.cadenceKey);
+      this.savingTier = true;
+      try {
+        await createTierApi(this.groupId, {
+          label: this.newTier.label || null,
+          amountCents: Math.round(dollars * 100),
+          currency: 'usd',
+          billingInterval: interval,
+          billingIntervalCount: count,
+          status: this.newTier.status,
+          isDefault: this.newTier.status === 'active' && !!this.newTier.isDefault,
+        });
+        this.addingTier = false;
+        await this.loadTiers();
+        // Keep the read-only summary in sync if the new tier became default.
+        await this.fetchCurrentPrice();
+      } catch (err) {
+        console.error('[FoodieGroupDashboard] submitNewTier error', err);
+        this.newTierError = err?.response?.data?.error || 'Failed to create tier.';
+      } finally {
+        this.savingTier = false;
+      }
+    },
+
+    async onPublishTier(tier) {
+      this.tierBusyId = tier.id;
+      try {
+        await updateTierApi(this.groupId, tier.id, { status: 'active' });
+        await this.loadTiers();
+      } catch (err) {
+        console.error('[FoodieGroupDashboard] onPublishTier error', err);
+        this.tiersError = err?.response?.data?.error || 'Failed to publish tier.';
+      } finally {
+        this.tierBusyId = null;
+      }
+    },
+
+    async onArchiveTier(tier) {
+      if (!confirm(`Archive "${tier.label || tier.display}"? Existing subscribers on this tier will keep renewing in Stripe.`)) return;
+      this.tierBusyId = tier.id;
+      try {
+        await archiveTierApi(this.groupId, tier.id);
+        await this.loadTiers();
+        await this.fetchCurrentPrice();
+      } catch (err) {
+        console.error('[FoodieGroupDashboard] onArchiveTier error', err);
+        this.tiersError = err?.response?.data?.error || 'Failed to archive tier.';
+      } finally {
+        this.tierBusyId = null;
+      }
+    },
+
+    async onSetDefault(tier) {
+      this.tierBusyId = tier.id;
+      try {
+        await updateTierApi(this.groupId, tier.id, { isDefault: true });
+        await this.loadTiers();
+        await this.fetchCurrentPrice();
+      } catch (err) {
+        console.error('[FoodieGroupDashboard] onSetDefault error', err);
+        this.tiersError = err?.response?.data?.error || 'Failed to set default tier.';
+      } finally {
+        this.tierBusyId = null;
+      }
+    },
+
+    async onTierLabelChange(tier, newLabel) {
+      const trimmed = (newLabel || '').trim();
+      if (trimmed === (tier.label || '')) return;
+      this.tierBusyId = tier.id;
+      try {
+        await updateTierApi(this.groupId, tier.id, { label: trimmed || null });
+        await this.loadTiers();
+      } catch (err) {
+        console.error('[FoodieGroupDashboard] onTierLabelChange error', err);
+        this.tiersError = err?.response?.data?.error || 'Failed to update tier label.';
+      } finally {
+        this.tierBusyId = null;
+      }
+    },
+
     formatPercent(value) {
       if (value === null || value === undefined) return '—';
       return `${Math.round(Number(value) * 100)}%`;
@@ -2330,6 +2598,156 @@ textarea:focus {
 
 .warning-text {
   color: var(--color-warning, #c77700);
+}
+
+/* Tier list editor (multi-tier subscription pricing) */
+.tier-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: var(--spacing-md);
+  background: var(--surface-1);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-xs);
+}
+
+.tier-table th,
+.tier-table td {
+  padding: var(--spacing-sm) var(--spacing-md);
+  text-align: left;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--font-size-sm);
+  vertical-align: middle;
+}
+
+.tier-table th {
+  background: var(--surface-2);
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: var(--font-size-xs);
+}
+
+.tier-table tr.tier-draft {
+  background: var(--color-bg-muted);
+}
+
+.tier-label-input {
+  width: 100%;
+  min-width: 120px;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: var(--font-size-sm);
+}
+
+.tier-badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tier-badge-active {
+  background: var(--clr-success-a20);
+  color: var(--clr-success-a0);
+}
+
+.tier-badge-draft {
+  background: var(--clr-warning-a20);
+  color: var(--clr-warning-a0);
+}
+
+.tier-badge-archived {
+  background: var(--color-bg-muted);
+  color: var(--color-text-muted);
+}
+
+.tier-default-toggle {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-lg);
+  padding: var(--spacing-xs);
+  transition: color var(--transition-fast), transform var(--transition-fast);
+}
+
+.tier-default-toggle:not(:disabled):hover {
+  color: var(--color-primary);
+  transform: scale(1.1);
+}
+
+.tier-default-toggle.is-default {
+  color: var(--color-primary);
+  cursor: default;
+}
+
+.tier-actions-col {
+  text-align: right;
+}
+
+.tier-actions {
+  display: flex;
+  gap: var(--spacing-xs);
+  justify-content: flex-end;
+}
+
+.btn-sm {
+  padding: var(--spacing-xs) var(--spacing-md);
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  min-height: var(--button-height-sm);
+}
+
+.btn-primary-sm {
+  background: var(--color-primary);
+  color: var(--color-text-on-primary);
+}
+
+.btn-primary-sm:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+}
+
+.btn-danger-sm {
+  background: var(--clr-danger-a20);
+  color: var(--clr-danger-a0);
+}
+
+.btn-danger-sm:hover:not(:disabled) {
+  background: var(--clr-danger-a10);
+  color: var(--clr-text-on-danger-a10);
+}
+
+.btn-sm:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+.tier-add {
+  margin-top: var(--spacing-lg);
+}
+
+.tier-add-form {
+  margin-top: var(--spacing-md);
+  max-width: 720px;
+}
+
+.tier-add-form h4 {
+  margin: 0 0 var(--spacing-md);
+  font-size: var(--font-size-lg);
+}
+
+.tier-add-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
 }
 
 /* Group Overview Section */

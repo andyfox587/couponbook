@@ -16,7 +16,12 @@
           <li><router-link to="/"><i class="pi pi-home icon-spacing-sm"></i>Home</router-link></li>
           <li><router-link to="/coupon-book"><i class="pi pi-ticket icon-spacing-sm"></i>Local Coupons</router-link></li>
           <li><router-link to="/foodie-groups"><i class="pi pi-users icon-spacing-sm"></i>Foodie Groups</router-link></li>
-          <li><router-link to="/events"><i class="pi pi-calendar icon-spacing-sm"></i>Events</router-link></li>
+          <li>
+            <router-link to="/events">
+              <i class="pi pi-calendar icon-spacing-sm"></i>Events
+              <span v-if="!eventsEnabled" class="events-coming-soon-pill">Soon</span>
+            </router-link>
+          </li>
           <li v-if="!isAuthenticated">
             <button @click="login" class="auth-btn">
               <i class="pi pi-sign-in icon-spacing-sm"></i>Sign In
@@ -48,11 +53,13 @@
 <script>
 import { mapGetters, mapActions } from 'vuex';
 import { getAccessToken } from '@/services/authService';
+import { FEATURES } from '@/config/features';
 
 export default {
   name: 'AppHeader',
   data() {
     return {
+      eventsEnabled: FEATURES.EVENTS_ENABLED,
       isMenuOpen: false,
       userRole: null,
       isProfileDropdownOpen: false
@@ -161,6 +168,21 @@ export default {
 </script>
 
 <style scoped>
+.events-coming-soon-pill {
+  display: inline-block;
+  margin-left: var(--spacing-xs, 4px);
+  padding: 1px 6px;
+  font-size: 0.65rem;
+  font-weight: var(--font-weight-semibold, 600);
+  line-height: 1.4;
+  letter-spacing: 0.03em;
+  background: var(--color-primary, #f2542d);
+  color: #fff;
+  border-radius: var(--radius-full, 9999px);
+  vertical-align: middle;
+  pointer-events: none;
+}
+
 .auth-btn {
   background: none;
   border: none;

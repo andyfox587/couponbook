@@ -28,7 +28,8 @@
         </div>
         <div class="card">
           <h3>Exciting Events</h3>
-          <p>RSVP for curated events and add them to your calendar.</p>
+          <p v-if="!eventsEnabled" class="coming-soon-text">Coming soon — RSVP for curated events and add them to your calendar.</p>
+          <p v-else>RSVP for curated events and add them to your calendar.</p>
         </div>
       </div>
     </section>
@@ -37,8 +38,15 @@
 </template>
 
 <script>
+import { FEATURES } from '@/config/features'
+
 export default {
   name: 'AppHome',
+  data() {
+    return {
+      eventsEnabled: FEATURES.EVENTS_ENABLED,
+    }
+  },
 }
 </script>
 
@@ -179,6 +187,12 @@ export default {
 .feature-cards .card p {
   color: var(--color-text-secondary);
   margin: 0;
+}
+
+.feature-cards .card p.coming-soon-text {
+  font-style: italic;
+  color: var(--color-primary);
+  font-weight: var(--font-weight-medium);
 }
 
 /* Responsive Adjustments */

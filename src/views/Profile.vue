@@ -103,55 +103,66 @@
 
           <!-- Upcoming RSVPs -->
           <section class="section-card" data-test="customer-rsvps-section">
-            <h2>My RSVPs</h2>
-            <p class="muted">
-              See your upcoming event RSVPs and manage attendance from your account.
-            </p>
+            <ComingSoonOverlay v-if="!eventsEnabled">
+              <div class="rsvps-coming-soon-placeholder">
+                <h2>My RSVPs</h2>
+                <p class="muted">
+                  See your upcoming event RSVPs and manage attendance from your account.
+                </p>
+                <p class="muted">You do not have any upcoming RSVPs yet.</p>
+              </div>
+            </ComingSoonOverlay>
+            <template v-else>
+              <h2>My RSVPs</h2>
+              <p class="muted">
+                See your upcoming event RSVPs and manage attendance from your account.
+              </p>
 
-            <div v-if="customerRsvps.error" class="muted tiny error-text" style="margin-bottom:0.5rem;">
-              {{ customerRsvps.error }}
-            </div>
+              <div v-if="customerRsvps.error" class="muted tiny error-text" style="margin-bottom:0.5rem;">
+                {{ customerRsvps.error }}
+              </div>
 
-            <div v-if="customerRsvps.loading" class="loading">Loading RSVPs…</div>
+              <div v-if="customerRsvps.loading" class="loading">Loading RSVPs…</div>
 
-            <p v-else-if="!customerRsvps.items.length" class="muted">
-              You do not have any upcoming RSVPs yet.
-            </p>
+              <p v-else-if="!customerRsvps.items.length" class="muted">
+                You do not have any upcoming RSVPs yet.
+              </p>
 
-            <ul v-else class="rsvp-list">
-              <li v-for="rsvp in customerRsvps.items" :key="rsvp.id" class="rsvp-item">
-                <div class="rsvp-copy">
-                  <div class="rsvp-title-row">
-                    <strong>{{ rsvp.eventName }}</strong>
-                    <span class="status-badge" :class="rsvpBadgeClass(rsvp.status)">
-                      {{ rsvpBadgeLabel(rsvp) }}
-                    </span>
+              <ul v-else class="rsvp-list">
+                <li v-for="rsvp in customerRsvps.items" :key="rsvp.id" class="rsvp-item">
+                  <div class="rsvp-copy">
+                    <div class="rsvp-title-row">
+                      <strong>{{ rsvp.eventName }}</strong>
+                      <span class="status-badge" :class="rsvpBadgeClass(rsvp.status)">
+                        {{ rsvpBadgeLabel(rsvp) }}
+                      </span>
+                    </div>
+                    <div class="muted tiny">
+                      <span v-if="rsvp.merchantName">{{ rsvp.merchantName }} · </span>
+                      {{ formatDateDateTime(rsvp.startDatetime) }}
+                      <span v-if="rsvp.location"> · {{ rsvp.location }}</span>
+                    </div>
+                    <div class="muted tiny">
+                      {{ rsvp.attendees }} {{ rsvp.attendees === 1 ? 'guest' : 'guests' }}
+                      <span v-if="rsvp.order"> · {{ formatRsvpOrder(rsvp.order) }}</span>
+                    </div>
                   </div>
-                  <div class="muted tiny">
-                    <span v-if="rsvp.merchantName">{{ rsvp.merchantName }} · </span>
-                    {{ formatDateDateTime(rsvp.startDatetime) }}
-                    <span v-if="rsvp.location"> · {{ rsvp.location }}</span>
+                  <div class="rsvp-actions">
+                    <button type="button" class="btn tertiary compact" @click="goToRsvpEvent(rsvp)">
+                      View Event
+                    </button>
+                    <button
+                      type="button"
+                      class="btn danger compact"
+                      :disabled="customerRsvps.cancellingId === rsvp.id"
+                      @click="cancelCustomerRsvp(rsvp)"
+                    >
+                      {{ customerRsvps.cancellingId === rsvp.id ? 'Cancelling…' : 'Cancel RSVP' }}
+                    </button>
                   </div>
-                  <div class="muted tiny">
-                    {{ rsvp.attendees }} {{ rsvp.attendees === 1 ? 'guest' : 'guests' }}
-                    <span v-if="rsvp.order"> · {{ formatRsvpOrder(rsvp.order) }}</span>
-                  </div>
-                </div>
-                <div class="rsvp-actions">
-                  <button type="button" class="btn tertiary compact" @click="goToRsvpEvent(rsvp)">
-                    View Event
-                  </button>
-                  <button
-                    type="button"
-                    class="btn danger compact"
-                    :disabled="customerRsvps.cancellingId === rsvp.id"
-                    @click="cancelCustomerRsvp(rsvp)"
-                  >
-                    {{ customerRsvps.cancellingId === rsvp.id ? 'Cancelling…' : 'Cancel RSVP' }}
-                  </button>
-                </div>
-              </li>
-            </ul>
+                </li>
+              </ul>
+            </template>
           </section>
 
           <!-- Purchased Coupon Books -->
@@ -1355,14 +1366,17 @@ import { getAccessToken, signOut, signIn } from "@/services/authService";
 import { createBillingPortalSession } from "@/services/subscriptionService";
 import { getMyRsvps, cancelRsvp } from "@/services/eventService";
 import Modal from "@/components/Common/Modal.vue";
+import ComingSoonOverlay from "@/components/Common/ComingSoonOverlay.vue";
+import { FEATURES } from "@/config/features";
 
 export default {
   name: "UserProfile",
 
-  components: { Modal },
+  components: { Modal, ComingSoonOverlay },
 
   data() {
     return {
+      eventsEnabled: FEATURES.EVENTS_ENABLED,
       user: null,
       merchants: [],
       loadingUser: true,
@@ -2592,6 +2606,11 @@ export default {
 </script>
 
 <style scoped>
+.rsvps-coming-soon-placeholder {
+  min-height: 160px;
+  padding: var(--spacing-sm) 0;
+}
+
 .profile-page {
   max-width: 1000px;
   margin: var(--spacing-2xl) auto;
