@@ -2,7 +2,7 @@
 import express from 'express';
 import { db } from '../db.js';
 import { foodieGroup, purchase, user, foodieGroupMembership, couponBookPrice, coupon, event, billingModel } from '../schema.js';
-import { eq, and, count, isNull, or, sql, desc, asc, inArray } from 'drizzle-orm';
+import { eq, and, count, isNull, or, sql, desc, asc } from 'drizzle-orm';
 import auth from '../middleware/auth.js';
 import { resolveLocalUser, requireAdmin, canManageGroup } from '../authz/index.js';
 import { stripe, getStripeMode } from '../config/stripe.js';
@@ -379,8 +379,13 @@ router.get('/:id/price', async (req, res, next) => {
 
     const display = formatPrice(activePrice.amountCents, activePrice.currency);
     
-    // Get environment-appropriate Stripe Price ID
-    const { priceId } = getValidatedStripeIds(activePrice);
+    // Get environment-appropriate Stripe Price ID (may be absent on draft tiers)
+    let priceId = null;
+    try {
+      ({ priceId } = getValidatedStripeIds(activePrice));
+    } catch (stripeErr) {
+      console.warn('📦  GET /price: could not resolve Stripe price id:', stripeErr.message);
+    }
     
     return res.json({
       available: true,
@@ -633,22 +638,73 @@ router.put('/:id/price', auth(), async (req, res, next) => {
 // keep this aligned with the constant used by the legacy PUT /price.
 const ALLOWED_INTERVAL_COUNTS = [1, 6, 12];
 
-// Helper: find the default active tier for a group, falling back to the
-// lowest-sort-order active row when no row is explicitly flagged default
-// (covers freshly-created subscription groups that haven't been backfilled).
-async function findDefaultActiveTier(groupId) {
+// Tier status helpers — filter/sort in JS instead of SQL so read endpoints keep
+// working during deploys where migration 0019 hasn't landed yet (pre-migration
+// rows have no status/is_default/sort_order columns in the DB).
+function tierStatus(row) {
+  return row?.status ?? 'active';
+}
+
+function isPublishedTier(row) {
+  return !!row?.isActive && tierStatus(row) === 'active';
+}
+
+function isDraftTier(row) {
+  return !!row?.isActive && tierStatus(row) === 'draft';
+}
+
+function compareTiers(a, b) {
+  const aDefault = a?.isDefault ? 1 : 0;
+  const bDefault = b?.isDefault ? 1 : 0;
+  if (aDefault !== bDefault) return bDefault - aDefault;
+  const aSort = a?.sortOrder ?? 0;
+  const bSort = b?.sortOrder ?? 0;
+  if (aSort !== bSort) return aSort - bSort;
+  return String(a?.createdAt ?? '').localeCompare(String(b?.createdAt ?? ''));
+}
+
+async function listTierRows(groupId, { includeDrafts = false } = {}) {
   const rows = await db
     .select()
     .from(couponBookPrice)
     .where(
       and(
         eq(couponBookPrice.groupId, groupId),
-        eq(couponBookPrice.status, 'active'),
         eq(couponBookPrice.isActive, true)
       )
-    )
-    .orderBy(desc(couponBookPrice.isDefault), asc(couponBookPrice.sortOrder), asc(couponBookPrice.createdAt));
-  return rows[0] || null;
+    );
+
+  const filtered = rows.filter((row) => {
+    const status = tierStatus(row);
+    if (status === 'archived') return false;
+    if (includeDrafts) return status === 'active' || status === 'draft';
+    return status === 'active';
+  });
+
+  return filtered.sort(compareTiers);
+}
+
+// Helper: find the default active tier for a group, falling back to the
+// lowest-sort-order active row when no row is explicitly flagged default.
+async function findDefaultActiveTier(groupId) {
+  const rows = await listTierRows(groupId);
+  return rows.find((row) => row.isDefault) || rows[0] || null;
+}
+
+async function findTierById(groupId, priceId, { requireActive = true } = {}) {
+  const [row] = await db
+    .select()
+    .from(couponBookPrice)
+    .where(
+      and(
+        eq(couponBookPrice.id, priceId),
+        eq(couponBookPrice.groupId, groupId)
+      )
+    );
+
+  if (!row) return null;
+  if (requireActive && !isPublishedTier(row)) return null;
+  return row;
 }
 
 // Helper: turn a tier DB row into the JSON shape returned to clients.
@@ -779,19 +835,11 @@ router.get('/:id/prices', async (req, res, next) => {
     const groupRow = await resolveGroup(idOrSlug);
     if (!groupRow) return res.status(404).json({ error: 'Foodie group not found' });
 
-    const statusFilter = includeDrafts
-      ? inArray(couponBookPrice.status, ['active', 'draft'])
-      : eq(couponBookPrice.status, 'active');
-
-    const rows = await db
-      .select()
-      .from(couponBookPrice)
-      .where(and(eq(couponBookPrice.groupId, groupRow.id), statusFilter))
-      .orderBy(asc(couponBookPrice.sortOrder), asc(couponBookPrice.createdAt));
+    const rows = await listTierRows(groupRow.id, { includeDrafts });
 
     // Use the smallest "per-month equivalent" active tier as the baseline for
     // the savings comparison so badges work even if monthly isn't published.
-    const activeRows = rows.filter((r) => r.status === 'active');
+    const activeRows = rows.filter((r) => isPublishedTier(r));
     const baseline = activeRows.reduce((min, r) => {
       const months =
         r.billingInterval === 'year'
@@ -804,7 +852,7 @@ router.get('/:id/prices', async (req, res, next) => {
 
     const tiers = rows.map((tier) => {
       const out = serializeTier(tier);
-      if (baseline && tier.status === 'active') {
+      if (baseline && isPublishedTier(tier)) {
         const months =
           tier.billingInterval === 'year'
             ? (tier.billingIntervalCount || 1) * 12
@@ -1170,20 +1218,10 @@ router.post('/:id/checkout', auth(), async (req, res, next) => {
     // existing single-button UX on one-time groups and legacy clients).
     let activePrice = null;
     if (requestedPriceId) {
-      const [selected] = await db
-        .select()
-        .from(couponBookPrice)
-        .where(
-          and(
-            eq(couponBookPrice.id, requestedPriceId),
-            eq(couponBookPrice.groupId, groupId),
-            eq(couponBookPrice.status, 'active')
-          )
-        );
-      if (!selected) {
+      activePrice = await findTierById(groupId, requestedPriceId);
+      if (!activePrice) {
         return res.status(400).json({ error: 'Selected price tier is not available for this group.' });
       }
-      activePrice = selected;
     } else {
       activePrice = await findDefaultActiveTier(groupId);
     }
@@ -1735,20 +1773,10 @@ router.post('/:id/gift', auth(), resolveLocalUser, async (req, res, next) => {
     // Pick the tier the gifter chose (multi-tier UI) or fall back to default.
     let activePrice = null;
     if (requestedPriceId) {
-      const [selected] = await db
-        .select()
-        .from(couponBookPrice)
-        .where(
-          and(
-            eq(couponBookPrice.id, requestedPriceId),
-            eq(couponBookPrice.groupId, groupRow.id),
-            eq(couponBookPrice.status, 'active')
-          )
-        );
-      if (!selected) {
+      activePrice = await findTierById(groupRow.id, requestedPriceId);
+      if (!activePrice) {
         return res.status(400).json({ error: 'Selected price tier is not available for this group.' });
       }
-      activePrice = selected;
     } else {
       activePrice = await findDefaultActiveTier(groupRow.id);
     }

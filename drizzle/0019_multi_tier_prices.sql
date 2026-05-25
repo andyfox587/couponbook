@@ -12,12 +12,27 @@ ALTER TABLE "coupon_book_price" ADD COLUMN IF NOT EXISTS "is_default" boolean DE
 ALTER TABLE "coupon_book_price" ADD COLUMN IF NOT EXISTS "sort_order" integer DEFAULT 0 NOT NULL;
 ALTER TABLE "coupon_book_price" ADD COLUMN IF NOT EXISTS "status" varchar(16) DEFAULT 'active' NOT NULL;
 
--- 3. Promote any pre-existing single active row to the group's default tier.
-UPDATE "coupon_book_price"
+-- 3. Promote exactly one active row per group to default (prefer monthly, else oldest).
+--    Groups that already have multiple active tiers must not all become default.
+UPDATE "coupon_book_price" SET "is_default" = false;
+
+WITH "picked_default" AS (
+  SELECT DISTINCT ON ("group_id") "id"
+  FROM "coupon_book_price"
+  WHERE "is_active" = true
+    AND "archived_at" IS NULL
+  ORDER BY "group_id",
+    CASE
+      WHEN "billing_interval" = 'month' AND COALESCE("billing_interval_count", 1) = 1 THEN 0
+      ELSE 1
+    END,
+    "created_at" ASC
+)
+UPDATE "coupon_book_price" AS p
    SET "is_default" = true,
        "status" = 'active'
- WHERE "is_active" = true
-   AND "archived_at" IS NULL;
+  FROM "picked_default" AS d
+ WHERE p."id" = d."id";
 
 -- 4. Partial unique index: at most one default tier per group while active.
 CREATE UNIQUE INDEX IF NOT EXISTS "coupon_book_price_group_default_idx"
