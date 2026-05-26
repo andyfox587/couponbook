@@ -348,6 +348,11 @@ export const couponBookPrice = pgTable("coupon_book_price", {
 	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow().notNull(),
 	archivedAt: timestamp("archived_at", { mode: 'string' }),
+	// Multi-tier subscription fields (migration 0019)
+	label: varchar("label", { length: 64 }),
+	isDefault: boolean("is_default").default(false).notNull(),
+	sortOrder: integer("sort_order").default(0).notNull(),
+	status: varchar("status", { length: 16 }).default('active').notNull(),
 }, (table) => [
 	foreignKey({
 		columns: [table.groupId],

@@ -707,6 +707,59 @@ async function findTierById(groupId, priceId, { requireActive = true } = {}) {
   return row;
 }
 
+// Tier-column writes use raw SQL so they work when migration 0019 is on the DB
+// but the deployed Drizzle schema object is stale (undefined column refs produce
+// SQL like `where ... and = $3`).
+async function clearDefaultTiers(dbOrTx, groupId, exceptPriceId = null) {
+  const now = new Date().toISOString();
+  if (exceptPriceId) {
+    await dbOrTx.execute(sql`
+      UPDATE coupon_book_price
+         SET is_default = false, updated_at = ${now}
+       WHERE group_id = ${groupId}
+         AND is_default = true
+         AND id <> ${exceptPriceId}
+    `);
+  } else {
+    await dbOrTx.execute(sql`
+      UPDATE coupon_book_price
+         SET is_default = false, updated_at = ${now}
+       WHERE group_id = ${groupId}
+         AND is_default = true
+    `);
+  }
+}
+
+async function setTierMetadata(dbOrTx, priceId, {
+  label = null,
+  sortOrder = 0,
+  isDefault = false,
+  status = 'active',
+  isActive = true,
+  archivedAt = null,
+}) {
+  const now = new Date().toISOString();
+  await dbOrTx.execute(sql`
+    UPDATE coupon_book_price
+       SET label = ${label},
+           sort_order = ${sortOrder},
+           is_default = ${isDefault},
+           status = ${status},
+           is_active = ${isActive},
+           archived_at = ${archivedAt},
+           updated_at = ${now}
+     WHERE id = ${priceId}
+  `);
+}
+
+async function reloadTier(dbOrTx, priceId) {
+  const [row] = await dbOrTx
+    .select()
+    .from(couponBookPrice)
+    .where(eq(couponBookPrice.id, priceId));
+  return row || null;
+}
+
 // Helper: turn a tier DB row into the JSON shape returned to clients.
 function serializeTier(tier) {
   return {
@@ -942,17 +995,8 @@ router.post('/:id/prices', auth(), async (req, res, next) => {
     }
 
     const inserted = await db.transaction(async (tx) => {
-      // Enforce "one default per group" before inserting a new default.
       if (isDefault && status === 'active') {
-        await tx
-          .update(couponBookPrice)
-          .set({ isDefault: false, updatedAt: new Date().toISOString() })
-          .where(
-            and(
-              eq(couponBookPrice.groupId, groupRow.id),
-              eq(couponBookPrice.isDefault, true)
-            )
-          );
+        await clearDefaultTiers(tx, groupRow.id);
       }
 
       const [row] = await tx
@@ -962,17 +1006,22 @@ router.post('/:id/prices', auth(), async (req, res, next) => {
           amountCents,
           currency: currency.toLowerCase(),
           isActive: true,
-          isDefault: !!isDefault && status === 'active',
-          status,
-          label: label || null,
-          sortOrder: Number(sortOrder) || 0,
           billingInterval: billingInterval || null,
           billingIntervalCount: billingIntervalCount ? Number(billingIntervalCount) : null,
           createdByUserId: authz.dbUser.id,
           ...stripeIdFields,
         })
         .returning();
-      return row;
+
+      await setTierMetadata(tx, row.id, {
+        label: label || null,
+        sortOrder: Number(sortOrder) || 0,
+        isDefault: !!isDefault && status === 'active',
+        status,
+        isActive: true,
+      });
+
+      return reloadTier(tx, row.id);
     });
 
     res.status(201).json(serializeTier(inserted));
@@ -1049,36 +1098,36 @@ router.patch('/:id/prices/:priceId', auth(), async (req, res, next) => {
     }
 
     const updated = await db.transaction(async (tx) => {
-      // Enforce the partial unique index on is_default when promoting a tier.
       if (isDefault === true) {
+        await clearDefaultTiers(tx, groupRow.id, priceId);
+      }
+
+      const nextLabel = label !== undefined ? label : (existing.label ?? null);
+      const nextSortOrder = sortOrder !== undefined ? Number(sortOrder) || 0 : (existing.sortOrder ?? 0);
+      const nextIsDefault = isDefault !== undefined ? !!isDefault : !!existing.isDefault;
+      const nextStatus = status !== undefined ? status : (existing.status ?? 'active');
+      const nextIsActive = status !== undefined ? status !== 'archived' : existing.isActive !== false;
+      const nextArchivedAt = status === 'archived'
+        ? new Date().toISOString()
+        : (status !== undefined && status !== 'archived' ? null : (existing.archivedAt ?? null));
+
+      if (Object.keys(stripeIdFields).length > 0) {
         await tx
           .update(couponBookPrice)
-          .set({ isDefault: false, updatedAt: new Date().toISOString() })
-          .where(
-            and(
-              eq(couponBookPrice.groupId, groupRow.id),
-              eq(couponBookPrice.isDefault, true)
-            )
-          );
+          .set({ ...stripeIdFields, updatedAt: new Date().toISOString() })
+          .where(eq(couponBookPrice.id, priceId));
       }
 
-      const patch = { updatedAt: new Date().toISOString() };
-      if (label !== undefined) patch.label = label;
-      if (sortOrder !== undefined) patch.sortOrder = Number(sortOrder) || 0;
-      if (isDefault !== undefined) patch.isDefault = !!isDefault;
-      if (status !== undefined) {
-        patch.status = status;
-        patch.isActive = status !== 'archived';
-        if (status === 'archived') patch.archivedAt = new Date().toISOString();
-      }
-      Object.assign(patch, stripeIdFields);
+      await setTierMetadata(tx, priceId, {
+        label: nextLabel,
+        sortOrder: nextSortOrder,
+        isDefault: nextIsDefault,
+        status: nextStatus,
+        isActive: nextIsActive,
+        archivedAt: nextArchivedAt,
+      });
 
-      const [row] = await tx
-        .update(couponBookPrice)
-        .set(patch)
-        .where(eq(couponBookPrice.id, priceId))
-        .returning();
-      return row;
+      return reloadTier(tx, priceId);
     });
 
     res.json(serializeTier(updated));
@@ -1112,11 +1161,16 @@ router.delete('/:id/prices/:priceId', auth(), async (req, res, next) => {
     if (!existing) return res.status(404).json({ error: 'Price tier not found for this group' });
 
     const now = new Date().toISOString();
-    const [updated] = await db
-      .update(couponBookPrice)
-      .set({ status: 'archived', isActive: false, isDefault: false, archivedAt: now, updatedAt: now })
-      .where(eq(couponBookPrice.id, priceId))
-      .returning();
+    await setTierMetadata(db, priceId, {
+      label: existing.label ?? null,
+      sortOrder: existing.sortOrder ?? 0,
+      isDefault: false,
+      status: 'archived',
+      isActive: false,
+      archivedAt: now,
+    });
+    const updated = await reloadTier(db, priceId);
+    if (!updated) return res.status(404).json({ error: 'Price tier not found for this group' });
 
     res.json(serializeTier(updated));
   } catch (err) {
