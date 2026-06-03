@@ -4,10 +4,15 @@ import { db } from '../db.js';
 import { foodieGroup, purchase, user, foodieGroupMembership, couponBookPrice, coupon } from '../schema.js';
 import { eq, and, count, isNull, or, sql, desc } from 'drizzle-orm';
 import auth from '../middleware/auth.js';
+import requireServiceToken from '../middleware/serviceToken.js';
 import { resolveLocalUser, requireAdmin, canManageGroup } from '../authz/index.js';
 import { stripe } from '../config/stripe.js';
 import { getValidatedStripeIds, prepareStripeIdFields } from '../utils/stripeIdHelper.js';
-import { getFoodieGroupRedemptionOverview } from '../redemptionAnalytics.js';
+import {
+  getAllFoodieGroupMetrics,
+  getFoodieGroupMetrics,
+  getFoodieGroupRedemptionOverview,
+} from '../redemptionAnalytics.js';
 
 const router = express.Router();
 
@@ -233,6 +238,35 @@ router.get('/:groupId/redemption-overview', auth(), resolveLocalUser, async (req
     res.json(overview);
   } catch (err) {
     console.error('📦  error in GET /groups/:groupId/redemption-overview', err);
+    next(err);
+  }
+});
+
+// ─── GET /api/v1/groups/metrics ───────────────────────────────────────
+// Service-to-service: returns per-foodie-group metrics for all active groups.
+// Polled by n8n; consumed by the Vivaspot Dashboard via the events spine.
+// Auth: X-Service-Token header matching METRICS_SERVICE_TOKEN env var.
+router.get('/metrics', requireServiceToken(), async (_req, res, next) => {
+  try {
+    const rows = await getAllFoodieGroupMetrics();
+    res.json({ groups: rows, as_of: new Date().toISOString() });
+  } catch (err) {
+    console.error('📦  error in GET /groups/metrics', err);
+    next(err);
+  }
+});
+
+// ─── GET /api/v1/groups/:slug/metrics ─────────────────────────────────
+// Service-to-service: per-foodie-group metrics. :slug may be a slug or UUID.
+router.get('/:slug/metrics', requireServiceToken(), async (req, res, next) => {
+  try {
+    const metrics = await getFoodieGroupMetrics(req.params.slug);
+    if (!metrics) {
+      return res.status(404).json({ error: 'Foodie group not found' });
+    }
+    res.json(metrics);
+  } catch (err) {
+    console.error('📦  error in GET /groups/:slug/metrics', err);
     next(err);
   }
 });
