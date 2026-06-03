@@ -28,7 +28,29 @@ function guessServername() {
   return process.env.DB_HOST || undefined;
 }
 
+// Strip SSL-related query params from a Postgres connection string so the
+// `ssl` config object (resolved separately) is the single source of truth.
+function sanitizeDatabaseUrl(rawUrl) {
+  if (!rawUrl) return rawUrl;
+  try {
+    const url = new URL(rawUrl.replace('postgres://', 'postgresql://'));
+    for (const k of ['sslmode', 'sslcert', 'sslkey', 'sslrootcert', 'ssl']) {
+      url.searchParams.delete(k);
+    }
+    return url.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
 function resolveSsl() {
+  // 0) Local-dev escape hatch — explicitly disable SSL entirely. Use for
+  //    plain Postgres on localhost where SSL isn't configured.
+  if (process.env.PG_NO_SSL === '1') {
+    console.log('🔓 PG_NO_SSL=1 → SSL disabled (local dev only)');
+    return false;
+  }
+
   // 1) Highest priority: inline PEM via env (PG_CA_CERT or PG_SSL_CA)
   for (const varName of ['PG_CA_CERT', 'PG_SSL_CA']) {
     const val = process.env[varName]?.trim();
