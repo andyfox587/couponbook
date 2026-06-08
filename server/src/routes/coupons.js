@@ -166,21 +166,19 @@ router.get('/', async (req, res) => {
 
     res.json(response);
   } catch (err) {
-    console.error('📦 error in GET /api/v1/coupons', err);
+    // Generate a short correlation id so we can match the client's error
+    // response back to the full server-side log when triaging.
+    const requestId = Math.random().toString(36).slice(2, 10);
+    console.error(`📦 error in GET /api/v1/coupons [req=${requestId}]`, err);
 
-    const isPgError = err && typeof err === 'object' && ('code' in err || 'detail' in err);
-    if (isPgError) {
-      return res.status(500).json({
-        error: 'DB_ERROR',
-        code: err.code ?? null,
-        message: err.message ?? String(err),
-        detail: err.detail ?? null,
-        table: err.table ?? null,
-        schema: err.schema ?? null,
-      });
-    }
-
-    return res.status(500).json({ error: err?.message || 'Server error' });
+    // Do NOT echo PG err.code / err.detail / err.table / err.schema back to
+    // the client. Those leak DB structure to anyone who can trigger an error
+    // and are not useful to the API consumer. The full details are logged
+    // server-side above.
+    return res.status(500).json({
+      error: 'Database error',
+      requestId,
+    });
   }
 });
 
