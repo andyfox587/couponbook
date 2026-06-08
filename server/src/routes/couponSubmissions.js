@@ -7,6 +7,7 @@ import {
   merchant,
   user,
   foodieGroupMembership,   // ⬅️ add this
+  foodieGroup,
 } from '../schema.js';
 import { eq, and, inArray, isNull } from 'drizzle-orm';
 import auth from '../middleware/auth.js';
@@ -303,6 +304,26 @@ router.post('/', auth(), resolveLocalUser, async (req, res, next) => {
     const allowed = await canManageMerchant(dbUser, merchant_id);
     if (!allowed) {
       return res.status(403).json({ error: 'Forbidden: You do not own this merchant' });
+    }
+
+    // Reject submissions targeting an archived group or a soft-deleted
+    // merchant — those entities should not receive new writes. canManageMerchant
+    // above does NOT check deletedAt, and there's no group archived check
+    // anywhere else in this path.
+    const [activeGroup] = await db
+      .select({ id: foodieGroup.id })
+      .from(foodieGroup)
+      .where(and(eq(foodieGroup.id, group_id), isNull(foodieGroup.archivedAt)));
+    if (!activeGroup) {
+      return res.status(400).json({ error: 'Foodie group not found or archived' });
+    }
+
+    const [activeMerchant] = await db
+      .select({ id: merchant.id })
+      .from(merchant)
+      .where(and(eq(merchant.id, merchant_id), isNull(merchant.deletedAt)));
+    if (!activeMerchant) {
+      return res.status(400).json({ error: 'Merchant not found or deleted' });
     }
 
     const [newSub] = await db
