@@ -18,6 +18,65 @@ function isCouponExpired(expiresAt, now = new Date()) {
   return expirationDate.getTime() <= now.getTime();
 }
 
+// ────────────────────────────────────────────────────────────────────────
+// JSONB payload validators for admin PATCH routes.
+// Bound shape + size so a fat-fingered paste in the admin UI can't write
+// arbitrary structure (or megabytes) into a JSONB column.
+// ────────────────────────────────────────────────────────────────────────
+function isPlainObject(v) {
+  return (
+    v !== null &&
+    typeof v === 'object' &&
+    !Array.isArray(v) &&
+    Object.getPrototypeOf(v) === Object.prototype
+  );
+}
+
+// socialLinks: { instagram: 'https://...', facebook: '...', etc. }
+// We accept null (clears the value) or a plain object of string → string.
+function validateSocialLinks(v) {
+  if (v === null) return { ok: true };
+  if (!isPlainObject(v)) {
+    return { ok: false, error: 'socialLinks must be a JSON object or null' };
+  }
+  const entries = Object.entries(v);
+  if (entries.length > 20) {
+    return { ok: false, error: 'socialLinks accepts at most 20 keys' };
+  }
+  for (const [k, val] of entries) {
+    if (typeof k !== 'string' || k.length === 0 || k.length > 64) {
+      return { ok: false, error: 'socialLinks keys must be non-empty strings ≤64 chars' };
+    }
+    if (typeof val !== 'string') {
+      return { ok: false, error: `socialLinks.${k} must be a string` };
+    }
+    if (val.length > 500) {
+      return { ok: false, error: `socialLinks.${k} must be ≤500 chars` };
+    }
+  }
+  return { ok: true };
+}
+
+// map: free-form object used by the group page (coordinates, embed config, etc).
+// Without a strict known schema, we at least gate it to an object and bound
+// total serialized size so it can't blow up Postgres or the UI.
+function validateMapField(v) {
+  if (v === null) return { ok: true };
+  if (!isPlainObject(v)) {
+    return { ok: false, error: 'map must be a JSON object or null' };
+  }
+  let serialized;
+  try {
+    serialized = JSON.stringify(v);
+  } catch {
+    return { ok: false, error: 'map contains non-serializable values' };
+  }
+  if (serialized.length > 16384) {
+    return { ok: false, error: 'map payload too large (max 16KB)' };
+  }
+  return { ok: true };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // A) OVERVIEW / ANALYTICS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1100,6 +1159,18 @@ router.patch('/groups/:id', async (req, res, next) => {
 
     if (!group) {
       return res.status(404).json({ error: 'Group not found' });
+    }
+
+    // Validate JSONB fields before they hit the DB. Without this, an admin
+    // could fat-finger a paste and write arbitrary structure (or megabytes)
+    // into the column.
+    if (socialLinks !== undefined) {
+      const v = validateSocialLinks(socialLinks);
+      if (!v.ok) return res.status(400).json({ error: v.error });
+    }
+    if (map !== undefined) {
+      const v = validateMapField(map);
+      if (!v.ok) return res.status(400).json({ error: v.error });
     }
 
     const updates = { updatedAt: new Date().toISOString() };
