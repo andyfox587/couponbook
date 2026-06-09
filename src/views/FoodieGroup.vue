@@ -608,9 +608,13 @@ export default {
         return;
       }
 
-      // Signed in but no purchase → block redemption
+      // Signed in but no purchase → guide them to the Subscribe banner
+      // above instead of dropping a dead-end alert with no path forward.
       if (!this.hasPurchasedCouponBook) {
-        alert('Please purchase this coupon book to redeem offers.');
+        this.$nextTick(() => {
+          const banner = this.$el.querySelector('.purchase-banner');
+          if (banner) banner.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
         return;
       }
 

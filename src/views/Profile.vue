@@ -169,9 +169,12 @@
           <section class="section-card">
             <h2>Purchased Coupon Books</h2>
 
-            <p class="muted" v-if="!customerStats.loading && !customerStats.purchases.length">
-              Once you unlock a foodie group, it will show up here with purchase and expiry info.
-            </p>
+            <div v-if="!customerStats.loading && !customerStats.purchases.length" class="empty-purchases">
+              <p class="muted">You haven't unlocked a foodie group yet. Browse available groups to start saving on local eats.</p>
+              <router-link :to="{ name: 'FoodieGroupList' }" class="btn btn-primary btn-sm">
+                Browse Foodie Groups
+              </router-link>
+            </div>
 
             <!-- Skeleton while loading -->
             <ul v-if="customerStats.loading" class="skeleton-list">
