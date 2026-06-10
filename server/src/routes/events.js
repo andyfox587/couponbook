@@ -1,13 +1,14 @@
 // server/src/routes/events.js
 import express from 'express';
 import { db } from '../db.js';
-import { event, eventRsvp, merchant, user, eventOrder } from '../schema.js';
+import { event, eventCredit, eventRsvp, merchant, user, eventOrder } from '../schema.js';
 import { eq, and, isNull, asc, desc, sql, or, gte } from 'drizzle-orm';
 import auth from '../middleware/auth.js';
 import { optional as optionalAuth } from '../middleware/auth.js';
 import { resolveLocalUser, canManageEvent, canViewEventStats, hasEntitlement } from '../authz/index.js';
 import {
   assertMerchantPaidEventReady,
+  calculateRefundQuote,
   cancelRsvpWithRefund,
   createEventRefundForOrder,
   createPaidEventOrder,
@@ -215,6 +216,42 @@ router.get('/my-rsvps', auth(), resolveLocalUser, async (req, res, next) => {
         amountCents: Number(row.orderAmountCents || 0),
         currency:    row.orderCurrency,
       } : null,
+    })));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/v1/events/my-credits — the signed-in user's event credits
+router.get('/my-credits', auth(), resolveLocalUser, async (req, res, next) => {
+  try {
+    const dbUser = req.dbUser;
+    const rows = await db
+      .select({
+        id:           eventCredit.id,
+        amountCents:  eventCredit.amountCents,
+        currency:     eventCredit.currency,
+        status:       eventCredit.status,
+        expiresAt:    eventCredit.expiresAt,
+        redeemedAt:   eventCredit.redeemedAt,
+        createdAt:    eventCredit.createdAt,
+        merchantName: merchant.name,
+      })
+      .from(eventCredit)
+      .leftJoin(merchant, eq(eventCredit.merchantId, merchant.id))
+      .where(
+        or(
+          eq(eventCredit.userId, dbUser.id),
+          dbUser.email ? eq(eventCredit.guestEmail, dbUser.email) : sql`false`,
+        ),
+      )
+      .orderBy(asc(eventCredit.expiresAt));
+
+    res.json(rows.map((row) => ({
+      ...row,
+      amountCents: Number(row.amountCents),
+      // An expired-but-not-yet-swept credit should read as expired.
+      status: row.status === 'active' && new Date(row.expiresAt) <= new Date() ? 'expired' : row.status,
     })));
   } catch (err) {
     next(err);
@@ -757,6 +794,19 @@ router.post('/:id/rsvp', optionalAuth(), async (req, res, next) => {
           baseUrl: resolveBaseUrl(req),
         });
 
+        if (payment.paidWithCredit) {
+          return res.status(201).json({
+            requiresPayment: false,
+            paidWithCredit: true,
+            status: 'paid',
+            orderId: payment.order.id,
+            rsvpId: payment.order.rsvpId || null,
+            creditAppliedCents: payment.creditAppliedCents,
+            amountCents: payment.amountCents,
+            currency: payment.currency,
+          });
+        }
+
         return res.status(201).json({
           requiresPayment: true,
           status: 'pending_payment',
@@ -833,6 +883,15 @@ router.get('/:id/rsvp/cancel-by-token', async (req, res, next) => {
     const [foundEvent] = await db.select().from(event).where(eq(event.id, tokenRow.eventId)).limit(1);
     const order = tokenRow.eventOrderId ? await findEventOrderForRsvp({ rsvpId: tokenRow.eventRsvpId }) : null;
 
+    // Quote what the guest would receive if they cancel right now, so the
+    // cancel page can show cash/credit amounts before they confirm.
+    const refundQuote = foundEvent && order && order.status === 'paid'
+      ? calculateRefundQuote(
+          foundEvent.startDatetime,
+          order.amountCents - Number(order.refundedAmountCents || 0),
+        )
+      : null;
+
     res.json({
       valid: true,
       event: foundEvent ? {
@@ -852,6 +911,7 @@ router.get('/:id/rsvp/cancel-by-token', async (req, res, next) => {
         refundedAmountCents: order.refundedAmountCents,
         status: order.status,
       } : null,
+      refundQuote,
     });
   } catch (err) {
     next(err);
@@ -881,12 +941,14 @@ router.post('/:id/rsvp/cancel-by-token', async (req, res, next) => {
     if (!foundEvent) return res.status(404).json({ message: 'Event not found' });
 
     const order = await findEventOrderForRsvp({ rsvpId: rsvp.id });
+    const compensation = req.body?.compensation === 'credit' ? 'credit' : 'cash';
     const result = await cancelRsvpWithRefund({
       rsvp,
       eventRow: foundEvent,
       order,
       requestedByRole: 'guest',
       reason: 'customer_cancelled',
+      compensation,
     });
     await markGuestTokenUsed({ tokenId: tokenRow.id });
 
@@ -897,6 +959,8 @@ router.post('/:id/rsvp/cancel-by-token', async (req, res, next) => {
       refundStatus: result.refund?.status || null,
       refundPolicyWindow: result.refundQuote?.policyWindow || null,
       refundPolicyReason: result.refundQuote?.reason || null,
+      creditAmountCents: result.credit?.amountCents ?? 0,
+      creditExpiresAt: result.credit?.expiresAt || null,
     });
   } catch (err) {
     next(err);
@@ -1001,6 +1065,7 @@ router.post('/:id/rsvp/:rsvpId/cancel', optionalAuth(), async (req, res, next) =
       requestedByUserId: dbUser?.id || null,
       requestedByRole,
       reason: requestedByRole === 'merchant' ? 'merchant_cancelled_rsvp' : 'customer_cancelled',
+      compensation: req.body?.compensation === 'credit' ? 'credit' : 'cash',
     });
 
     if (guestTokenRow) {
@@ -1014,6 +1079,8 @@ router.post('/:id/rsvp/:rsvpId/cancel', optionalAuth(), async (req, res, next) =
       refundStatus: result.refund?.status || null,
       refundPolicyWindow: result.refundQuote?.policyWindow || null,
       refundPolicyReason: result.refundQuote?.reason || null,
+      creditAmountCents: result.credit?.amountCents ?? 0,
+      creditExpiresAt: result.credit?.expiresAt || null,
     });
   } catch (err) {
     next(err);

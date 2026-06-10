@@ -8,6 +8,7 @@ export const purchaseProvider = pgEnum("purchase_provider", ['stripe', 'test', '
 export const billingModel = pgEnum("billing_model", ['one_time', 'subscription'])
 export const eventOrderStatus = pgEnum("event_order_status", ['pending_email', 'pending_payment', 'paid', 'payment_failed', 'cancelled', 'refunded', 'partially_refunded', 'expired'])
 export const eventRefundStatus = pgEnum("event_refund_status", ['pending', 'succeeded', 'failed', 'declined'])
+export const eventCreditStatus = pgEnum("event_credit_status", ['active', 'redeemed', 'expired', 'void'])
 export const eventTokenPurpose = pgEnum("event_token_purpose", ['email_confirmation', 'cancellation'])
 export const eventPaymentProvider = pgEnum("event_payment_provider", ['stripe'])
 export const role = pgEnum("role", ['super_admin', 'merchant', 'customer', 'foodie_group_admin'])
@@ -492,6 +493,59 @@ export const eventRefund = pgTable("event_refund", {
 		name: "event_refund_requested_by_user_id_user_id_fk"
 	}).onDelete("set null"),
 	unique("event_refund_stripe_refund_id_unique").on(table.stripeRefundId),
+]);
+
+export const eventCredit = pgTable("event_credit", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id"),
+	guestEmail: varchar("guest_email", { length: 255 }),
+	merchantId: uuid("merchant_id").notNull(),
+	groupId: uuid("group_id"),
+	sourceEventOrderId: uuid("source_event_order_id").notNull(),
+	sourceEventId: uuid("source_event_id"),
+	amountCents: integer("amount_cents").notNull(),
+	currency: varchar({ length: 10 }).default('usd').notNull(),
+	status: eventCreditStatus().default('active').notNull(),
+	policyWindow: varchar("policy_window", { length: 64 }),
+	refundPolicyVersion: varchar("refund_policy_version", { length: 64 }).notNull(),
+	expiresAt: timestamp("expires_at", { mode: 'string' }).notNull(),
+	redeemedAt: timestamp("redeemed_at", { mode: 'string' }),
+	redeemedEventOrderId: uuid("redeemed_event_order_id"),
+	metadata: jsonb("metadata"),
+	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	foreignKey({
+		columns: [table.userId],
+		foreignColumns: [user.id],
+		name: "event_credit_user_id_user_id_fk"
+	}).onDelete("set null"),
+	foreignKey({
+		columns: [table.merchantId],
+		foreignColumns: [merchant.id],
+		name: "event_credit_merchant_id_merchant_id_fk"
+	}).onDelete("cascade"),
+	foreignKey({
+		columns: [table.groupId],
+		foreignColumns: [foodieGroup.id],
+		name: "event_credit_group_id_foodie_group_id_fk"
+	}).onDelete("set null"),
+	foreignKey({
+		columns: [table.sourceEventOrderId],
+		foreignColumns: [eventOrder.id],
+		name: "event_credit_source_event_order_id_event_order_id_fk"
+	}).onDelete("cascade"),
+	foreignKey({
+		columns: [table.sourceEventId],
+		foreignColumns: [event.id],
+		name: "event_credit_source_event_id_event_id_fk"
+	}).onDelete("set null"),
+	foreignKey({
+		columns: [table.redeemedEventOrderId],
+		foreignColumns: [eventOrder.id],
+		name: "event_credit_redeemed_event_order_id_event_order_id_fk"
+	}).onDelete("set null"),
+	unique("event_credit_source_event_order_id_unique").on(table.sourceEventOrderId),
 ]);
 
 export const eventGuestToken = pgTable("event_guest_token", {

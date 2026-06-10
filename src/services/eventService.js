@@ -45,6 +45,13 @@ export async function getMyRsvps() {
   return res.json()
 }
 
+export async function getMyEventCredits() {
+  const headers = await authHeaders()
+  const res = await fetch(`${API_BASE}/events/my-credits`, { headers })
+  if (!res.ok) throw new Error(`Failed to load your event credits: ${res.status}`)
+  return res.json()
+}
+
 export async function getMyRsvpForEvent(eventId) {
   const headers = await authHeaders()
   const res = await fetch(`${API_BASE}/events/${eventId}/my-rsvp`, { headers })
@@ -110,11 +117,11 @@ export async function previewGuestCancellation(eventId, token) {
   return res.json()
 }
 
-export async function cancelGuestRsvpByToken(eventId, token) {
+export async function cancelGuestRsvpByToken(eventId, token, compensation = 'cash') {
   const res = await fetch(`${API_BASE}/events/${eventId}/rsvp/cancel-by-token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token }),
+    body: JSON.stringify({ token, compensation }),
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))

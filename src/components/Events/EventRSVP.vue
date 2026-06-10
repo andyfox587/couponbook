@@ -24,6 +24,9 @@
     <div v-else-if="activeRsvp" class="rsvp-success">
       <i class="pi pi-check-circle success-icon"></i>
       <h3>{{ activeRsvpTitle }}</h3>
+      <p v-if="activeRsvp.paidWithCredit" class="rsvp-meta">
+        Paid with your event credit — no charge to your card.
+      </p>
       <p v-if="activeRsvp.status === 'waitlist'" class="waitlist-pos">
         Waitlist position: #{{ activeRsvp.waitlistPosition }}
       </p>
@@ -82,11 +85,29 @@
         <p class="checkout-title">Paid Event Ticket</p>
         <p class="checkout-copy">
           You'll be redirected to Stripe to complete payment. Cancellations follow the event refund policy:
-          72+ hours full refund, 24-72 hours 50% refund, under 24 hours no refund.
+        </p>
+        <ul class="refund-policy-tiers">
+          <li>
+            <strong>7+ days before the event</strong>
+            <span v-if="fullRefundDeadlineLabel"> (cancel by {{ fullRefundDeadlineLabel }})</span>:
+            100% refund.
+          </li>
+          <li>
+            <strong>3–7 days before the event</strong>
+            <span v-if="halfRefundDeadlineLabel"> (cancel by {{ halfRefundDeadlineLabel }})</span>:
+            50% refund, or a 100% event credit instead.
+          </li>
+          <li>
+            <strong>Less than 72 hours / no-show</strong>:
+            no refund. Cancellations made before the event receive a 50% event credit.
+          </li>
+        </ul>
+        <p class="checkout-copy muted tiny">
+          Event credits are valid for 12 months at the same restaurant and have no cash value.
         </p>
         <label class="policy-check">
           <input type="checkbox" v-model="refundPolicyAccepted" />
-          <span>I acknowledge the refund policy.</span>
+          <span>I have read and agree to the refund policy.</span>
         </label>
       </div>
 
@@ -136,6 +157,12 @@ export default {
     prefilledFromProfile() {
       return !!(this.userProfile && this.userProfile.email)
     },
+    fullRefundDeadlineLabel() {
+      return this.refundDeadlineLabel(7 * 24)
+    },
+    halfRefundDeadlineLabel() {
+      return this.refundDeadlineLabel(72)
+    },
   },
 
   data() {
@@ -171,6 +198,16 @@ export default {
   },
 
   methods: {
+    refundDeadlineLabel(hoursBeforeStart) {
+      const start = this.event?.startDatetime ? new Date(this.event.startDatetime) : null
+      if (!start || Number.isNaN(start.getTime())) return null
+      const deadline = new Date(start.getTime() - hoursBeforeStart * 60 * 60 * 1000)
+      if (deadline.getTime() <= Date.now()) return null
+      return deadline.toLocaleString(undefined, {
+        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+      })
+    },
+
     applyProfileToForm() {
       const profile = this.userProfile
       if (!profile) return

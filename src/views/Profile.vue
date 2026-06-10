@@ -223,6 +223,34 @@
               </li>
             </ul>
           </section>
+
+          <!-- Event Credits (issued in lieu of cash refunds on cancellations) -->
+          <section v-if="customerCredits.items.length || customerCredits.error" class="section-card">
+            <h2>Event Credits</h2>
+            <p v-if="customerCredits.error" class="muted tiny error-text">{{ customerCredits.error }}</p>
+            <ul v-else class="purchases-list">
+              <li v-for="c in customerCredits.items" :key="c.id" class="purchase-item">
+                <div class="purchase-main">
+                  <strong>{{ formatCreditAmount(c) }}</strong>
+                  <span class="muted tiny" v-if="c.merchantName"> · at {{ c.merchantName }}</span>
+                  <span class="status-badge" :class="c.status === 'active' ? 'subscription-badge' : 'canceled-badge'">
+                    {{ c.status === 'active' ? 'Active' : c.status === 'redeemed' ? 'Used' : 'Expired' }}
+                  </span>
+                </div>
+                <div class="muted tiny">
+                  <span v-if="c.status === 'active'">
+                    Valid until {{ formatDateMedium(c.expiresAt) }} — applied automatically at your next event checkout at this restaurant.
+                  </span>
+                  <span v-else-if="c.status === 'redeemed' && c.redeemedAt">
+                    Used {{ formatDateMedium(c.redeemedAt) }}
+                  </span>
+                  <span v-else>
+                    Expired {{ formatDateMedium(c.expiresAt) }}
+                  </span>
+                </div>
+              </li>
+            </ul>
+          </section>
         </template>
 
 
@@ -1364,7 +1392,7 @@
 import { mapGetters } from "vuex";
 import { getAccessToken, signOut, signIn } from "@/services/authService";
 import { createBillingPortalSession } from "@/services/subscriptionService";
-import { getMyRsvps, cancelRsvp } from "@/services/eventService";
+import { getMyRsvps, cancelRsvp, getMyEventCredits } from "@/services/eventService";
 import Modal from "@/components/Common/Modal.vue";
 import ComingSoonOverlay from "@/components/Common/ComingSoonOverlay.vue";
 import { FEATURES } from "@/config/features";
@@ -1392,6 +1420,11 @@ export default {
         error: null,
         items: [],
         cancellingId: null,
+      },
+      customerCredits: {
+        loading: false,
+        error: null,
+        items: [],
       },
       adminMemberships: [],
       adminMembershipsLoading: false,
@@ -1602,6 +1635,7 @@ export default {
         if (this.role === 'customer') {
           this.loadCustomerStats();
           this.loadCustomerRsvps();
+          this.loadCustomerCredits();
         }
         if (this.role === 'merchant') {
           this.loadMerchantOverview();
@@ -1712,6 +1746,24 @@ export default {
         this.customerRsvps.items = [];
       } finally {
         this.customerRsvps.loading = false;
+      }
+    },
+
+    async loadCustomerCredits() {
+      if (this.role !== 'customer') return;
+
+      this.customerCredits.loading = true;
+      this.customerCredits.error = null;
+
+      try {
+        const rows = await getMyEventCredits();
+        this.customerCredits.items = Array.isArray(rows) ? rows : [];
+      } catch (err) {
+        console.error('Error loading event credits', err);
+        this.customerCredits.error = 'Could not load your event credits.';
+        this.customerCredits.items = [];
+      } finally {
+        this.customerCredits.loading = false;
       }
     },
 
@@ -2440,6 +2492,13 @@ export default {
       } finally {
         this.exportingDetails = false;
       }
+    },
+
+    formatCreditAmount(credit) {
+      return new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency: (credit.currency || 'usd').toUpperCase(),
+      }).format((credit.amountCents || 0) / 100);
     },
 
     formatDateMedium(value) {

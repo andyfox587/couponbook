@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildRefundDeadlines,
   calculateRefundQuote,
   EVENT_REFUND_POLICY_VERSION,
   paidEventPaymentsEnabled,
@@ -16,31 +17,53 @@ describe('eventPaymentService', () => {
     else process.env.ENABLE_PAID_EVENT_PAYMENTS = previous;
   });
 
-  it('calculates the full refund window at least 72 hours before the event', () => {
+  it('calculates the full refund window at least 7 days before the event', () => {
     const now = new Date('2026-04-01T12:00:00.000Z');
-    const quote = calculateRefundQuote('2026-04-05T12:00:00.000Z', 4000, now);
+    const quote = calculateRefundQuote('2026-04-08T12:00:00.000Z', 4000, now);
     expect(quote.amountCents).toBe(4000);
     expect(quote.refundPercent).toBe(100);
-    expect(quote.policyWindow).toBe('full_refund_72_plus_hours');
+    expect(quote.creditAmountCents).toBe(0);
+    expect(quote.policyWindow).toBe('full_refund_7_plus_days');
   });
 
-  it('calculates the 50 percent refund window between 24 and 72 hours', () => {
+  it('calculates the 50 percent refund window between 3 and 7 days', () => {
     const now = new Date('2026-04-01T12:00:00.000Z');
-    const quote = calculateRefundQuote('2026-04-03T12:00:00.000Z', 4501, now);
+    const quote = calculateRefundQuote('2026-04-05T12:00:00.000Z', 4501, now);
     expect(quote.amountCents).toBe(2250);
     expect(quote.refundPercent).toBe(50);
-    expect(quote.policyWindow).toBe('half_refund_24_to_72_hours');
+    expect(quote.creditPercent).toBe(100);
+    expect(quote.creditAmountCents).toBe(4501);
+    expect(quote.policyWindow).toBe('half_refund_3_to_7_days');
   });
 
-  it('declines refunds less than 24 hours before the event', () => {
+  it('declines cash refunds under 72 hours but offers a 50 percent credit', () => {
     const now = new Date('2026-04-01T12:00:00.000Z');
-    const quote = calculateRefundQuote('2026-04-02T11:00:00.000Z', 4000, now);
+    const quote = calculateRefundQuote('2026-04-04T11:00:00.000Z', 4000, now);
     expect(quote.amountCents).toBe(0);
     expect(quote.refundPercent).toBe(0);
-    expect(quote.policyWindow).toBe('no_refund_under_24_hours');
+    expect(quote.creditPercent).toBe(50);
+    expect(quote.creditAmountCents).toBe(2000);
+    expect(quote.policyWindow).toBe('no_refund_under_72_hours');
+  });
+
+  it('treats exactly 72 hours out as inside the 50 percent cash window', () => {
+    const now = new Date('2026-04-01T12:00:00.000Z');
+    const quote = calculateRefundQuote('2026-04-04T12:00:00.000Z', 4000, now);
+    expect(quote.refundPercent).toBe(50);
+    expect(quote.policyWindow).toBe('half_refund_3_to_7_days');
   });
 
   it('exports the persisted refund policy version', () => {
-    expect(EVENT_REFUND_POLICY_VERSION).toBe('event-refunds-v1');
+    expect(EVENT_REFUND_POLICY_VERSION).toBe('event-refunds-v2');
+  });
+
+  it('computes concrete cancel-by deadlines from the event start', () => {
+    const deadlines = buildRefundDeadlines('2026-04-15T18:00:00.000Z');
+    expect(deadlines.fullRefundUntil).toBe('2026-04-08T18:00:00.000Z');
+    expect(deadlines.halfRefundUntil).toBe('2026-04-12T18:00:00.000Z');
+  });
+
+  it('returns null deadlines for an invalid event start', () => {
+    expect(buildRefundDeadlines('not-a-date')).toBeNull();
   });
 });
