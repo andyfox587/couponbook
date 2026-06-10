@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildRefundDeadlines,
   calculateRefundQuote,
   EVENT_REFUND_POLICY_VERSION,
   paidEventPaymentsEnabled,
@@ -54,5 +55,15 @@ describe('eventPaymentService', () => {
 
   it('exports the persisted refund policy version', () => {
     expect(EVENT_REFUND_POLICY_VERSION).toBe('event-refunds-v2');
+  });
+
+  it('computes concrete cancel-by deadlines from the event start', () => {
+    const deadlines = buildRefundDeadlines('2026-04-15T18:00:00.000Z');
+    expect(deadlines.fullRefundUntil).toBe('2026-04-08T18:00:00.000Z');
+    expect(deadlines.halfRefundUntil).toBe('2026-04-12T18:00:00.000Z');
+  });
+
+  it('returns null deadlines for an invalid event start', () => {
+    expect(buildRefundDeadlines('not-a-date')).toBeNull();
   });
 });

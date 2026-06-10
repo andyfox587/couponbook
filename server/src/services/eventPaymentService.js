@@ -1,8 +1,9 @@
 import crypto from 'node:crypto';
-import { and, asc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, or, sql } from 'drizzle-orm';
 import { db as defaultDb } from '../db.js';
 import {
   event,
+  eventCredit,
   eventGuestToken,
   eventOrder,
   eventRefund,
@@ -206,6 +207,82 @@ export async function getConfirmedSeatCount({ database = defaultDb, eventId }) {
   return rows.reduce((sum, row) => sum + Number(row.attendees || 0), 0);
 }
 
+/**
+ * Finds the guest's best active credit for this merchant that fully covers
+ * the given total. v1 keeps redemption simple: a credit is only auto-applied
+ * when it covers the entire ticket total (no partial Stripe charges yet).
+ * Credits expiring soonest are preferred.
+ */
+export async function findApplicableEventCredit({
+  database = defaultDb,
+  merchantId,
+  userId = null,
+  guestEmail = null,
+  minAmountCents,
+}) {
+  if (!userId && !guestEmail) return null;
+
+  const ownerClauses = [];
+  if (userId) ownerClauses.push(eq(eventCredit.userId, userId));
+  if (guestEmail) ownerClauses.push(eq(eventCredit.guestEmail, guestEmail));
+
+  const [credit] = await database
+    .select()
+    .from(eventCredit)
+    .where(
+      and(
+        eq(eventCredit.merchantId, merchantId),
+        eq(eventCredit.status, 'active'),
+        sql`${eventCredit.expiresAt} > ${nowIso()}`,
+        sql`${eventCredit.amountCents} >= ${minAmountCents}`,
+        or(...ownerClauses),
+      ),
+    )
+    .orderBy(asc(eventCredit.expiresAt))
+    .limit(1);
+
+  return credit || null;
+}
+
+/**
+ * Consumes `applyCents` from a credit with optimistic concurrency (the
+ * status+balance guard in the WHERE makes a double-spend lose the race and
+ * return null). A fully-spent credit flips to 'redeemed'; a partially spent
+ * one keeps the remainder active.
+ */
+export async function consumeEventCredit({
+  database = defaultDb,
+  credit,
+  applyCents,
+  orderId,
+}) {
+  const now = nowIso();
+  const fullySpent = applyCents >= credit.amountCents;
+  const [consumed] = await database
+    .update(eventCredit)
+    .set(
+      fullySpent
+        ? { status: 'redeemed', redeemedAt: now, redeemedEventOrderId: orderId, updatedAt: now }
+        : {
+            amountCents: credit.amountCents - applyCents,
+            updatedAt: now,
+            metadata: {
+              ...(credit.metadata || {}),
+              lastPartialRedemption: { orderId, applyCents, at: now },
+            },
+          },
+    )
+    .where(
+      and(
+        eq(eventCredit.id, credit.id),
+        eq(eventCredit.status, 'active'),
+        eq(eventCredit.amountCents, credit.amountCents),
+      ),
+    )
+    .returning();
+  return consumed || null;
+}
+
 export async function createPaidEventOrder({
   database = defaultDb,
   eventRow,
@@ -277,6 +354,54 @@ export async function createPaidEventOrder({
       },
     })
     .returning();
+
+  // Event-credit redemption: when an active same-merchant credit covers the
+  // whole total, consume it and confirm the order with no Stripe charge.
+  const applicableCredit = await findApplicableEventCredit({
+    database,
+    merchantId: eventRow.merchantId,
+    userId: dbUser?.id || null,
+    guestEmail: customerEmail,
+    minAmountCents: amountCents,
+  });
+  if (applicableCredit) {
+    const consumed = await consumeEventCredit({
+      database,
+      credit: applicableCredit,
+      applyCents: amountCents,
+      orderId: order.id,
+    });
+    if (consumed) {
+      await database
+        .update(eventOrder)
+        .set({
+          pricingBasis: 'event_credit',
+          metadata: {
+            ...(order.metadata || {}),
+            creditApplied: { creditId: applicableCredit.id, amountCents },
+          },
+          updatedAt: nowIso(),
+        })
+        .where(eq(eventOrder.id, order.id));
+
+      const confirmedOrder = await finalizeConfirmedEventOrder({
+        database,
+        order: { ...order, pricingBasis: 'event_credit' },
+        source: 'event_credit_redemption',
+      });
+
+      return {
+        order: confirmedOrder,
+        paidWithCredit: true,
+        creditAppliedCents: amountCents,
+        checkoutUrl: null,
+        checkoutSessionId: null,
+        amountCents,
+        currency: price.currency,
+      };
+    }
+    // Credit lost a concurrent race — fall through to the normal Stripe path.
+  }
 
   try {
     const base = (baseUrl || serverBaseUrl()).replace(/\/$/, '');
@@ -655,7 +780,7 @@ async function notifyEventRsvpConfirmed({ order, eventRow, cancellationToken = n
   });
 }
 
-async function notifyEventRsvpCancelled({ order, eventRow, refund = null, refundQuote = null, rsvp = null }) {
+async function notifyEventRsvpCancelled({ order, eventRow, refund = null, refundQuote = null, credit = null, rsvp = null }) {
   const recipientEmail = order?.guestEmail || rsvp?.guestEmail;
   if (!recipientEmail) return;
 
@@ -702,6 +827,13 @@ async function notifyEventRsvpCancelled({ order, eventRow, refund = null, refund
         amountCents: refund.amountCents,
         status: refund.status,
         policyWindow: refund.policyWindow,
+      } : null,
+      credit: credit ? {
+        id: credit.id,
+        amountCents: credit.amountCents,
+        currency: credit.currency,
+        expiresAt: credit.expiresAt,
+        merchantId: credit.merchantId,
       } : null,
       refundQuote,
       calendar,
@@ -830,6 +962,49 @@ export async function createEventRefundForOrder({
   return refundRow;
 }
 
+export const EVENT_CREDIT_VALIDITY_MONTHS = 12;
+
+/**
+ * Issues an event credit in lieu of (or in addition to) a cash refund.
+ * Credits are same-merchant only, valid 12 months, no cash value.
+ * Idempotent per source order via the unique constraint — a double-cancel
+ * can never mint two credits for the same order.
+ */
+export async function issueEventCreditForOrder({
+  database = defaultDb,
+  order,
+  policyWindow,
+  amountCents,
+  metadata = null,
+}) {
+  if (!order || amountCents <= 0) return null;
+
+  const expires = new Date();
+  expires.setMonth(expires.getMonth() + EVENT_CREDIT_VALIDITY_MONTHS);
+
+  const [creditRow] = await database
+    .insert(eventCredit)
+    .values({
+      userId: order.userId || null,
+      guestEmail: order.guestEmail || null,
+      merchantId: order.merchantId,
+      groupId: order.groupId || null,
+      sourceEventOrderId: order.id,
+      sourceEventId: order.eventId || null,
+      amountCents,
+      currency: order.currency || 'usd',
+      status: 'active',
+      policyWindow,
+      refundPolicyVersion: order.refundPolicyVersion || EVENT_REFUND_POLICY_VERSION,
+      expiresAt: expires.toISOString(),
+      metadata,
+    })
+    .onConflictDoNothing({ target: eventCredit.sourceEventOrderId })
+    .returning();
+
+  return creditRow || null;
+}
+
 export async function cancelRsvpWithRefund({
   database = defaultDb,
   rsvp,
@@ -838,6 +1013,7 @@ export async function cancelRsvpWithRefund({
   requestedByUserId = null,
   requestedByRole = 'customer',
   reason = 'customer_cancelled',
+  compensation = 'cash',
 }) {
   const wasConfirmed = rsvp.status === 'going' || rsvp.status === 'checked_in';
   const now = nowIso();
@@ -848,6 +1024,7 @@ export async function cancelRsvpWithRefund({
 
   let refund = null;
   let refundQuote = null;
+  let credit = null;
 
   if (order && order.status === 'paid') {
     refundQuote = reason === 'event_cancelled'
@@ -855,6 +1032,8 @@ export async function cancelRsvpWithRefund({
           amountCents: order.amountCents - Number(order.refundedAmountCents || 0),
           policyWindow: 'merchant_event_cancelled_full_refund',
           refundPercent: 100,
+          creditPercent: 0,
+          creditAmountCents: 0,
           reason: 'Event cancelled by merchant',
         }
       : calculateRefundQuote(
@@ -862,10 +1041,20 @@ export async function cancelRsvpWithRefund({
           order.amountCents - Number(order.refundedAmountCents || 0),
         );
 
+    // The guest may swap the 50% cash refund for a 100% event credit in the
+    // 3-7 day window. Inside 72 hours the 50% credit is issued automatically.
+    const creditInsteadOfCash = compensation === 'credit'
+      && refundQuote.refundPercent === 50
+      && refundQuote.creditPercent === 100;
+    const cashRefundCents = creditInsteadOfCash ? 0 : refundQuote.amountCents;
+    const creditCents = creditInsteadOfCash || refundQuote.refundPercent === 0
+      ? (refundQuote.creditAmountCents || 0)
+      : 0;
+
     await database
       .update(eventOrder)
       .set({
-        status: refundQuote.amountCents > 0 ? order.status : 'cancelled',
+        status: cashRefundCents > 0 ? order.status : 'cancelled',
         cancellationReason: reason,
         cancellationRequestedAt: now,
         cancelledAt: now,
@@ -877,12 +1066,23 @@ export async function cancelRsvpWithRefund({
       database,
       order: { ...order, cancelledAt: now },
       eventRow,
-      amountCents: refundQuote.amountCents,
+      amountCents: cashRefundCents,
       policyWindow: refundQuote.policyWindow,
       reason,
       requestedByUserId,
       requestedByRole,
-      metadata: { refundReason: refundQuote.reason },
+      metadata: {
+        refundReason: refundQuote.reason,
+        ...(creditInsteadOfCash ? { compensationChoice: 'credit' } : {}),
+      },
+    });
+
+    credit = await issueEventCreditForOrder({
+      database,
+      order,
+      policyWindow: refundQuote.policyWindow,
+      amountCents: creditCents,
+      metadata: { source: 'rsvp_cancellation', refundReason: refundQuote.reason },
     });
   } else if (order) {
     await database
@@ -906,6 +1106,7 @@ export async function cancelRsvpWithRefund({
     eventRow,
     refund,
     refundQuote,
+    credit,
     rsvp,
   });
 
@@ -913,6 +1114,7 @@ export async function cancelRsvpWithRefund({
     cancelled: true,
     refund,
     refundQuote,
+    credit,
   };
 }
 

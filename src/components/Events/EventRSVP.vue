@@ -24,6 +24,9 @@
     <div v-else-if="activeRsvp" class="rsvp-success">
       <i class="pi pi-check-circle success-icon"></i>
       <h3>{{ activeRsvpTitle }}</h3>
+      <p v-if="activeRsvp.paidWithCredit" class="rsvp-meta">
+        Paid with your event credit — no charge to your card.
+      </p>
       <p v-if="activeRsvp.status === 'waitlist'" class="waitlist-pos">
         Waitlist position: #{{ activeRsvp.waitlistPosition }}
       </p>
