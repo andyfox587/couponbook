@@ -15,7 +15,7 @@ import { sendNotificationWebhook } from './notificationService.js';
 import { buildEventIcs, buildEventIcsUid } from '../utils/icsBuilder.js';
 import { serverBaseUrl } from '../utils/appUrl.js';
 
-export const EVENT_REFUND_POLICY_VERSION = 'event-refunds-v1';
+export const EVENT_REFUND_POLICY_VERSION = 'event-refunds-v2';
 export const PAID_EVENT_TERMS_VERSION = 'paid-events-v1';
 
 export function paidEventPaymentsEnabled() {
@@ -133,33 +133,62 @@ export async function resolveTicketPrice({ database = defaultDb, eventRow, dbUse
   };
 }
 
+/**
+ * Computes the concrete cancellation deadlines for an event so emails can
+ * say "cancel by <date>" instead of restating the abstract policy windows.
+ */
+export function buildRefundDeadlines(eventStartDatetime) {
+  const eventStart = new Date(eventStartDatetime);
+  if (Number.isNaN(eventStart.getTime())) return null;
+  return {
+    fullRefundUntil: new Date(eventStart.getTime() - 168 * 60 * 60 * 1000).toISOString(),
+    halfRefundUntil: new Date(eventStart.getTime() - 72 * 60 * 60 * 1000).toISOString(),
+  };
+}
+
+/**
+ * Refund policy v2 (April 2026):
+ *   7+ days out   → 100% cash refund, no credit needed
+ *   3–7 days out  → 50% cash refund, OR 100% event credit in lieu of cash
+ *   under 72 hrs  → no cash refund, 50% event credit auto-offered
+ *
+ * Event credits are valid 12 months, same-merchant only, no cash value.
+ * The credit fields describe what MAY be issued; issuance is decided by the
+ * cancellation flow (guest's compensation choice in the 3–7 day window).
+ */
 export function calculateRefundQuote(eventStartDatetime, paidAmountCents, now = new Date()) {
   const eventStart = new Date(eventStartDatetime);
   const hoursUntilEvent = (eventStart.getTime() - now.getTime()) / (60 * 60 * 1000);
 
-  if (hoursUntilEvent >= 72) {
+  if (hoursUntilEvent >= 168) {
     return {
       amountCents: paidAmountCents,
-      policyWindow: 'full_refund_72_plus_hours',
+      policyWindow: 'full_refund_7_plus_days',
       refundPercent: 100,
-      reason: '72+ hours before event',
+      creditPercent: 0,
+      creditAmountCents: 0,
+      reason: '7+ days before event',
     };
   }
 
-  if (hoursUntilEvent >= 24) {
+  if (hoursUntilEvent >= 72) {
     return {
       amountCents: Math.floor(paidAmountCents * 0.5),
-      policyWindow: 'half_refund_24_to_72_hours',
+      policyWindow: 'half_refund_3_to_7_days',
       refundPercent: 50,
-      reason: '24-72 hours before event',
+      creditPercent: 100,
+      creditAmountCents: paidAmountCents,
+      reason: '3-7 days before event',
     };
   }
 
   return {
     amountCents: 0,
-    policyWindow: 'no_refund_under_24_hours',
+    policyWindow: 'no_refund_under_72_hours',
     refundPercent: 0,
-    reason: 'Less than 24 hours before event',
+    creditPercent: 50,
+    creditAmountCents: Math.floor(paidAmountCents * 0.5),
+    reason: 'Less than 72 hours before event',
   };
 }
 
@@ -616,6 +645,7 @@ async function notifyEventRsvpConfirmed({ order, eventRow, cancellationToken = n
       eventUrl: eventRow.slug ? `${serverBaseUrl()}/e/${eventRow.slug}` : `${serverBaseUrl()}/events/${eventRow.id}`,
       cancellationUrl,
       refundPolicyVersion: order.refundPolicyVersion,
+      refundDeadlines: buildRefundDeadlines(eventRow.startDatetime),
       calendar,
     },
     metadata: {

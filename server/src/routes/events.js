@@ -8,6 +8,7 @@ import { optional as optionalAuth } from '../middleware/auth.js';
 import { resolveLocalUser, canManageEvent, canViewEventStats, hasEntitlement } from '../authz/index.js';
 import {
   assertMerchantPaidEventReady,
+  calculateRefundQuote,
   cancelRsvpWithRefund,
   createEventRefundForOrder,
   createPaidEventOrder,
@@ -833,6 +834,15 @@ router.get('/:id/rsvp/cancel-by-token', async (req, res, next) => {
     const [foundEvent] = await db.select().from(event).where(eq(event.id, tokenRow.eventId)).limit(1);
     const order = tokenRow.eventOrderId ? await findEventOrderForRsvp({ rsvpId: tokenRow.eventRsvpId }) : null;
 
+    // Quote what the guest would receive if they cancel right now, so the
+    // cancel page can show cash/credit amounts before they confirm.
+    const refundQuote = foundEvent && order && order.status === 'paid'
+      ? calculateRefundQuote(
+          foundEvent.startDatetime,
+          order.amountCents - Number(order.refundedAmountCents || 0),
+        )
+      : null;
+
     res.json({
       valid: true,
       event: foundEvent ? {
@@ -852,6 +862,7 @@ router.get('/:id/rsvp/cancel-by-token', async (req, res, next) => {
         refundedAmountCents: order.refundedAmountCents,
         status: order.status,
       } : null,
+      refundQuote,
     });
   } catch (err) {
     next(err);
