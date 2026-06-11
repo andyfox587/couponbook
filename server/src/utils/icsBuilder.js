@@ -117,6 +117,7 @@ export function buildEventIcs({
   eventUrl = null,
   cancellationUrl = null,
   organizerEmail = DEFAULT_ORGANIZER_EMAIL,
+  organizerName = null,
   now = new Date(),
   sequence = 0,
 }) {
@@ -164,7 +165,7 @@ export function buildEventIcs({
     `STATUS:${statusForMethod(upperMethod)}`,
     'TRANSP:OPAQUE',
     organizerEmail
-      ? `ORGANIZER;CN=${escapeText('Viva Spot')}:mailto:${organizerEmail}`
+      ? `ORGANIZER;CN=${escapeText(organizerName || 'VivaSpot Events')}:mailto:${organizerEmail}`
       : null,
     attendee.email
       ? (() => {

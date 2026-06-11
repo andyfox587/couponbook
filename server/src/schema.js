@@ -45,6 +45,7 @@ export const eventRsvp = pgTable("event_rsvp", {
     waitlistPosition: integer("waitlist_position"),
     guestName: varchar("guest_name", { length: 255 }),
     guestEmail: varchar("guest_email", { length: 255 }),
+    ticketCode: varchar("ticket_code", { length: 32 }),
     createdAt: timestamp("created_at", { mode: 'string' }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow().notNull(),
     deletedAt: timestamp("deleted_at", { mode: 'string' }),

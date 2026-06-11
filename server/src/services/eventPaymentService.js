@@ -8,6 +8,7 @@ import {
   eventOrder,
   eventRefund,
   eventRsvp,
+  merchant,
   merchantBillingProfile,
 } from '../schema.js';
 import { hasEntitlement } from '../authz/index.js';
@@ -34,6 +35,23 @@ function hashToken(rawToken) {
 
 export function makeGuestToken() {
   return crypto.randomBytes(32).toString('base64url');
+}
+
+/**
+ * Bearer code for the QR ticket. Stored plaintext on the RSVP so the ticket
+ * can be re-displayed in the guest's profile (unlike hashed guest tokens).
+ * 24 hex chars from 12 random bytes — fits varchar(32), collision-negligible.
+ */
+export function makeTicketCode() {
+  return crypto.randomBytes(12).toString('hex');
+}
+
+export function buildCheckinUrl(eventId, ticketCode) {
+  return `${serverBaseUrl().replace(/\/$/, '')}/checkin/${eventId}?code=${encodeURIComponent(ticketCode)}`;
+}
+
+export function buildTicketQrPngUrl(ticketCode) {
+  return `${serverBaseUrl().replace(/\/$/, '')}/api/v1/events/tickets/${encodeURIComponent(ticketCode)}/qr.png`;
 }
 
 export async function createGuestToken({
@@ -535,6 +553,7 @@ async function finalizeConfirmedEventOrder({
   }
 
   let rsvpId = order.rsvpId;
+  let ticketCode = null;
   if (!rsvpId) {
     const [rsvp] = await database
       .insert(eventRsvp)
@@ -545,16 +564,25 @@ async function finalizeConfirmedEventOrder({
         status: 'going',
         guestName: order.guestName,
         guestEmail: order.guestEmail,
+        ticketCode: makeTicketCode(),
       })
       .returning();
     rsvpId = rsvp.id;
+    ticketCode = rsvp.ticketCode;
   } else {
+    const [existingRsvp] = await database
+      .select({ ticketCode: eventRsvp.ticketCode })
+      .from(eventRsvp)
+      .where(eq(eventRsvp.id, rsvpId))
+      .limit(1);
+    ticketCode = existingRsvp?.ticketCode || makeTicketCode();
     await database
       .update(eventRsvp)
       .set({
         status: 'going',
         waitlistPosition: null,
         deletedAt: null,
+        ticketCode,
         updatedAt: nowIso(),
       })
       .where(eq(eventRsvp.id, rsvpId));
@@ -588,9 +616,11 @@ async function finalizeConfirmedEventOrder({
   }
 
   await notifyEventRsvpConfirmed({
+    database,
     order: updatedOrder,
     eventRow,
     cancellationToken: guestCancellationToken,
+    ticketCode,
   });
 
   return updatedOrder;
@@ -702,14 +732,25 @@ export async function markPaidEventOrderFromSessionExpired(session, { database =
 // emitted inline as base64 so the workflow can attach it directly without
 // needing to call back into our API (which removes the need for a public
 // URL during local dev and for the HMAC download token altogether).
-function buildCalendarPayload({ eventRow, rsvp, order = null, method }) {
+/** Merchant display name for ICS ORGANIZER + email copy. */
+export async function getMerchantName({ database = defaultDb, merchantId }) {
+  if (!merchantId) return null;
+  const [row] = await database
+    .select({ name: merchant.name })
+    .from(merchant)
+    .where(eq(merchant.id, merchantId))
+    .limit(1);
+  return row?.name || null;
+}
+
+function buildCalendarPayload({ eventRow, rsvp, order = null, method, organizerName = null }) {
   if (!rsvp?.id) return null;
   const base = serverBaseUrl().replace(/\/$/, '');
   const eventUrl = eventRow.slug ? `${base}/e/${eventRow.slug}` : `${base}/events/${eventRow.id}`;
   const filename = `vivaspot-${eventRow.slug || eventRow.id}.ics`;
   let icsBase64 = null;
   try {
-    const icsBody = buildEventIcs({ event: eventRow, rsvp, order, method, eventUrl });
+    const icsBody = buildEventIcs({ event: eventRow, rsvp, order, method, eventUrl, organizerName });
     icsBase64 = Buffer.from(icsBody, 'utf8').toString('base64');
   } catch (err) {
     console.warn('🗓️  Failed to build .ics body for webhook payload:', err.message);
@@ -723,13 +764,15 @@ function buildCalendarPayload({ eventRow, rsvp, order = null, method }) {
   };
 }
 
-async function notifyEventRsvpConfirmed({ order, eventRow, cancellationToken = null }) {
+async function notifyEventRsvpConfirmed({ database = defaultDb, order, eventRow, cancellationToken = null, ticketCode = null }) {
   const recipientEmail = order.guestEmail;
   if (!recipientEmail) return;
 
   const cancellationUrl = cancellationToken
     ? `${serverBaseUrl()}/events/${eventRow.id}/cancel?token=${encodeURIComponent(cancellationToken)}`
     : null;
+
+  const merchantName = await getMerchantName({ database, merchantId: eventRow.merchantId });
 
   const calendar = buildCalendarPayload({
     eventRow,
@@ -738,7 +781,16 @@ async function notifyEventRsvpConfirmed({ order, eventRow, cancellationToken = n
       : null,
     order,
     method: 'REQUEST',
+    organizerName: merchantName,
   });
+
+  const ticket = ticketCode
+    ? {
+        code: ticketCode,
+        checkinUrl: buildCheckinUrl(eventRow.id, ticketCode),
+        qrPngUrl: buildTicketQrPngUrl(ticketCode),
+      }
+    : null;
 
   await sendNotificationWebhook({
     template: 'event_rsvp_confirmation',
@@ -771,6 +823,8 @@ async function notifyEventRsvpConfirmed({ order, eventRow, cancellationToken = n
       cancellationUrl,
       refundPolicyVersion: order.refundPolicyVersion,
       refundDeadlines: buildRefundDeadlines(eventRow.startDatetime),
+      merchantName,
+      ticket,
       calendar,
     },
     metadata: {
@@ -780,9 +834,11 @@ async function notifyEventRsvpConfirmed({ order, eventRow, cancellationToken = n
   });
 }
 
-async function notifyEventRsvpCancelled({ order, eventRow, refund = null, refundQuote = null, credit = null, rsvp = null }) {
+async function notifyEventRsvpCancelled({ database = defaultDb, order, eventRow, refund = null, refundQuote = null, credit = null, rsvp = null }) {
   const recipientEmail = order?.guestEmail || rsvp?.guestEmail;
   if (!recipientEmail) return;
+
+  const merchantName = await getMerchantName({ database, merchantId: eventRow.merchantId });
 
   const rsvpForCalendar = rsvp
     ? rsvp
@@ -794,6 +850,7 @@ async function notifyEventRsvpCancelled({ order, eventRow, refund = null, refund
     rsvp: rsvpForCalendar,
     order,
     method: 'CANCEL',
+    organizerName: merchantName,
   });
 
   await sendNotificationWebhook({
@@ -1102,6 +1159,7 @@ export async function cancelRsvpWithRefund({
   }
 
   await notifyEventRsvpCancelled({
+    database,
     order,
     eventRow,
     refund,

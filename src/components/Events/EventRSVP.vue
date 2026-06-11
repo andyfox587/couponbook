@@ -34,8 +34,25 @@
         {{ activeRsvp.attendees || form.attendees }}
         {{ (activeRsvp.attendees || form.attendees) === 1 ? 'guest' : 'guests' }}
       </p>
-      <button class="btn btn-secondary" @click="cancelConfirmed">Cancel RSVP</button>
+
+      <!-- QR ticket: shown for confirmed attendance, scanned at the door -->
+      <div v-if="ticketCheckinUrl && activeRsvp.status !== 'waitlist'" class="ticket-box">
+        <p class="ticket-title">Your ticket</p>
+        <QRCode :value="ticketCheckinUrl" :size="180" level="M" class="ticket-qr" />
+        <p class="ticket-hint muted">Show this QR code at the door.</p>
+      </div>
+
+      <button class="btn btn-secondary" @click="showCancelModal = true">Cancel RSVP</button>
       <div v-if="submitError" class="error-msg">{{ submitError }}</div>
+
+      <CancelRsvpModal
+        v-if="showCancelModal"
+        :event-id="event.id"
+        :rsvp-id="activeRsvp.id"
+        :event-name="event.name"
+        @close="showCancelModal = false"
+        @cancelled="onModalCancelled"
+      />
     </div>
 
     <!-- Redirecting to Stripe -->
@@ -119,10 +136,13 @@
 </template>
 
 <script>
-import { createRsvp, cancelRsvp } from '@/services/eventService'
+import { createRsvp } from '@/services/eventService'
+import CancelRsvpModal from '@/components/Events/CancelRsvpModal.vue'
 
 export default {
   name: 'EventRSVP',
+
+  components: { CancelRsvpModal },
 
   props: {
     event: { type: Object, required: true },
@@ -163,6 +183,11 @@ export default {
     halfRefundDeadlineLabel() {
       return this.refundDeadlineLabel(72)
     },
+    ticketCheckinUrl() {
+      const code = this.activeRsvp?.ticketCode
+      if (!code) return null
+      return `${window.location.origin}/checkin/${this.event.id}?code=${encodeURIComponent(code)}`
+    },
   },
 
   data() {
@@ -181,6 +206,7 @@ export default {
       redirectingToCheckout: false,
       submitError: null,
       refundPolicyAccepted: false,
+      showCancelModal: false,
     }
   },
 
@@ -249,19 +275,11 @@ export default {
       }
     },
 
-    async cancelConfirmed() {
-      const currentRsvp = this.activeRsvp
-      if (!currentRsvp) return
-      this.submitError = null
-      try {
-        await cancelRsvp(this.event.id, currentRsvp.id)
-        const prev = currentRsvp
-        this.rsvpResult = null
-        this.$emit('rsvp-cancelled', prev)
-      } catch (err) {
-        console.error('[EventRSVP] cancelRsvp error', err)
-        this.submitError = err.message || 'Cancel failed. Please try again.'
-      }
+    onModalCancelled() {
+      const prev = this.activeRsvp
+      this.showCancelModal = false
+      this.rsvpResult = null
+      this.$emit('rsvp-cancelled', prev)
     },
   },
 }
@@ -273,6 +291,34 @@ export default {
   border-radius: var(--radius-lg);
   padding: var(--spacing-xl);
   box-shadow: var(--shadow-sm);
+}
+
+.ticket-box {
+  margin: var(--spacing-lg) 0;
+  padding: var(--spacing-md);
+  border: 1px dashed var(--color-border, #cbd5e1);
+  border-radius: var(--radius-md);
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-xs);
+  background: #fff;
+}
+
+.ticket-title {
+  margin: 0;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.ticket-qr {
+  display: block;
+}
+
+.ticket-hint {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
 }
 
 .rsvp-form h3, .rsvp-success h3 {

@@ -152,17 +152,37 @@
                       View Event
                     </button>
                     <button
+                      v-if="rsvp.ticketCode"
+                      type="button"
+                      class="btn tertiary compact"
+                      @click="ticketShownRsvpId = ticketShownRsvpId === rsvp.id ? null : rsvp.id"
+                    >
+                      {{ ticketShownRsvpId === rsvp.id ? 'Hide Ticket' : 'Show Ticket' }}
+                    </button>
+                    <button
                       type="button"
                       class="btn danger compact"
-                      :disabled="customerRsvps.cancellingId === rsvp.id"
-                      @click="cancelCustomerRsvp(rsvp)"
+                      @click="cancellingRsvp = rsvp"
                     >
-                      {{ customerRsvps.cancellingId === rsvp.id ? 'Cancelling…' : 'Cancel RSVP' }}
+                      Cancel RSVP
                     </button>
+                  </div>
+                  <div v-if="ticketShownRsvpId === rsvp.id && rsvp.ticketCode" class="rsvp-ticket">
+                    <QRCode :value="ticketCheckinUrl(rsvp)" :size="160" level="M" />
+                    <p class="muted tiny">Show this QR code at the door.</p>
                   </div>
                 </li>
               </ul>
             </template>
+
+            <CancelRsvpModal
+              v-if="cancellingRsvp"
+              :event-id="cancellingRsvp.eventId"
+              :rsvp-id="cancellingRsvp.id"
+              :event-name="cancellingRsvp.eventName"
+              @close="cancellingRsvp = null"
+              @cancelled="onRsvpCancelled"
+            />
           </section>
 
           <!-- Purchased Coupon Books -->
@@ -1392,7 +1412,8 @@
 import { mapGetters } from "vuex";
 import { getAccessToken, signOut, signIn } from "@/services/authService";
 import { createBillingPortalSession } from "@/services/subscriptionService";
-import { getMyRsvps, cancelRsvp, getMyEventCredits } from "@/services/eventService";
+import { getMyRsvps, getMyEventCredits } from "@/services/eventService";
+import CancelRsvpModal from "@/components/Events/CancelRsvpModal.vue";
 import Modal from "@/components/Common/Modal.vue";
 import ComingSoonOverlay from "@/components/Common/ComingSoonOverlay.vue";
 import { FEATURES } from "@/config/features";
@@ -1400,7 +1421,7 @@ import { FEATURES } from "@/config/features";
 export default {
   name: "UserProfile",
 
-  components: { Modal, ComingSoonOverlay },
+  components: { Modal, ComingSoonOverlay, CancelRsvpModal },
 
   data() {
     return {
@@ -1426,6 +1447,8 @@ export default {
         error: null,
         items: [],
       },
+      cancellingRsvp: null,
+      ticketShownRsvpId: null,
       adminMemberships: [],
       adminMembershipsLoading: false,
       billingPortalLoadingId: null,
@@ -1767,21 +1790,19 @@ export default {
       }
     },
 
-    async cancelCustomerRsvp(rsvp) {
-      if (!rsvp?.eventId || !rsvp?.id) return;
+    ticketCheckinUrl(rsvp) {
+      if (!rsvp?.ticketCode) return '';
+      return `${window.location.origin}/checkin/${rsvp.eventId}?code=${encodeURIComponent(rsvp.ticketCode)}`;
+    },
 
-      this.customerRsvps.cancellingId = rsvp.id;
-      this.customerRsvps.error = null;
-
-      try {
-        await cancelRsvp(rsvp.eventId, rsvp.id);
-        this.customerRsvps.items = this.customerRsvps.items.filter((item) => item.id !== rsvp.id);
-      } catch (err) {
-        console.error('Error cancelling RSVP', err);
-        this.customerRsvps.error = err.message || 'Could not cancel this RSVP.';
-      } finally {
-        this.customerRsvps.cancellingId = null;
+    onRsvpCancelled() {
+      const cancelled = this.cancellingRsvp;
+      this.cancellingRsvp = null;
+      if (cancelled) {
+        this.customerRsvps.items = this.customerRsvps.items.filter((item) => item.id !== cancelled.id);
       }
+      // Refresh credits — a cancellation may have just issued one.
+      this.loadCustomerCredits();
     },
 
     async onLogoFileChange(merchant, event) {

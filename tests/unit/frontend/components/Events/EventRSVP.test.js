@@ -5,9 +5,10 @@ import EventRSVP from '../../../../../src/components/Events/EventRSVP.vue';
 vi.mock('../../../../../src/services/eventService.js', () => ({
   createRsvp: vi.fn(),
   cancelRsvp: vi.fn(),
+  getCancelPreview: vi.fn(),
 }));
 
-import { createRsvp, cancelRsvp } from '../../../../../src/services/eventService.js';
+import { createRsvp, cancelRsvp, getCancelPreview } from '../../../../../src/services/eventService.js';
 
 const flushPromises = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -58,22 +59,30 @@ describe('EventRSVP', () => {
     expect(wrapper.text()).toContain("You're going");
   });
 
-  it('shows inline error when cancel fails', async () => {
+  it('shows the error inside the cancel dialog when cancellation fails', async () => {
     createRsvp.mockResolvedValueOnce({ id: 'r1', status: 'going' });
+    getCancelPreview.mockResolvedValueOnce({ rsvpId: 'r1', attendees: 1, order: null, refundQuote: null });
     cancelRsvp.mockRejectedValueOnce(new Error('boom'));
 
     const wrapper = mount(EventRSVP, { props: { event: publicEvent } });
     await wrapper.find('form').trigger('submit.prevent');
     await wrapper.vm.$nextTick();
 
+    // Opens the confirmation dialog instead of cancelling immediately
     await wrapper.find('button.btn-secondary').trigger('click');
-    await wrapper.vm.$nextTick();
+    await flushPromises();
+    expect(cancelRsvp).not.toHaveBeenCalled();
+    expect(wrapper.find('.cancel-modal').exists()).toBe(true);
+
+    await wrapper.find('.cancel-modal .btn-danger').trigger('click');
+    await flushPromises();
 
     expect(wrapper.text()).toContain('boom');
   });
 
-  it('renders an existing RSVP and cancels it without a fresh submit', async () => {
-    cancelRsvp.mockResolvedValueOnce({ cancelled: true });
+  it('renders an existing RSVP and cancels it through the confirm dialog', async () => {
+    getCancelPreview.mockResolvedValueOnce({ rsvpId: 'r-existing', attendees: 2, order: null, refundQuote: null });
+    cancelRsvp.mockResolvedValueOnce({ cancelled: true, refundAmountCents: 0, creditAmountCents: 0 });
 
     const wrapper = mount(EventRSVP, {
       props: {
@@ -86,11 +95,21 @@ describe('EventRSVP', () => {
     expect(wrapper.text()).toContain('2 guests');
     expect(wrapper.find('form').exists()).toBe(false);
 
+    // Step 1: open the dialog — nothing is cancelled yet
     await wrapper.find('button.btn-secondary').trigger('click');
-    await wrapper.vm.$nextTick();
+    await flushPromises();
+    expect(cancelRsvp).not.toHaveBeenCalled();
+    expect(wrapper.find('.cancel-modal').exists()).toBe(true);
 
+    // Step 2: confirm in the dialog
+    await wrapper.find('.cancel-modal .btn-danger').trigger('click');
+    await flushPromises();
     expect(createRsvp).not.toHaveBeenCalled();
-    expect(cancelRsvp).toHaveBeenCalledWith('evt-1', 'r-existing');
+    expect(cancelRsvp).toHaveBeenCalledWith('evt-1', 'r-existing', null, 'cash');
+
+    // Step 3: success state shows, then Done emits rsvp-cancelled
+    expect(wrapper.text()).toContain('Your RSVP has been cancelled');
+    await wrapper.find('.cancel-modal .btn-primary').trigger('click');
     expect(wrapper.emitted('rsvp-cancelled')?.[0]?.[0]).toMatchObject({ id: 'r-existing' });
   });
 

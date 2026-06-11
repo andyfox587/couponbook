@@ -93,18 +93,61 @@ export async function createRsvp(eventId, data) {
   return res.json()
 }
 
-export async function cancelRsvp(eventId, rsvpId, token = null) {
+export async function cancelRsvp(eventId, rsvpId, token = null, compensation = 'cash') {
   const headers = { ...(await authHeaders()), 'Content-Type': 'application/json' }
   const res = await fetch(`${API_BASE}/events/${eventId}/rsvp/${rsvpId}/cancel`, {
     method: 'POST',
     headers,
-    body: JSON.stringify(token ? { token } : {}),
+    body: JSON.stringify({ ...(token ? { token } : {}), compensation }),
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(body.error || `Failed to cancel RSVP: ${res.status}`)
   }
   return res.json()
+}
+
+// What the guest would receive if they cancelled right now (refund/credit
+// quote). Powers the in-page cancel confirmation dialog.
+export async function getCancelPreview(eventId, rsvpId) {
+  const headers = await authHeaders()
+  const res = await fetch(`${API_BASE}/events/${eventId}/rsvp/${rsvpId}/cancel-preview`, { headers })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `Failed to load cancellation preview: ${res.status}`)
+  }
+  return res.json()
+}
+
+// Door check-in: look up a scanned ticket (merchant/admin only).
+export async function lookupTicket(eventId, code) {
+  const headers = await authHeaders()
+  const res = await fetch(`${API_BASE}/events/${eventId}/checkin/${encodeURIComponent(code)}`, { headers })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const err = new Error(body.error || `Ticket lookup failed: ${res.status}`)
+    err.status = res.status
+    err.body = body
+    throw err
+  }
+  return body
+}
+
+// Door check-in: mark a scanned ticket checked in (merchant/admin only).
+export async function checkinTicket(eventId, code) {
+  const headers = { ...(await authHeaders()), 'Content-Type': 'application/json' }
+  const res = await fetch(`${API_BASE}/events/${eventId}/checkin/${encodeURIComponent(code)}`, {
+    method: 'POST',
+    headers,
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const err = new Error(body.error || `Check-in failed: ${res.status}`)
+    err.status = res.status
+    err.body = body
+    throw err
+  }
+  return body
 }
 
 export async function previewGuestCancellation(eventId, token) {
