@@ -285,7 +285,7 @@
 
       <section class="dashboard-section event-attendee-management" v-if="groupLoaded">
         <h2>Event Performance</h2>
-        <p class="muted tiny">Select an event to view aggregate performance statistics.</p>
+        <p class="muted tiny">Select an event to view performance statistics and the guest list.</p>
 
         <div class="event-manager-controls">
           <select v-model="selectedEventId" @change="onSelectedEventChange">
@@ -309,6 +309,40 @@
           <div class="stat-card"><span class="stat-label">Attendance Rate</span><span class="stat-value">{{ formatPercent(selectedEventStats.attendanceRate) }}</span></div>
           <div class="stat-card"><span class="stat-label">Capacity Fill %</span><span class="stat-value">{{ formatPercent(selectedEventStats.capacityFillPercent) }}</span></div>
         </div>
+
+        <!-- Per-guest attendee list: who's coming, who checked in, who cancelled -->
+        <div v-if="selectedEventId && selectedEventAttendees.length" class="attendee-list">
+          <h3>Guest List</h3>
+          <table class="attendee-table">
+            <thead>
+              <tr>
+                <th>Guest</th>
+                <th>Email</th>
+                <th class="num">Guests</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="a in selectedEventAttendees"
+                :key="a.id"
+                :class="{ 'attendee-cancelled': a.status === 'cancelled' }"
+              >
+                <td>{{ a.guestName || a.userName || 'Guest' }}</td>
+                <td>{{ a.guestEmail || a.userEmail || '—' }}</td>
+                <td class="num">{{ a.attendees }}</td>
+                <td>
+                  <span class="status-pill" :class="`status-${a.status}`">
+                    {{ attendeeStatusLabel(a.status) }}
+                  </span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p v-else-if="selectedEventId && !attendeesLoading && selectedEventStats" class="muted tiny">
+          No RSVPs for this event yet.
+        </p>
       </section>
 
       <!-- Edit Group Section -->
@@ -813,6 +847,7 @@ import {
 import {
   listEvents,
   getEventStats,
+  getAttendees,
 } from "@/services/eventService";
 
 const API_BASE = "/api/v1";
@@ -931,6 +966,7 @@ export default {
       attendeesLoading: false,
       attendeesError: null,
       selectedEventStats: null,
+      selectedEventAttendees: [],
 
       // authorization gate
       authChecked: false,
@@ -2204,18 +2240,36 @@ export default {
     async loadSelectedEventData() {
       if (!this.selectedEventId) {
         this.selectedEventStats = null;
+        this.selectedEventAttendees = [];
         return;
       }
       this.attendeesLoading = true;
       this.attendeesError = null;
       try {
-        this.selectedEventStats = await getEventStats(this.selectedEventId);
+        const [stats, attendees] = await Promise.all([
+          getEventStats(this.selectedEventId),
+          getAttendees(this.selectedEventId),
+        ]);
+        this.selectedEventStats = stats;
+        this.selectedEventAttendees = Array.isArray(attendees) ? attendees : [];
       } catch (err) {
         console.error('[FoodieGroupDashboard] loadSelectedEventData error', err);
         this.attendeesError = err.message || 'Could not load event stats.';
+        this.selectedEventAttendees = [];
       } finally {
         this.attendeesLoading = false;
       }
+    },
+
+    attendeeStatusLabel(status) {
+      const map = {
+        going: 'Confirmed',
+        checked_in: 'Checked in',
+        waitlist: 'Waitlist',
+        cancelled: 'Cancelled',
+        no_show: 'No-show',
+      };
+      return map[status] || status;
     },
 
   },
@@ -2228,6 +2282,60 @@ export default {
   max-width: var(--container-xl);
   margin: 0 auto;
 }
+
+.attendee-list {
+  margin-top: var(--spacing-xl);
+}
+
+.attendee-list h3 {
+  margin: 0 0 var(--spacing-md);
+}
+
+.attendee-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+
+.attendee-table th,
+.attendee-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+}
+
+.attendee-table th {
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.attendee-table .num {
+  text-align: right;
+  width: 70px;
+}
+
+.attendee-cancelled td {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.attendee-cancelled .status-pill {
+  text-decoration: none;
+}
+
+.status-pill {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.status-going      { background: #e7f6ef; color: #14674b; }
+.status-checked_in { background: #e3edfd; color: #1d4f9c; }
+.status-waitlist   { background: #fdf3e0; color: #8a6217; }
+.status-cancelled  { background: #fdeaea; color: #8f1d1d; text-decoration: none; }
+.status-no_show    { background: #efefef; color: #555; }
 
 @media (max-width: 768px) {
   .foodie-group-dashboard {
