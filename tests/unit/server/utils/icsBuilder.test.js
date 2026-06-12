@@ -140,12 +140,24 @@ describe('icsBuilder', () => {
       'LOCATION:1 Main',
       'STATUS:CONFIRMED',
       'TRANSP:OPAQUE',
-      'ORGANIZER;CN=Viva Spot:mailto:events@vivaspot.app',
+      'ORGANIZER;CN=VivaSpot Events:mailto:events@vivaspot.app',
       'END:VEVENT',
       'END:VCALENDAR',
     ].join('\r\n');
 
     expect(ics).toBe(expected);
+  });
+
+  it('uses the merchant name as ORGANIZER CN when provided', () => {
+    const ics = buildEventIcs({
+      event: SAMPLE_EVENT,
+      rsvp: SAMPLE_RSVP,
+      organizerName: 'The Latin Effect',
+      now: new Date('2026-05-01T12:00:00Z'),
+    });
+    const props = parseProperties(ics);
+    expect(props.ORGANIZER[0].raw).toContain('CN=The Latin Effect');
+    expect(props.ORGANIZER[0].raw).toContain('mailto:events@vivaspot.app');
   });
 
   it('escapes commas, semicolons, and newlines in TEXT values', () => {

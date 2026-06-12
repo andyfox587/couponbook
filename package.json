@@ -39,6 +39,7 @@
     "oidc-client-ts": "^3.2.0",
     "pg-hstore": "^2.3.4",
     "primeicons": "^7.0.0",
+    "qrcode": "^1.5.4",
     "qrcode.vue": "^3.6.0",
     "stripe": "^20.2.0",
     "survey-core": "^2.2.0",

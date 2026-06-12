@@ -80,6 +80,12 @@ const routes = [
     props: true
   },
   {
+    path: '/checkin/:id',
+    name: 'EventCheckin',
+    component: () => import('@/views/EventCheckin.vue'),
+    props: true
+  },
+  {
     path: '/foodie-groups',
     name: 'FoodieGroupList',
     component: FoodieGroupList

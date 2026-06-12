@@ -6,14 +6,18 @@ import { eq, and, isNull, asc, desc, sql, or, gte } from 'drizzle-orm';
 import auth from '../middleware/auth.js';
 import { optional as optionalAuth } from '../middleware/auth.js';
 import { resolveLocalUser, canManageEvent, canViewEventStats, hasEntitlement } from '../authz/index.js';
+import QRCode from 'qrcode';
 import {
   assertMerchantPaidEventReady,
+  buildCheckinUrl,
   calculateRefundQuote,
   cancelRsvpWithRefund,
   createEventRefundForOrder,
   createPaidEventOrder,
   findEventOrderForRsvp,
   findValidGuestToken,
+  getMerchantName,
+  makeTicketCode,
   markGuestTokenUsed,
   paidEventPaymentsEnabled,
 } from '../services/eventPaymentService.js';
@@ -162,6 +166,7 @@ router.get('/my-rsvps', auth(), resolveLocalUser, async (req, res, next) => {
         attendees:        eventRsvp.attendees,
         status:           eventRsvp.status,
         waitlistPosition: eventRsvp.waitlistPosition,
+        ticketCode:       eventRsvp.ticketCode,
         createdAt:        eventRsvp.createdAt,
         eventName:        event.name,
         eventSlug:        event.slug,
@@ -201,6 +206,7 @@ router.get('/my-rsvps', auth(), resolveLocalUser, async (req, res, next) => {
       attendees:        Number(row.attendees),
       status:           row.status,
       waitlistPosition: row.waitlistPosition,
+      ticketCode:       row.ticketCode || null,
       createdAt:        row.createdAt,
       eventName:        row.eventName,
       eventSlug:        row.eventSlug,
@@ -258,6 +264,109 @@ router.get('/my-credits', auth(), resolveLocalUser, async (req, res, next) => {
   }
 });
 
+// GET /api/v1/events/tickets/:code/qr.png — ticket QR image (no auth: the
+// code itself is the bearer secret; this just renders it as a scannable QR).
+// Embedded as <img> in confirmation emails and the in-app ticket view.
+router.get('/tickets/:code/qr.png', async (req, res, next) => {
+  try {
+    const code = String(req.params.code || '').trim();
+    if (!/^[a-f0-9]{16,32}$/i.test(code)) {
+      return res.status(400).json({ error: 'Invalid ticket code' });
+    }
+
+    const [rsvp] = await db
+      .select({ id: eventRsvp.id, eventId: eventRsvp.eventId })
+      .from(eventRsvp)
+      .where(eq(eventRsvp.ticketCode, code))
+      .limit(1);
+    if (!rsvp) return res.status(404).json({ error: 'Ticket not found' });
+
+    const png = await QRCode.toBuffer(buildCheckinUrl(rsvp.eventId, code), {
+      type: 'png',
+      width: 480,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+    });
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'private, max-age=3600');
+    res.send(png);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/v1/events/:id/checkin/:code — door staff looks up a scanned ticket.
+// Merchant/admin only. Read-only: shows who the ticket belongs to + status.
+router.get('/:id/checkin/:code', auth(), resolveLocalUser, async (req, res, next) => {
+  try {
+    const allowed = await canManageEvent(req.dbUser, req.params.id);
+    if (!allowed) return res.status(403).json({ error: 'Forbidden' });
+
+    const code = String(req.params.code || '').trim();
+    const [rsvp] = await db
+      .select()
+      .from(eventRsvp)
+      .where(and(eq(eventRsvp.ticketCode, code), eq(eventRsvp.eventId, req.params.id)))
+      .limit(1);
+    if (!rsvp) return res.status(404).json({ error: 'Ticket not found for this event' });
+
+    const cancelled = rsvp.status === 'cancelled' || !!rsvp.deletedAt;
+    res.json({
+      rsvpId: rsvp.id,
+      guestName: rsvp.guestName || null,
+      guestEmail: rsvp.guestEmail || null,
+      attendees: Number(rsvp.attendees) || 1,
+      status: cancelled ? 'cancelled' : rsvp.status,
+      admit: !cancelled && (rsvp.status === 'going' || rsvp.status === 'checked_in'),
+      alreadyCheckedIn: rsvp.status === 'checked_in',
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/events/:id/checkin/:code — mark the scanned ticket checked in.
+// Merchant/admin only. Rejects cancelled tickets and flags double check-ins.
+router.post('/:id/checkin/:code', auth(), resolveLocalUser, async (req, res, next) => {
+  try {
+    const allowed = await canManageEvent(req.dbUser, req.params.id);
+    if (!allowed) return res.status(403).json({ error: 'Forbidden' });
+
+    const code = String(req.params.code || '').trim();
+    const [rsvp] = await db
+      .select()
+      .from(eventRsvp)
+      .where(and(eq(eventRsvp.ticketCode, code), eq(eventRsvp.eventId, req.params.id)))
+      .limit(1);
+    if (!rsvp) return res.status(404).json({ error: 'Ticket not found for this event' });
+
+    if (rsvp.status === 'cancelled' || rsvp.deletedAt) {
+      return res.status(409).json({ error: 'Ticket was cancelled — do not admit', status: 'cancelled' });
+    }
+    if (rsvp.status === 'checked_in') {
+      return res.status(409).json({ error: 'Ticket already checked in', status: 'already_checked_in' });
+    }
+    if (rsvp.status !== 'going') {
+      return res.status(409).json({ error: `Ticket is not admissible (status: ${rsvp.status})`, status: rsvp.status });
+    }
+
+    const [updated] = await db
+      .update(eventRsvp)
+      .set({ status: 'checked_in', updatedAt: new Date().toISOString() })
+      .where(eq(eventRsvp.id, rsvp.id))
+      .returning();
+
+    res.json({
+      checkedIn: true,
+      rsvpId: updated.id,
+      guestName: updated.guestName || null,
+      attendees: Number(updated.attendees) || 1,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/v1/events/:id/my-rsvp — current user's active RSVP for one event
 router.get('/:id/my-rsvp', auth(), resolveLocalUser, async (req, res, next) => {
   try {
@@ -269,6 +378,7 @@ router.get('/:id/my-rsvp', auth(), resolveLocalUser, async (req, res, next) => {
         attendees:        eventRsvp.attendees,
         status:           eventRsvp.status,
         waitlistPosition: eventRsvp.waitlistPosition,
+        ticketCode:       eventRsvp.ticketCode,
         createdAt:        eventRsvp.createdAt,
         updatedAt:        eventRsvp.updatedAt,
         orderId:          eventOrder.id,
@@ -297,6 +407,7 @@ router.get('/:id/my-rsvp', auth(), resolveLocalUser, async (req, res, next) => {
       attendees:        Number(rsvp.attendees),
       status:           rsvp.status,
       waitlistPosition: rsvp.waitlistPosition,
+      ticketCode:       rsvp.ticketCode || null,
       createdAt:        rsvp.createdAt,
       updatedAt:        rsvp.updatedAt,
       order: rsvp.orderId ? {
@@ -831,6 +942,9 @@ router.post('/:id/rsvp', optionalAuth(), async (req, res, next) => {
         waitlistPosition,
         guestName:       guest_name || null,
         guestEmail:      guest_email || null,
+        // Every RSVP gets a QR ticket code; check-in only admits 'going',
+        // so waitlisted codes are inert until promotion.
+        ticketCode:      makeTicketCode(),
       })
       .returning();
 
@@ -846,6 +960,9 @@ router.get('/:id/attendees', auth(), resolveLocalUser, async (req, res, next) =>
     const allowed = await canManageEvent(req.dbUser, req.params.id);
     if (!allowed) return res.status(403).json({ error: 'Forbidden' });
 
+    // Cancelled RSVPs set deletedAt, but door staff need to SEE them (so a
+    // cancelled guest presenting an old QR is recognizably denied) — include
+    // them alongside live rows instead of hiding them.
     const attendees = await db
       .select({
         id:              eventRsvp.id,
@@ -856,13 +973,17 @@ router.get('/:id/attendees', auth(), resolveLocalUser, async (req, res, next) =>
         waitlistPosition: eventRsvp.waitlistPosition,
         guestName:       eventRsvp.guestName,
         guestEmail:      eventRsvp.guestEmail,
+        ticketCode:      eventRsvp.ticketCode,
         createdAt:       eventRsvp.createdAt,
         userName:        user.name,
         userEmail:       user.email,
       })
       .from(eventRsvp)
       .leftJoin(user, eq(eventRsvp.userId, user.id))
-      .where(and(eq(eventRsvp.eventId, req.params.id), isNull(eventRsvp.deletedAt)))
+      .where(and(
+        eq(eventRsvp.eventId, req.params.id),
+        or(isNull(eventRsvp.deletedAt), eq(eventRsvp.status, 'cancelled')),
+      ))
       .orderBy(asc(eventRsvp.createdAt));
 
     res.json(attendees);
@@ -967,6 +1088,51 @@ router.post('/:id/rsvp/cancel-by-token', async (req, res, next) => {
   }
 });
 
+// GET /api/v1/events/:id/rsvp/:rsvpId/cancel-preview — what would the guest
+// receive if they cancelled right now? Powers the in-page confirm dialog.
+// Auth: RSVP owner or event manager.
+router.get('/:id/rsvp/:rsvpId/cancel-preview', auth(), resolveLocalUser, async (req, res, next) => {
+  const { id: eventId, rsvpId } = req.params;
+  try {
+    const [rsvp] = await db
+      .select()
+      .from(eventRsvp)
+      .where(and(eq(eventRsvp.id, rsvpId), eq(eventRsvp.eventId, eventId), isNull(eventRsvp.deletedAt)))
+      .limit(1);
+    if (!rsvp) return res.status(404).json({ message: 'RSVP not found' });
+
+    const managerAllowed = await canManageEvent(req.dbUser, eventId);
+    const ownerAllowed = rsvp.userId && rsvp.userId === req.dbUser?.id;
+    if (!managerAllowed && !ownerAllowed) {
+      return res.status(403).json({ error: 'Not authorized to preview this cancellation' });
+    }
+
+    const [foundEvent] = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.id, eventId), isNull(event.deletedAt)))
+      .limit(1);
+    if (!foundEvent) return res.status(404).json({ message: 'Event not found' });
+
+    const order = await findEventOrderForRsvp({ rsvpId });
+    const refundQuote = order && order.status === 'paid'
+      ? calculateRefundQuote(
+          foundEvent.startDatetime,
+          order.amountCents - Number(order.refundedAmountCents || 0),
+        )
+      : null;
+
+    res.json({
+      rsvpId: rsvp.id,
+      attendees: Number(rsvp.attendees) || 1,
+      order: order ? { id: order.id, amountCents: order.amountCents, status: order.status, currency: order.currency } : null,
+      refundQuote,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/v1/events/:id/rsvp/:rsvpId/calendar.ics
 // Auth: a signed-in user who owns the RSVP. The n8n email flow does not call
 // this route; it receives the .ics body inline in the notification webhook
@@ -1003,6 +1169,7 @@ router.get('/:id/rsvp/:rsvpId/calendar.ics', auth(), resolveLocalUser, async (re
       order,
       method,
       eventUrl,
+      organizerName: await getMerchantName({ merchantId: foundEvent.merchantId }),
     });
 
     const filename = `vivaspot-${foundEvent.slug || foundEvent.id}.ics`;
