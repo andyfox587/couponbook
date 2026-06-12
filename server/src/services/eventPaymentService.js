@@ -310,6 +310,9 @@ export async function createPaidEventOrder({
   guestEmail = null,
   refundPolicyAcknowledgedAt,
   baseUrl,
+  // null = guest hasn't been asked about spending an applicable event credit
+  // yet; true = spend it; false = pay by card and keep the credit.
+  useCredit = null,
 }) {
   if (!paidEventPaymentsEnabled()) {
     const error = new Error('Paid event payments are not enabled');
@@ -348,6 +351,32 @@ export async function createPaidEventOrder({
   const amountCents = price.amountCents * quantity;
   const now = nowIso();
   const customerEmail = guestEmail || dbUser?.email || null;
+
+  // Event-credit consent: if an active same-merchant credit covers the whole
+  // total, the guest decides whether to spend it. useCredit === null means
+  // the client hasn't asked them yet — return the decision request WITHOUT
+  // creating an order, so the frontend can prompt and resubmit.
+  const applicableCredit = await findApplicableEventCredit({
+    database,
+    merchantId: eventRow.merchantId,
+    userId: dbUser?.id || null,
+    guestEmail: customerEmail,
+    minAmountCents: amountCents,
+  });
+
+  if (applicableCredit && useCredit === null) {
+    return {
+      requiresCreditDecision: true,
+      credit: {
+        amountCents: applicableCredit.amountCents,
+        currency: applicableCredit.currency,
+        expiresAt: applicableCredit.expiresAt,
+      },
+      ticketTotalCents: amountCents,
+      currency: price.currency,
+    };
+  }
+
   const [order] = await database
     .insert(eventOrder)
     .values({
@@ -373,16 +402,8 @@ export async function createPaidEventOrder({
     })
     .returning();
 
-  // Event-credit redemption: when an active same-merchant credit covers the
-  // whole total, consume it and confirm the order with no Stripe charge.
-  const applicableCredit = await findApplicableEventCredit({
-    database,
-    merchantId: eventRow.merchantId,
-    userId: dbUser?.id || null,
-    guestEmail: customerEmail,
-    minAmountCents: amountCents,
-  });
-  if (applicableCredit) {
+  // Redemption only happens after explicit consent (useCredit === true).
+  if (applicableCredit && useCredit === true) {
     const consumed = await consumeEventCredit({
       database,
       credit: applicableCredit,

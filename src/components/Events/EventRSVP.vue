@@ -132,6 +132,33 @@
         {{ submitting ? 'Submitting…' : isPaidEvent ? 'Continue to Payment' : 'RSVP Now' }}
       </button>
     </form>
+
+    <!-- Event-credit consent: never spend a credit without asking -->
+    <div v-if="creditPrompt" class="credit-prompt-overlay" @click.self="chooseCredit(false)">
+      <div class="credit-prompt">
+        <h3>Use your event credit?</h3>
+        <p>
+          You have a
+          <strong>{{ formatMoney(creditPrompt.credit.amountCents, creditPrompt.credit.currency) }}</strong>
+          event credit at this restaurant.
+          Would you like to use it for this ticket
+          ({{ formatMoney(creditPrompt.ticketTotalCents, creditPrompt.currency) }})?
+        </p>
+        <p class="muted tiny">
+          If you use it, no card payment is needed<template v-if="creditPrompt.credit.amountCents > creditPrompt.ticketTotalCents">
+          and the remaining balance stays on your account</template>.
+          If not, your credit is saved for next time.
+        </p>
+        <div class="credit-prompt-actions">
+          <button class="btn btn-primary" :disabled="submitting" @click="chooseCredit(true)">
+            Yes, use my credit
+          </button>
+          <button class="btn btn-secondary" :disabled="submitting" @click="chooseCredit(false)">
+            No, pay by card
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -207,6 +234,7 @@ export default {
       submitError: null,
       refundPolicyAccepted: false,
       showCancelModal: false,
+      creditPrompt: null,
     }
   },
 
@@ -250,16 +278,28 @@ export default {
         this.submitError = 'Please acknowledge the refund policy before payment.'
         return
       }
+      const payload = {
+        attendees: this.form.attendees,
+        guest_name: this.form.guest_name || undefined,
+        guest_email: this.form.guest_email || undefined,
+        refund_policy_accepted: this.refundPolicyAccepted || undefined,
+      }
+      await this.sendRsvp(payload)
+    },
+
+    async sendRsvp(payload) {
       this.submitting = true
       this.submitError = null
       try {
-        const payload = {
-          attendees: this.form.attendees,
-          guest_name: this.form.guest_name || undefined,
-          guest_email: this.form.guest_email || undefined,
-          refund_policy_accepted: this.refundPolicyAccepted || undefined,
-        }
         const result = await createRsvp(this.event.id, payload)
+
+        // Guest has an event credit covering this ticket — ask before
+        // spending it instead of silently skipping the card payment.
+        if (result.requiresCreditDecision) {
+          this.creditPrompt = { ...result, payload }
+          return
+        }
+
         if (result.requiresPayment && result.checkoutUrl) {
           this.redirectingToCheckout = true
           window.location.assign(result.checkoutUrl)
@@ -273,6 +313,19 @@ export default {
       } finally {
         this.submitting = false
       }
+    },
+
+    async chooseCredit(useCredit) {
+      const payload = { ...this.creditPrompt.payload, use_credit: useCredit }
+      this.creditPrompt = null
+      await this.sendRsvp(payload)
+    },
+
+    formatMoney(amountCents, currency = 'usd') {
+      return new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency: currency.toUpperCase(),
+      }).format((amountCents || 0) / 100)
     },
 
     onModalCancelled() {
@@ -319,6 +372,45 @@ export default {
   margin: 0;
   font-size: var(--font-size-sm);
   color: var(--color-text-muted);
+}
+
+.credit-prompt-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: var(--spacing-lg);
+}
+
+.credit-prompt {
+  background: var(--color-bg-surface, #fff);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-xl);
+  max-width: 440px;
+  width: 100%;
+  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.25);
+}
+
+.credit-prompt h3 {
+  margin: 0 0 var(--spacing-md);
+}
+
+.credit-prompt-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: var(--spacing-lg);
+  flex-wrap: wrap;
+}
+
+.muted {
+  color: var(--color-text-muted);
+}
+
+.tiny {
+  font-size: var(--font-size-xs);
 }
 
 .rsvp-form h3, .rsvp-success h3 {
