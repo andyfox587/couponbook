@@ -113,6 +113,72 @@ describe('EventRSVP', () => {
     expect(wrapper.emitted('rsvp-cancelled')?.[0]?.[0]).toMatchObject({ id: 'r-existing' });
   });
 
+  it('asks before spending an event credit, then resubmits with the choice', async () => {
+    // First submit: backend pauses for a credit decision (no order created)
+    createRsvp.mockResolvedValueOnce({
+      requiresCreditDecision: true,
+      credit: { amountCents: 1250, currency: 'usd', expiresAt: '2027-06-10T00:00:00Z' },
+      ticketTotalCents: 50,
+      currency: 'usd',
+    });
+    // Second submit (after "Yes"): paid with credit
+    createRsvp.mockResolvedValueOnce({
+      requiresPayment: false,
+      paidWithCredit: true,
+      status: 'paid',
+      orderId: 'o1',
+      creditAppliedCents: 50,
+    });
+
+    const wrapper = mount(EventRSVP, { props: { event: paidPublicEvent } });
+    await wrapper.find('input#rsvp-name').setValue('Andy');
+    await wrapper.find('input#rsvp-email').setValue('andy@example.com');
+    await wrapper.find('.policy-check input[type="checkbox"]').setValue(true);
+    await wrapper.find('form').trigger('submit.prevent');
+    await flushPromises();
+
+    // Prompt shown, nothing committed yet
+    expect(wrapper.find('.credit-prompt').exists()).toBe(true);
+    expect(wrapper.text()).toContain('Use your event credit?');
+    expect(createRsvp).toHaveBeenCalledTimes(1);
+    expect(createRsvp.mock.calls[0][1].use_credit).toBeUndefined();
+
+    // Guest says yes → resubmits with use_credit: true
+    await wrapper.find('.credit-prompt .btn-primary').trigger('click');
+    await flushPromises();
+
+    expect(createRsvp).toHaveBeenCalledTimes(2);
+    expect(createRsvp.mock.calls[1][1].use_credit).toBe(true);
+    expect(wrapper.find('.credit-prompt').exists()).toBe(false);
+    expect(wrapper.text()).toContain('Paid with your event credit');
+  });
+
+  it('keeps the credit and proceeds to card payment when guest declines', async () => {
+    createRsvp.mockResolvedValueOnce({
+      requiresCreditDecision: true,
+      credit: { amountCents: 1250, currency: 'usd', expiresAt: '2027-06-10T00:00:00Z' },
+      ticketTotalCents: 50,
+      currency: 'usd',
+    });
+    createRsvp.mockResolvedValueOnce({
+      requiresPayment: true,
+      checkoutUrl: 'https://checkout.stripe.com/test',
+    });
+
+    const wrapper = mount(EventRSVP, { props: { event: paidPublicEvent } });
+    await wrapper.find('input#rsvp-name').setValue('Andy');
+    await wrapper.find('input#rsvp-email').setValue('andy@example.com');
+    await wrapper.find('.policy-check input[type="checkbox"]').setValue(true);
+    await wrapper.find('form').trigger('submit.prevent');
+    await flushPromises();
+
+    await wrapper.find('.credit-prompt .btn-secondary').trigger('click');
+    await flushPromises();
+
+    expect(createRsvp.mock.calls[1][1].use_credit).toBe(false);
+    expect(window.location.assign).toHaveBeenCalledWith('https://checkout.stripe.com/test');
+  });
+
   it('shows sign-in gate for members-only event when not authenticated', () => {
     const wrapper = mount(EventRSVP, {
       props: { event: membersOnlyEvent, isAuthenticated: false, hasMembership: false },

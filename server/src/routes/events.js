@@ -903,7 +903,20 @@ router.post('/:id/rsvp', optionalAuth(), async (req, res, next) => {
           guestEmail: guest_email || dbUser?.email || null,
           refundPolicyAcknowledgedAt,
           baseUrl: resolveBaseUrl(req),
+          useCredit: typeof req.body.use_credit === 'boolean' ? req.body.use_credit : null,
         });
+
+        if (payment.requiresCreditDecision) {
+          // No order was created — the guest must choose whether to spend
+          // their event credit. Frontend prompts, then resubmits with
+          // use_credit: true|false.
+          return res.status(200).json({
+            requiresCreditDecision: true,
+            credit: payment.credit,
+            ticketTotalCents: payment.ticketTotalCents,
+            currency: payment.currency,
+          });
+        }
 
         if (payment.paidWithCredit) {
           return res.status(201).json({
