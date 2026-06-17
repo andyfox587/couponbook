@@ -6,7 +6,7 @@
     <div class="bm-field">
       <div class="bm-label-row">
         <span class="bm-label">Banner</span>
-        <span class="bm-hint">Wide image shown at the top of your event page</span>
+        <span class="bm-hint">Header at the top of your event page · recommended 1600 × 600 px (wide landscape, ~3:1)</span>
       </div>
 
       <div v-if="bannerUrl" class="bm-preview-row">
@@ -25,7 +25,7 @@
       <label v-else class="bm-dropzone" :class="{ loading: bannerUploading }">
         <i class="pi pi-cloud-upload bm-upload-icon"></i>
         <span>{{ bannerUploading ? 'Uploading…' : 'Upload banner image' }}</span>
-        <span class="bm-dz-hint">PNG, JPG, WebP or SVG · max 5 MB</span>
+        <span class="bm-dz-hint">Recommended 1600 × 600 px · PNG, JPG, WebP · max 5 MB</span>
         <input type="file" accept="image/*" class="bm-input" :disabled="bannerUploading" @change="onBannerChange" />
       </label>
     </div>
@@ -34,7 +34,7 @@
     <div class="bm-field">
       <div class="bm-label-row">
         <span class="bm-label">Cover</span>
-        <span class="bm-hint">Square/portrait image shown on event cards</span>
+        <span class="bm-hint">Shown on event cards · recommended 800 × 450 px (landscape, 16:9)</span>
       </div>
 
       <div v-if="coverUrl" class="bm-preview-row">
@@ -53,7 +53,7 @@
       <label v-else class="bm-dropzone" :class="{ loading: coverUploading }">
         <i class="pi pi-cloud-upload bm-upload-icon"></i>
         <span>{{ coverUploading ? 'Uploading…' : 'Upload cover image' }}</span>
-        <span class="bm-dz-hint">PNG, JPG, WebP or SVG · max 5 MB</span>
+        <span class="bm-dz-hint">Recommended 800 × 450 px · PNG, JPG, WebP · max 5 MB</span>
         <input type="file" accept="image/*" class="bm-input" :disabled="coverUploading" @change="onCoverChange" />
       </label>
     </div>
