@@ -89,12 +89,15 @@ router.get('/merchant-insights', auth(), resolveLocalUser, async (req, res, next
     const dbUser = req.dbUser;
     const rows = await db
       .select({
-        eventId:       event.id,
-        eventName:     event.name,
-        merchantName:  merchant.name,
-        startDatetime: event.startDatetime,
-        status:        event.status,
-        capacity:      event.capacity,
+        eventId:        event.id,
+        eventName:      event.name,
+        merchantId:     event.merchantId,
+        merchantName:   merchant.name,
+        startDatetime:  event.startDatetime,
+        status:         event.status,
+        capacity:       event.capacity,
+        bannerImageUrl: event.bannerImageUrl,
+        coverImageUrl:  event.coverImageUrl,
         confirmedRsvps: sql`COALESCE(SUM(CASE WHEN ${eventRsvp.status}::text IN ('going','checked_in') THEN ${eventRsvp.attendees} ELSE 0 END), 0)`.as('confirmed_rsvps'),
         waitlistCount:  sql`COALESCE(SUM(CASE WHEN ${eventRsvp.status}::text = 'waitlist' THEN ${eventRsvp.attendees} ELSE 0 END), 0)`.as('waitlist_count'),
         totalRsvps:     sql`COALESCE(SUM(CASE WHEN ${eventRsvp.status}::text != 'cancelled' THEN ${eventRsvp.attendees} ELSE 0 END), 0)`.as('total_rsvps'),
@@ -103,16 +106,19 @@ router.get('/merchant-insights', auth(), resolveLocalUser, async (req, res, next
       .innerJoin(merchant, eq(event.merchantId, merchant.id))
       .leftJoin(eventRsvp, and(eq(eventRsvp.eventId, event.id), isNull(eventRsvp.deletedAt)))
       .where(and(eq(merchant.ownerId, dbUser.id), isNull(event.deletedAt)))
-      .groupBy(event.id, event.name, merchant.name, event.startDatetime, event.status, event.capacity)
+      .groupBy(event.id, event.name, event.merchantId, merchant.name, event.startDatetime, event.status, event.capacity, event.bannerImageUrl, event.coverImageUrl)
       .orderBy(desc(event.startDatetime));
 
     res.json(rows.map(r => ({
-      eventId:       r.eventId,
-      eventName:     r.eventName,
-      merchantName:  r.merchantName,
-      startDatetime: r.startDatetime,
-      status:        r.status,
-      capacity:      Number(r.capacity),
+      eventId:        r.eventId,
+      eventName:      r.eventName,
+      merchantId:     r.merchantId,
+      merchantName:   r.merchantName,
+      startDatetime:  r.startDatetime,
+      status:         r.status,
+      capacity:       Number(r.capacity),
+      bannerImageUrl: r.bannerImageUrl || null,
+      coverImageUrl:  r.coverImageUrl || null,
       confirmedRsvps: Number(r.confirmedRsvps),
       waitlistCount:  Number(r.waitlistCount),
       totalRsvps:     Number(r.totalRsvps),
