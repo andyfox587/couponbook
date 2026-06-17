@@ -94,7 +94,7 @@
             <div class="image-upload-field">
               <label class="image-upload-label">
                 Cover Image
-                <span class="image-hint">Shown on event cards · recommended 800 × 450 px (landscape)</span>
+                <span class="image-hint">Shown on event cards · recommended 900 × 480 px (landscape)</span>
               </label>
               <div v-if="coverImagePreview" class="image-preview-row">
                 <img :src="coverImagePreview" alt="" class="image-thumb" />
@@ -107,7 +107,7 @@
               <label v-else class="upload-dropzone" :class="{ loading: coverUploading }">
                 <i class="pi pi-cloud-upload upload-icon"></i>
                 <span>{{ coverUploading ? 'Uploading…' : 'Click to upload cover image' }}</span>
-                <span class="upload-hint">Recommended 800 × 450 px · PNG, JPG, WebP · max 5 MB</span>
+                <span class="upload-hint">Recommended 900 × 480 px · PNG, JPG, WebP · max 5 MB</span>
                 <input type="file" accept="image/*" class="hidden-input" :disabled="coverUploading" @change="handleCoverImageChange" />
               </label>
               <p v-if="coverUploadError" class="error-text">{{ coverUploadError }}</p>
@@ -117,7 +117,7 @@
             <div class="image-upload-field">
               <label class="image-upload-label">
                 Banner Image
-                <span class="image-hint">Detail page header · recommended 1600 × 600 px (wide landscape)</span>
+                <span class="image-hint">Detail page header · recommended 1800 × 560 px (wide landscape)</span>
               </label>
               <div v-if="bannerImagePreview" class="image-preview-row">
                 <img :src="bannerImagePreview" alt="" class="image-thumb image-thumb-wide" />
@@ -130,7 +130,7 @@
               <label v-else class="upload-dropzone" :class="{ loading: bannerUploading }">
                 <i class="pi pi-cloud-upload upload-icon"></i>
                 <span>{{ bannerUploading ? 'Uploading…' : 'Click to upload banner image' }}</span>
-                <span class="upload-hint">Recommended 1600 × 600 px · PNG, JPG, WebP · max 5 MB</span>
+                <span class="upload-hint">Recommended 1800 × 560 px · PNG, JPG, WebP · max 5 MB</span>
                 <input type="file" accept="image/*" class="hidden-input" :disabled="bannerUploading" @change="handleBannerImageChange" />
               </label>
               <p v-if="bannerUploadError" class="error-text">{{ bannerUploadError }}</p>
