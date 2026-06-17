@@ -84,7 +84,7 @@
         <p v-if="submissionError" class="error-text">{{ submissionError }}</p>
 
         <!-- Images + preview combined (shown only on the images page) -->
-        <div v-if="currentSurveyPage === 'images'" class="images-and-preview">
+        <div v-if="currentSurveyPage === 'images'" ref="imagesSection" class="images-and-preview">
 
           <!-- Upload controls -->
           <div class="image-upload-section">
@@ -155,8 +155,8 @@
                 <div class="preview-detail-container">
                   <div
                     class="preview-hero"
-                    :style="previewEvent.bannerImageUrl ? `background-image: url('${previewEvent.bannerImageUrl}')` : ''"
-                    :class="{ 'preview-hero-no-image': !previewEvent.bannerImageUrl }"
+                    :style="(previewEvent.bannerImageUrl || previewEvent.coverImageUrl) ? `background-image: url('${previewEvent.bannerImageUrl || previewEvent.coverImageUrl}')` : ''"
+                    :class="{ 'preview-hero-no-image': !(previewEvent.bannerImageUrl || previewEvent.coverImageUrl) }"
                   >
                     <div class="preview-hero-overlay">
                       <h3>{{ previewEvent.name }}</h3>
@@ -474,6 +474,13 @@ export default {
       this.currentSurveyPage = this.survey.currentPage?.name || null
       this.survey.onCurrentPageChanged.add((_, options) => {
         this.currentSurveyPage = options.newCurrentPage?.name || null
+        // The image-upload controls render above the survey nav, so on reaching
+        // the images step bring them into view instead of leaving them off-screen.
+        if (this.currentSurveyPage === 'images') {
+          this.$nextTick(() => {
+            this.$refs.imagesSection?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          })
+        }
       })
 
       this.survey.onComplete.add(this.handleSubmit)
