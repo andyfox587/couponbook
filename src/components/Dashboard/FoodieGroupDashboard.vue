@@ -372,12 +372,12 @@
             />
           </div>
           <div class="form-group">
-            <label for="bannerImage">Banner Image URL:</label>
+            <label for="bannerImage">Banner Image URL <span style="font-weight:400;font-size:0.8rem;color:var(--color-text-muted,#6b7280);">· wide banner, recommended 1600 × 500 px</span></label>
             <input
               id="bannerImage"
               type="text"
               v-model="group.bannerImage"
-              placeholder="Enter banner image URL"
+              placeholder="https://… (1600 × 500 px works best)"
             />
           </div>
           <div class="form-group">
