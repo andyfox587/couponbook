@@ -1053,7 +1053,7 @@
         <input type="text" v-model="newMerchant.name" placeholder="Business name" />
       </div>
       <div class="form-group">
-        <label>Logo URL (optional):</label>
+        <label>Logo URL — square, 400 × 400 px (optional):</label>
         <input type="text" v-model="newMerchant.logoUrl" placeholder="https://..." />
       </div>
       <div class="form-group">
@@ -1200,7 +1200,7 @@
         <input type="text" v-model="editingGroup.location" />
       </div>
       <div class="form-group">
-        <label>Banner Image URL:</label>
+        <label>Banner Image URL — wide, 1600 × 500 px:</label>
         <input type="text" v-model="editingGroup.bannerImageUrl" />
       </div>
       <div class="modal-actions">

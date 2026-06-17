@@ -363,6 +363,7 @@
                     <span v-if="uploadingLogoId === m.id" class="muted tiny" style="margin-left: 0.5rem;">
                       Uploading…
                     </span>
+                    <p class="muted tiny" style="width:100%;margin:0.4rem 0 0;">Square logo · recommended 400 × 400 px · PNG, JPG or WebP · max 5 MB</p>
                   </div>
 
                   <p v-if="logoUploadError && uploadErrorMerchantId === m.id" class="muted tiny error-text"
@@ -937,6 +938,7 @@
                       <span v-if="uploadingLogoId === m.id" class="muted tiny" style="margin-left: 0.5rem;">
                         Uploading…
                       </span>
+                      <p class="muted tiny" style="width:100%;margin:0.4rem 0 0;">Square logo · recommended 400 × 400 px · PNG, JPG or WebP · max 5 MB</p>
                     </div>
 
                     <p v-if="logoUploadError && uploadErrorMerchantId === m.id" class="muted tiny error-text"
