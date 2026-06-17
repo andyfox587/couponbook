@@ -581,7 +581,18 @@ router.put('/:id', auth(), resolveLocalUser, async (req, res, next) => {
     const nextIsFree = updates.isFree !== undefined ? updates.isFree : currentEvent.isFree;
     const nextPriceCents = updates.priceCents !== undefined ? updates.priceCents : currentEvent.priceCents;
     const nextStatus = updates.status !== undefined ? updates.status : currentEvent.status;
-    const enablingPaidTicketing = nextStatus === 'published' && nextIsFree === false && Number(nextPriceCents || 0) > 0;
+
+    const wasPaidPublished =
+      currentEvent.status === 'published'
+      && currentEvent.isFree === false
+      && Number(currentEvent.priceCents || 0) > 0;
+    const willBePaidPublished =
+      nextStatus === 'published' && nextIsFree === false && Number(nextPriceCents || 0) > 0;
+
+    // Only re-check merchant billing readiness when this update actually
+    // TRANSITIONS the event into paid+published. Editing an unrelated field
+    // (e.g. the banner image) on an already-paid event must not be blocked.
+    const enablingPaidTicketing = willBePaidPublished && !wasPaidPublished;
     if (enablingPaidTicketing) {
       if (!paidEventPaymentsEnabled()) {
         return res.status(503).json({ error: 'Paid event payments are not enabled' });
