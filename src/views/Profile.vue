@@ -511,9 +511,9 @@
 
               <!-- Event Attendees -->
               <li class="link-row clickable" @click="loadEventInsights">
-                <span class="link-label"><i class="pi pi-users icon-spacing-sm"></i>Event Attendees</span>
+                <span class="link-label"><i class="pi pi-calendar icon-spacing-sm"></i>Your Events</span>
                 <span class="link-helper">
-                  See who has RSVPed for your events and manage attendance.
+                  Add a banner image, see who has RSVPed, and manage attendance.
                 </span>
               </li>
             </ul>
@@ -739,20 +739,36 @@
 
             <!-- Event attendees list -->
             <div v-if="activeToolsView === 'event-attendees' && eventInsights.length" class="tools-results-block">
-              <h3 class="tiny-heading">Event Attendees</h3>
+              <h3 class="tiny-heading">Your Events</h3>
               <ul class="insights-list">
-                <li v-for="row in eventInsights" :key="row.eventId" class="insight-row">
-                  <div class="insight-copy">
-                    <strong>{{ row.eventName }}</strong>
-                    <div class="muted tiny">{{ row.merchantName }}</div>
-                    <div class="muted tiny">
-                      {{ row.confirmedRsvps }} confirmed · {{ row.waitlistCount }} waitlisted
-                      <span v-if="row.startDatetime"> · {{ formatDateDateTime(row.startDatetime) }}</span>
+                <li v-for="row in eventInsights" :key="row.eventId" class="insight-row insight-row-stack">
+                  <div class="insight-row-main">
+                    <div class="insight-copy">
+                      <strong>{{ row.eventName }}</strong>
+                      <div class="muted tiny">{{ row.merchantName }}</div>
+                      <div class="muted tiny">
+                        {{ row.confirmedRsvps }} confirmed · {{ row.waitlistCount }} waitlisted
+                        <span v-if="row.startDatetime"> · {{ formatDateDateTime(row.startDatetime) }}</span>
+                        <span v-if="!row.bannerImageUrl"> · <span class="muted">no banner</span></span>
+                      </div>
+                    </div>
+                    <div class="insight-row-actions">
+                      <button class="btn tertiary compact" @click="toggleBannerEditor(row.eventId)">
+                        <i class="pi pi-image icon-spacing-sm"></i>{{ bannerEditEventId === row.eventId ? 'Close' : (row.bannerImageUrl ? 'Edit banner' : 'Add banner') }}
+                      </button>
+                      <button class="btn tertiary compact" @click="loadEventAttendeeDetails(row.eventId)">
+                        {{ selectedEventId === row.eventId ? 'Refresh' : 'View attendees' }}
+                      </button>
                     </div>
                   </div>
-                  <button class="btn tertiary compact" @click="loadEventAttendeeDetails(row.eventId)">
-                    {{ selectedEventId === row.eventId ? 'Refresh' : 'View attendees' }}
-                  </button>
+                  <EventBannerManager
+                    v-if="bannerEditEventId === row.eventId"
+                    :event-id="row.eventId"
+                    :merchant-id="row.merchantId"
+                    :banner-image-url="row.bannerImageUrl"
+                    :cover-image-url="row.coverImageUrl"
+                    @updated="onEventImagesUpdated"
+                  />
                 </li>
               </ul>
 
@@ -1250,20 +1266,36 @@
 
               <!-- Event attendees list -->
               <div v-if="activeToolsView === 'event-attendees' && eventInsights.length" class="tools-results-block">
-                <h3 class="tiny-heading">Event Attendees</h3>
+                <h3 class="tiny-heading">Your Events</h3>
                 <ul class="insights-list">
-                  <li v-for="row in eventInsights" :key="row.eventId" class="insight-row">
-                    <div class="insight-copy">
-                      <strong>{{ row.eventName }}</strong>
-                      <div class="muted tiny">{{ row.merchantName }}</div>
-                      <div class="muted tiny">
-                        {{ row.confirmedRsvps }} confirmed · {{ row.waitlistCount }} waitlisted
-                        <span v-if="row.startDatetime"> · {{ formatDateDateTime(row.startDatetime) }}</span>
+                  <li v-for="row in eventInsights" :key="row.eventId" class="insight-row insight-row-stack">
+                    <div class="insight-row-main">
+                      <div class="insight-copy">
+                        <strong>{{ row.eventName }}</strong>
+                        <div class="muted tiny">{{ row.merchantName }}</div>
+                        <div class="muted tiny">
+                          {{ row.confirmedRsvps }} confirmed · {{ row.waitlistCount }} waitlisted
+                          <span v-if="row.startDatetime"> · {{ formatDateDateTime(row.startDatetime) }}</span>
+                          <span v-if="!row.bannerImageUrl"> · <span class="muted">no banner</span></span>
+                        </div>
+                      </div>
+                      <div class="insight-row-actions">
+                        <button class="btn tertiary compact" @click="toggleBannerEditor(row.eventId)">
+                          <i class="pi pi-image icon-spacing-sm"></i>{{ bannerEditEventId === row.eventId ? 'Close' : (row.bannerImageUrl ? 'Edit banner' : 'Add banner') }}
+                        </button>
+                        <button class="btn tertiary compact" @click="loadEventAttendeeDetails(row.eventId)">
+                          {{ selectedEventId === row.eventId ? 'Refresh' : 'View attendees' }}
+                        </button>
                       </div>
                     </div>
-                    <button class="btn tertiary compact" @click="loadEventAttendeeDetails(row.eventId)">
-                      {{ selectedEventId === row.eventId ? 'Refresh' : 'View attendees' }}
-                    </button>
+                    <EventBannerManager
+                      v-if="bannerEditEventId === row.eventId"
+                      :event-id="row.eventId"
+                      :merchant-id="row.merchantId"
+                      :banner-image-url="row.bannerImageUrl"
+                      :cover-image-url="row.coverImageUrl"
+                      @updated="onEventImagesUpdated"
+                    />
                   </li>
                 </ul>
 
@@ -1414,6 +1446,7 @@ import { getAccessToken, signOut, signIn } from "@/services/authService";
 import { createBillingPortalSession } from "@/services/subscriptionService";
 import { getMyRsvps, getMyEventCredits } from "@/services/eventService";
 import CancelRsvpModal from "@/components/Events/CancelRsvpModal.vue";
+import EventBannerManager from "@/components/Events/EventBannerManager.vue";
 import Modal from "@/components/Common/Modal.vue";
 import ComingSoonOverlay from "@/components/Common/ComingSoonOverlay.vue";
 import { FEATURES } from "@/config/features";
@@ -1421,7 +1454,7 @@ import { FEATURES } from "@/config/features";
 export default {
   name: "UserProfile",
 
-  components: { Modal, ComingSoonOverlay, CancelRsvpModal },
+  components: { Modal, ComingSoonOverlay, CancelRsvpModal, EventBannerManager },
 
   data() {
     return {
@@ -1449,6 +1482,7 @@ export default {
       },
       cancellingRsvp: null,
       ticketShownRsvpId: null,
+      bannerEditEventId: null,
       adminMemberships: [],
       adminMembershipsLoading: false,
       billingPortalLoadingId: null,
@@ -1803,6 +1837,18 @@ export default {
       }
       // Refresh credits — a cancellation may have just issued one.
       this.loadCustomerCredits();
+    },
+
+    toggleBannerEditor(eventId) {
+      this.bannerEditEventId = this.bannerEditEventId === eventId ? null : eventId;
+    },
+
+    onEventImagesUpdated({ eventId, bannerImageUrl, coverImageUrl }) {
+      const row = this.eventInsights.find((r) => r.eventId === eventId);
+      if (row) {
+        row.bannerImageUrl = bannerImageUrl;
+        row.coverImageUrl = coverImageUrl;
+      }
     },
 
     async onLogoFileChange(merchant, event) {
@@ -3250,6 +3296,29 @@ export default {
 
 .insight-row:last-child {
   margin-bottom: 0;
+}
+
+/* Stacked variant: a main row (copy + actions) plus an optional expanded
+   panel below (the banner/cover image manager). */
+.insight-row-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--spacing-sm);
+}
+
+.insight-row-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+}
+
+.insight-row-actions {
+  display: flex;
+  gap: var(--spacing-xs, 0.5rem);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .insight-row:hover {
