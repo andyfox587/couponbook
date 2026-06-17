@@ -26,8 +26,8 @@
         <!-- Hero -->
         <div
           class="hero"
-          :style="evt.bannerImageUrl ? `background-image: url('${evt.bannerImageUrl}')` : ''"
-          :class="{ 'hero-no-image': !evt.bannerImageUrl }"
+          :style="(evt.bannerImageUrl || evt.coverImageUrl) ? `background-image: url('${evt.bannerImageUrl || evt.coverImageUrl}')` : ''"
+          :class="{ 'hero-no-image': !(evt.bannerImageUrl || evt.coverImageUrl) }"
         >
           <div class="hero-overlay">
             <h1>{{ evt.name }}</h1>

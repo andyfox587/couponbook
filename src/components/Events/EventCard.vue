@@ -90,7 +90,8 @@ export default {
     },
 
     cardImage() {
-      return this.event.bannerImageUrl || this.event.coverImageUrl || null
+      // Cards prefer the cover image; fall back to the banner if no cover.
+      return this.event.coverImageUrl || this.event.bannerImageUrl || null
     },
 
     imageStyle() {
