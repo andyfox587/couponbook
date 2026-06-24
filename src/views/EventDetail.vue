@@ -315,7 +315,9 @@ export default {
       if (checkout === 'success') {
         this.checkoutBanner = {
           kind: 'success',
-          message: 'Payment received. Your RSVP will appear here shortly.',
+          message: this.isAuthenticated
+            ? 'Payment received. Your RSVP will appear here shortly.'
+            : 'Payment received. Your RSVP will be sent to the email you entered upon purchase.',
         }
         this.startCheckoutPolling()
       } else if (checkout === 'canceled' || checkout === 'cancelled') {
