@@ -39,6 +39,7 @@
       <div v-if="ticketCheckinUrl && activeRsvp.status !== 'waitlist'" class="ticket-box">
         <p class="ticket-title">Your ticket</p>
         <QRCode :value="ticketCheckinUrl" :size="180" level="M" class="ticket-qr" />
+        <p v-if="activeRsvp.ticketReference" class="ticket-ref">{{ activeRsvp.ticketReference }}</p>
         <p class="ticket-hint muted">Show this QR code at the door.</p>
       </div>
 

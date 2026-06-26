@@ -54,6 +54,29 @@ export function buildTicketQrPngUrl(ticketCode) {
   return `${serverBaseUrl().replace(/\/$/, '')}/api/v1/events/tickets/${encodeURIComponent(ticketCode)}/qr.png`;
 }
 
+/**
+ * Human-readable, tamper-evident ticket reference for door cross-check and
+ * reconciliation — e.g. "WINE-20260625-JDOE-3F9A":
+ *   EVENT-slug · YYYYMMDD start date · name token · 4-char hash of ticketCode.
+ * The hash ties the reference to the (unguessable) ticketCode, so a forged
+ * reference won't match a real ticket. Built server-side so the guest's ticket
+ * and the door screen always render the identical value.
+ */
+export function buildTicketReference({ eventName, startDatetime, name, ticketCode } = {}) {
+  const evt = (String(eventName || 'EVENT').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim().split(' ')[0] || 'EVENT').slice(0, 6);
+  const ymd = String(startDatetime || '').slice(0, 10).replace(/-/g, '') || '00000000';
+  let raw = String(name || '');
+  if (raw.includes('@')) raw = raw.split('@')[0];
+  const nm = raw.toUpperCase().replace(/[^A-Z ]+/g, ' ').trim();
+  let nameTok = 'GUEST';
+  if (nm) {
+    const parts = nm.split(/\s+/).filter(Boolean);
+    nameTok = (parts.length > 1 ? parts[0][0] + parts[parts.length - 1] : parts[0]).slice(0, 8);
+  }
+  const h = crypto.createHash('sha256').update(String(ticketCode || '')).digest('hex').slice(0, 4).toUpperCase();
+  return `${evt}-${ymd}-${nameTok}-${h}`;
+}
+
 export async function createGuestToken({
   database = defaultDb,
   eventId,

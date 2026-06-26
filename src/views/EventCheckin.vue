@@ -19,10 +19,13 @@
 
         <table class="guest-table">
           <tbody>
+            <tr v-if="ticket.eventName"><td class="label">Event</td><td><strong>{{ ticket.eventName }}</strong></td></tr>
+            <tr v-if="ticket.eventDate"><td class="label">Date</td><td>{{ formatDate(ticket.eventDate) }}</td></tr>
             <tr><td class="label">Guest</td><td><strong>{{ ticket.guestName || ticket.guestEmail || 'Guest' }}</strong></td></tr>
             <tr v-if="ticket.guestEmail && ticket.guestName"><td class="label">Email</td><td>{{ ticket.guestEmail }}</td></tr>
             <tr><td class="label">Party size</td><td>{{ ticket.attendees }} {{ ticket.attendees === 1 ? 'guest' : 'guests' }}</td></tr>
             <tr><td class="label">Status</td><td>{{ statusLabel }}</td></tr>
+            <tr v-if="ticket.ticketReference"><td class="label">Ref</td><td><code class="ticket-ref">{{ ticket.ticketReference }}</code></td></tr>
           </tbody>
         </table>
 
@@ -156,6 +159,16 @@ export default {
       } finally {
         this.submitting = false
       }
+    },
+
+    formatDate(value) {
+      if (!value) return ''
+      const d = new Date(value)
+      if (isNaN(d.getTime())) return String(value)
+      return d.toLocaleString(undefined, {
+        weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+        hour: 'numeric', minute: '2-digit',
+      })
     },
   },
 }

@@ -10,6 +10,7 @@ import QRCode from 'qrcode';
 import {
   assertMerchantPaidEventReady,
   buildCheckinUrl,
+  buildTicketReference,
   calculateRefundQuote,
   cancelRsvpWithRefund,
   createEventRefundForOrder,
@@ -309,22 +310,41 @@ router.get('/:id/checkin/:code', auth(), resolveLocalUser, async (req, res, next
     if (!allowed) return res.status(403).json({ error: 'Forbidden' });
 
     const code = String(req.params.code || '').trim();
-    const [rsvp] = await db
-      .select()
+    const [row] = await db
+      .select({
+        rsvp:          eventRsvp,
+        eventName:     event.name,
+        startDatetime: event.startDatetime,
+        userName:      user.name,
+        userEmail:     user.email,
+      })
       .from(eventRsvp)
+      .leftJoin(event, eq(eventRsvp.eventId, event.id))
+      .leftJoin(user, eq(eventRsvp.userId, user.id))
       .where(and(eq(eventRsvp.ticketCode, code), eq(eventRsvp.eventId, req.params.id)))
       .limit(1);
-    if (!rsvp) return res.status(404).json({ error: 'Ticket not found for this event' });
+    if (!row) return res.status(404).json({ error: 'Ticket not found for this event' });
 
+    const rsvp = row.rsvp;
     const cancelled = rsvp.status === 'cancelled' || !!rsvp.deletedAt;
+    const guestName = rsvp.guestName || row.userName || null;
+    const guestEmail = rsvp.guestEmail || row.userEmail || null;
     res.json({
       rsvpId: rsvp.id,
-      guestName: rsvp.guestName || null,
-      guestEmail: rsvp.guestEmail || null,
+      guestName,
+      guestEmail,
       attendees: Number(rsvp.attendees) || 1,
       status: cancelled ? 'cancelled' : rsvp.status,
       admit: !cancelled && (rsvp.status === 'going' || rsvp.status === 'checked_in'),
       alreadyCheckedIn: rsvp.status === 'checked_in',
+      eventName: row.eventName || null,
+      eventDate: row.startDatetime || null,
+      ticketReference: buildTicketReference({
+        eventName: row.eventName,
+        startDatetime: row.startDatetime,
+        name: guestName || guestEmail || '',
+        ticketCode: rsvp.ticketCode,
+      }),
     });
   } catch (err) {
     next(err);
@@ -387,6 +407,12 @@ router.get('/:id/my-rsvp', auth(), resolveLocalUser, async (req, res, next) => {
         ticketCode:       eventRsvp.ticketCode,
         createdAt:        eventRsvp.createdAt,
         updatedAt:        eventRsvp.updatedAt,
+        guestName:        eventRsvp.guestName,
+        guestEmail:       eventRsvp.guestEmail,
+        eventName:        event.name,
+        startDatetime:    event.startDatetime,
+        userName:         user.name,
+        userEmail:        user.email,
         orderId:          eventOrder.id,
         orderStatus:      eventOrder.status,
         orderAmountCents: eventOrder.amountCents,
@@ -394,6 +420,8 @@ router.get('/:id/my-rsvp', auth(), resolveLocalUser, async (req, res, next) => {
       })
       .from(eventRsvp)
       .leftJoin(eventOrder, eq(eventOrder.rsvpId, eventRsvp.id))
+      .innerJoin(event, eq(eventRsvp.eventId, event.id))
+      .leftJoin(user, eq(eventRsvp.userId, user.id))
       .where(
         and(
           eq(eventRsvp.eventId, req.params.id),
@@ -414,6 +442,12 @@ router.get('/:id/my-rsvp', auth(), resolveLocalUser, async (req, res, next) => {
       status:           rsvp.status,
       waitlistPosition: rsvp.waitlistPosition,
       ticketCode:       rsvp.ticketCode || null,
+      ticketReference:  rsvp.ticketCode ? buildTicketReference({
+        eventName: rsvp.eventName,
+        startDatetime: rsvp.startDatetime,
+        name: rsvp.guestName || rsvp.userName || rsvp.guestEmail || rsvp.userEmail || '',
+        ticketCode: rsvp.ticketCode,
+      }) : null,
       createdAt:        rsvp.createdAt,
       updatedAt:        rsvp.updatedAt,
       order: rsvp.orderId ? {
