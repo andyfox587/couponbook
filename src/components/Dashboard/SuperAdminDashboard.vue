@@ -1753,6 +1753,7 @@ export default {
     },
 
     async updateUserRole(user, newRole) {
+      const previousRole = user.role;
       try {
         const headers = await this.getAuthHeaders();
         headers["Content-Type"] = "application/json";
@@ -1770,6 +1771,20 @@ export default {
         }
 
         user.role = newRole;
+
+        // A "merchant" role alone doesn't create a business: the user won't appear
+        // in the Merchant List — or be able to add coupons/events — until a merchant
+        // (business) record is assigned to them. Offer to create it now, with this
+        // user pre-selected as the owner, so the two-step flow isn't a surprise.
+        if (newRole === "merchant" && previousRole !== "merchant") {
+          const who = user.name || user.email || "This user";
+          if (window.confirm(`${who} is now a merchant.\n\nCreate their business now? They won't show in the Merchant List — or be able to add coupons or events — until a business is assigned to them.`)) {
+            this.newMerchant = { name: user.name || "", logoUrl: "", ownerId: user.id };
+            this.ownerSearch = user.email || user.name || "";
+            this.ownerUserOptions = [user];
+            this.showCreateMerchantModal = true;
+          }
+        }
       } catch (err) {
         console.error("updateUserRole error:", err);
         alert("Failed to update user role");
