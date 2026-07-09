@@ -5,6 +5,7 @@ import {
   couponSubmission,
   coupon,
   merchant,
+  merchantMembership,
   user,
   foodieGroupMembership,   // ⬅️ add this
   foodieGroup,
@@ -100,20 +101,28 @@ router.get('/by-merchant', auth(), resolveLocalUser, async (req, res, next) => {
   try {
     const dbUser = req.dbUser;
 
-    // 2) Find all merchants owned by this user
-    const ownedMerchants = await db
-      .select({
-        id:   merchant.id,
-        name: merchant.name,
-      })
-      .from(merchant)
-      .where(eq(merchant.ownerId, dbUser.id));
+    // 2) Find all merchants this user can manage — owned OR admin via
+    //    merchantMembership — mirroring canManageMerchant, so anything they can
+    //    *create* they can also *see* here. (Previously owner-only, which hid
+    //    submissions a merchant-admin created for a merchant they manage but
+    //    don't own.)
+    const [owned, memberships] = await Promise.all([
+      db.select({ id: merchant.id })
+        .from(merchant)
+        .where(eq(merchant.ownerId, dbUser.id)),
+      db.select({ id: merchantMembership.merchantId })
+        .from(merchantMembership)
+        .where(and(
+          eq(merchantMembership.userId, dbUser.id),
+          isNull(merchantMembership.deletedAt),
+        )),
+    ]);
 
-    if (ownedMerchants.length === 0) {
+    const merchantIds = [...new Set([...owned, ...memberships].map((m) => m.id))];
+
+    if (merchantIds.length === 0) {
       return res.json([]);
     }
-
-    const merchantIds = ownedMerchants.map((m) => m.id);
 
     // Optional state filter (?state=rejected, ?state=pending, etc.)
     const { state } = req.query;
