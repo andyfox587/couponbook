@@ -69,8 +69,31 @@ export async function resolveLocalUser(req, res, next) {
       });
     }
 
-    // Attach full DB user record
+    // Attach the real, authenticated user
     req.dbUser = user;
+
+    // Super-admin "Act as" impersonation: when a super_admin sends the
+    // X-Impersonate-User-Id header, resolve this request as that target user
+    // (support tooling). Guardrails: super_admin only; target must exist, be
+    // active, and NOT be a super_admin. The real actor stays on req.realUser.
+    const impersonateId = req.headers['x-impersonate-user-id'];
+    if (impersonateId && user.role === 'super_admin' && impersonateId !== user.id) {
+      const [target] = await db
+        .select()
+        .from(schema.user)
+        .where(eq(schema.user.id, impersonateId))
+        .limit(1);
+      if (!target || target.deletedAt) {
+        return res.status(404).json({ message: 'Impersonation target not found or disabled' });
+      }
+      if (target.role === 'super_admin') {
+        return res.status(403).json({ message: 'Cannot impersonate another super admin' });
+      }
+      req.realUser = user;
+      req.dbUser = target;
+      req.impersonating = true;
+    }
+
     next();
   } catch (err) {
     console.error('Failed to resolve local user:', err);

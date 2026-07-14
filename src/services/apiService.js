@@ -1,6 +1,6 @@
 //src/services/apiService.js
 import axios from 'axios';
-import { getAccessToken } from '@/services/authService';
+import { getAccessToken, getImpersonationId } from '@/services/authService';
 
 const remote = process.env.VUE_APP_API_URL;
 if (!remote && process.env.NODE_ENV === 'production') {
@@ -22,6 +22,13 @@ api.interceptors.request.use(async (config) => {
       if (!config.headers.Authorization) {
         config.headers.Authorization = `Bearer ${token}`;
       }
+    }
+    // Super-admin "Act as": forward the impersonation target so the API resolves
+    // this request as that user (backend enforces super-admin-only).
+    const impId = getImpersonationId();
+    if (impId) {
+      config.headers = config.headers || {};
+      config.headers['X-Impersonate-User-Id'] = impId;
     }
   } catch (e) {
     // Token fetch errors shouldn't block public requests; let the server

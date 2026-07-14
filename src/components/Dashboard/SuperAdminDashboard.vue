@@ -253,6 +253,14 @@
                       Grant Access
                     </button>
                     <button
+                      v-if="!u.deletedAt && u.id !== user.id && u.role !== 'super_admin' && !u.email.includes('@anonymized')"
+                      class="btn-action"
+                      @click="actAs(u)"
+                      title="Log in as this user to help them set up (audited)"
+                    >
+                      Act as
+                    </button>
+                    <button
                       v-if="!u.deletedAt && u.id !== user.id"
                       class="btn-action warning"
                       @click="showDisableModal(u)"
@@ -1405,7 +1413,7 @@
 
 <script>
 import { mapGetters } from "vuex";
-import { getAccessToken, signIn } from "@/services/authService";
+import { getAccessToken, signIn, setImpersonation } from "@/services/authService";
 import Modal from "@/components/Common/Modal.vue";
 
 const API_BASE = "/api/v1";
@@ -1788,6 +1796,28 @@ export default {
       } catch (err) {
         console.error("updateUserRole error:", err);
         alert("Failed to update user role");
+      }
+    },
+
+    async actAs(u) {
+      if (!window.confirm(`Act as ${u.name || u.email}? You'll browse the app as this user to help them set up. Every action is logged. Use the red banner at the top to exit.`)) return;
+      try {
+        const headers = await this.getAuthHeaders();
+        headers["Content-Type"] = "application/json";
+        const res = await fetch(`${API_BASE}/admin/impersonate/${u.id}`, {
+          method: "POST",
+          headers,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          alert(data.error || `Could not start impersonation: ${res.status}`);
+          return;
+        }
+        setImpersonation(data);
+        window.location.assign("/profile");
+      } catch (err) {
+        console.error("actAs error:", err);
+        alert("Could not start impersonation");
       }
     },
 

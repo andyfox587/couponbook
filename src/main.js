@@ -11,7 +11,24 @@ import './assets/styles/global.css'
 
 import surveyjs from './plugins/surveyjs'
 import vueQRCode from './plugins/vueQRCode'
-import { userManager } from '@/services/authService';
+import { userManager, getImpersonationId } from '@/services/authService';
+
+// Super-admin "Act as": attach the impersonation header to same-app API calls.
+// Covers all fetch-based services/components; axios calls are handled in
+// apiService.js. The backend only honors the header for super-admins.
+const _origFetch = window.fetch.bind(window);
+window.fetch = (input, init = {}) => {
+  try {
+    const impId = getImpersonationId();
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    if (impId && url.includes('/api/v1')) {
+      const headers = new Headers(init.headers || {});
+      headers.set('X-Impersonate-User-Id', impId);
+      init = { ...init, headers };
+    }
+  } catch (e) { /* noop */ }
+  return _origFetch(input, init);
+};
 
 // Initialize theme before app mount to avoid flash
 function initializeTheme() {

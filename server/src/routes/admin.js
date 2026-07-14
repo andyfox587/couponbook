@@ -467,6 +467,46 @@ router.patch('/users/:id', async (req, res, next) => {
 });
 
 /**
+ * POST /api/v1/admin/impersonate/:userId
+ * Start a support "Act as" session. Validates the target and records an audit
+ * entry; the actual request-time swap is enforced in resolveLocalUser when the
+ * caller sends the X-Impersonate-User-Id header. Super-admin only (router-gated).
+ */
+router.post('/impersonate/:userId', async (req, res, next) => {
+  const { userId } = req.params;
+  try {
+    const [target] = await db
+      .select({
+        id: schema.user.id,
+        name: schema.user.name,
+        email: schema.user.email,
+        role: schema.user.role,
+        deletedAt: schema.user.deletedAt,
+      })
+      .from(schema.user)
+      .where(eq(schema.user.id, userId))
+      .limit(1);
+
+    if (!target || target.deletedAt) {
+      return res.status(404).json({ error: 'User not found or disabled' });
+    }
+    if (target.role === 'super_admin') {
+      return res.status(403).json({ error: 'Cannot impersonate another super admin' });
+    }
+
+    await logAdminAction(req.dbUser.id, 'impersonate_start', 'user', target.id, {
+      targetEmail: target.email,
+      targetRole: target.role,
+    });
+
+    res.json({ id: target.id, name: target.name, email: target.email, role: target.role });
+  } catch (err) {
+    console.error('📦  error in POST /admin/impersonate/:userId', err);
+    next(err);
+  }
+});
+
+/**
  * POST /api/v1/admin/users/:id/disable
  * Soft-disable a user by setting deletedAt
  */

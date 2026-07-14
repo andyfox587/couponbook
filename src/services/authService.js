@@ -111,3 +111,35 @@ export async function handleSignInCallback() {
     throw e;
   }
 }
+
+// ---------------- Impersonation ("Act as") ----------------
+// Super-admins can browse the app as another user for support. We stash the
+// target here; apiService (axios) and a fetch wrapper in main.js forward it as
+// the X-Impersonate-User-Id header. The backend only honors it for super-admins.
+const IMPERSONATE_KEY = "impersonateUser";
+
+export function setImpersonation(u) {
+  if (u && u.id) {
+    localStorage.setItem(
+      IMPERSONATE_KEY,
+      JSON.stringify({ id: u.id, name: u.name, email: u.email, role: u.role })
+    );
+  }
+}
+
+export function clearImpersonation() {
+  localStorage.removeItem(IMPERSONATE_KEY);
+}
+
+export function getImpersonatedUser() {
+  try {
+    const s = localStorage.getItem(IMPERSONATE_KEY);
+    return s ? JSON.parse(s) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getImpersonationId() {
+  return getImpersonatedUser()?.id || null;
+}
