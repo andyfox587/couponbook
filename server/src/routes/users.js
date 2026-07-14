@@ -11,6 +11,7 @@ import { eq, and, isNull } from 'drizzle-orm';
 import { db } from '../db.js';
 import { user, merchant, merchantMembership } from '../schema.js';
 import auth from '../middleware/auth.js';
+import { resolveLocalUser } from '../authz/index.js';
 
 const router = express.Router();
 
@@ -288,22 +289,14 @@ router.post('/sync', async (req, res) => {
 });
 
 // GET /api/v1/users/me
-router.get('/me', auth(), async (req, res, next) => {
+router.get('/me', auth(), resolveLocalUser, async (req, res, next) => {
   try {
-    const sub = req.user && req.user.sub;
-    if (!sub) {
-      console.warn('📦  /users/me called without Cognito sub on req.user');
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    // 1) Load the local user row by Cognito sub
-    const [dbUser] = await db
-      .select()
-      .from(user)
-      .where(eq(user.cognitoSub, sub)); // adjust if your column is named differently
-
+    // resolveLocalUser sets req.dbUser to the *effective* user — which is the
+    // impersonation target when a super_admin is "acting as" someone — so /me
+    // (identity, role, merchant list) and everything the client derives from it
+    // reflect that user, not the real logged-in super admin.
+    const dbUser = req.dbUser;
     if (!dbUser) {
-      console.warn('📦  No local user row for sub in /users/me', sub);
       return res.status(404).json({ error: 'User not found' });
     }
 
