@@ -641,6 +641,14 @@
                     <button @click="approveCoupon(c)">
                       <i class="pi pi-check icon-spacing-sm"></i>Approve
                     </button>
+                    <button
+                      v-if="c.merchantEmail"
+                      class="btn-email"
+                      @click="emailMerchant(c, 'coupon')"
+                      :title="`Email ${c.merchantName || 'the merchant'} (${c.merchantEmail})`"
+                    >
+                      <i class="pi pi-envelope icon-spacing-sm"></i>Email
+                    </button>
                     <button @click="rejectCoupon(c)">
                       <i class="pi pi-times icon-spacing-sm"></i>Reject
                     </button>
@@ -683,6 +691,14 @@
                     </button>
                     <button @click="approveEvent(e)">
                       <i class="pi pi-check icon-spacing-sm"></i>Approve
+                    </button>
+                    <button
+                      v-if="e.merchantEmail"
+                      class="btn-email"
+                      @click="emailMerchant(e, 'event')"
+                      :title="`Email ${e.merchantName || 'the merchant'} (${e.merchantEmail})`"
+                    >
+                      <i class="pi pi-envelope icon-spacing-sm"></i>Email
                     </button>
                     <button @click="rejectEvent(e)">
                       <i class="pi pi-times icon-spacing-sm"></i>Reject
@@ -1288,6 +1304,7 @@ export default {
             expiresAt: sub.submissionData?.expires_at,
             locked: sub.submissionData?.locked,
             merchantName: sub.merchantName,
+            merchantEmail: sub.merchantEmail,
             merchantId: sub.merchantId,
             submittedAt: sub.submittedAt,
             updatedAt: sub.updatedAt,
@@ -1492,6 +1509,7 @@ export default {
             visibility: sub.submissionData?.visibility,
             coverImageUrl: sub.submissionData?.cover_image_url,
             merchantName: sub.merchantName,
+            merchantEmail: sub.merchantEmail,
             merchantId: sub.merchantId,
             submittedAt: sub.submittedAt,
             updatedAt: sub.updatedAt,
@@ -1828,6 +1846,22 @@ export default {
           await this.loadActiveCoupons();
         }
       }
+    },
+
+    // Open the admin's default mail client pre-addressed to the merchant, with a
+    // subject referencing this specific submission so they don't have to type it.
+    // `kind` is 'coupon' | 'event'. Guarded by v-if="*.merchantEmail" in the
+    // template, so an address is always present when this runs. mailto: respects
+    // whatever client the admin has set as default (Gmail-in-browser, Mail, etc.).
+    emailMerchant(item, kind) {
+      const email = (item.merchantEmail || "").trim().replace(/[\r\n]/g, "");
+      if (!email) return;
+      const label = kind === "event" ? "event" : "coupon";
+      const title =
+        item.title || item.name || item.description || `${label} submission`;
+      const groupName = (this.group && this.group.name) || "Foodies Coupon Book";
+      const subject = `About your "${title}" ${label} submission — ${groupName}`;
+      window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}`;
     },
 
     // Format ISO date to locale string
@@ -3082,6 +3116,17 @@ textarea:focus {
 
 .btn-review:hover {
   background: var(--color-bg-tertiary, #e2e8f0) !important;
+}
+
+/* Email-the-merchant button. Sits between Approve and Reject, so the positional
+   :first-child/:last-child colour rules don't touch it — style it explicitly.
+   Scoped selector beats the base .action-buttons button rule without !important. */
+.action-buttons button.btn-email {
+  background: var(--color-info);
+  color: var(--color-text-on-info);
+}
+.action-buttons button.btn-email:hover {
+  background: var(--color-info-hover);
 }
 
 /* Review Modal */

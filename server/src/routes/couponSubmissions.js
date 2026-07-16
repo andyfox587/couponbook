@@ -67,6 +67,9 @@ router.get('/', auth(), resolveLocalUser, async (req, res, next) => {
         groupId:        couponSubmission.groupId,
         merchantId:     couponSubmission.merchantId,
         merchantName:   merchant.name,
+        // Merchants have no email of their own; their contact address is the
+        // owning user's account email. Surfaced so a group admin can email them.
+        merchantEmail:  user.email,
         state:          couponSubmission.state,
         submittedAt:    couponSubmission.submittedAt,
         updatedAt:      couponSubmission.updatedAt,
@@ -76,6 +79,7 @@ router.get('/', auth(), resolveLocalUser, async (req, res, next) => {
       })
       .from(couponSubmission)
       .leftJoin(merchant, eq(merchant.id, couponSubmission.merchantId))
+      .leftJoin(user, eq(user.id, merchant.ownerId))
       .where(
         and(
           eq(couponSubmission.state, 'pending'),

@@ -5,6 +5,7 @@ import {
   eventSubmission,
   event,
   merchant,
+  user,
   foodieGroupMembership,
 } from '../schema.js';
 import { eq, and, inArray, isNull } from 'drizzle-orm';
@@ -113,6 +114,8 @@ router.get('/', auth(), resolveLocalUser, async (req, res, next) => {
         groupId:        eventSubmission.groupId,
         merchantId:     eventSubmission.merchantId,
         merchantName:   merchant.name,
+        // Owning user's account email — merchants carry no email of their own.
+        merchantEmail:  user.email,
         state:          eventSubmission.state,
         submittedAt:    eventSubmission.submittedAt,
         updatedAt:      eventSubmission.updatedAt,
@@ -122,6 +125,7 @@ router.get('/', auth(), resolveLocalUser, async (req, res, next) => {
       })
       .from(eventSubmission)
       .leftJoin(merchant, eq(merchant.id, eventSubmission.merchantId))
+      .leftJoin(user, eq(user.id, merchant.ownerId))
       .where(
         and(
           eq(eventSubmission.state, 'pending'),
