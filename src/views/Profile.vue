@@ -452,35 +452,171 @@
               </li>
 
               <!-- Approved -->
-              <li class="link-row clickable" @click="loadApprovedCoupons">
+              <li class="link-row clickable" @click="toggleTool('approved', 'loadApprovedCoupons')">
                 <span class="link-label"><i class="pi pi-check-circle icon-spacing-sm"></i>View Approved Coupons</span>
                 <span class="link-helper">
                   See all live, approved coupons across your restaurants.
                 </span>
               </li>
+              <li v-if="activeToolsView === 'approved'" class="tool-panel-li">
+                <MerchantToolPanel title="Approved Coupons" @close="closeToolsView">
+                  <p v-if="merchantToolsError" class="tiny error-text">{{ merchantToolsError }}</p>
+                  <p v-else-if="merchantToolsLoading" class="muted tiny">Loading…</p>
+                  <ul v-else-if="approvedCoupons.length" class="tiny-list">
+                    <li v-for="c in approvedCoupons" :key="c.id">
+                      <strong>{{ c.title }}</strong>
+                      <span class="muted tiny">· {{ merchantNameById(c.merchant_id) }}</span>
+                    </li>
+                  </ul>
+                  <p v-else class="muted tiny">No approved coupons found for your restaurants yet.</p>
+                </MerchantToolPanel>
+              </li>
 
               <!-- Pending -->
-              <li class="link-row clickable" @click="loadPendingCoupons">
+              <li class="link-row clickable" @click="toggleTool('pending', 'loadPendingCoupons')">
                 <span class="link-label"><i class="pi pi-clock icon-spacing-sm"></i>View Pending Submissions</span>
                 <span class="link-helper">
                   Review and edit submissions awaiting Foodie Group approval.
                 </span>
               </li>
+              <li v-if="activeToolsView === 'pending'" class="tool-panel-li">
+                <MerchantToolPanel title="Pending Submissions" @close="closeToolsView">
+                  <p v-if="merchantToolsError" class="tiny error-text">{{ merchantToolsError }}</p>
+                  <p v-else-if="merchantToolsLoading" class="muted tiny">Loading…</p>
+                  <ul v-else-if="pendingCoupons.length" class="tiny-list">
+                    <li v-for="sub in pendingCoupons" :key="sub.id" class="pending-row">
+                      <div>
+                        <strong>{{ sub.submissionData?.title || 'Untitled coupon' }}</strong>
+                        <span class="muted tiny">· {{ sub.merchantName || merchantNameById(sub.merchantId) }}</span>
+                        <br />
+                        <span class="muted tiny">
+                          Submitted {{ formatDateTiny(sub.submittedAt) }}
+                          <span v-if="sub.updatedAt"> · Edited {{ formatDateTiny(sub.updatedAt) }}</span>
+                        </span>
+                      </div>
+                      <span class="badge badge-pending">Pending</span>
+                      <button class="btn tertiary compact" @click="goToEditSubmission(sub.id)">Edit</button>
+                    </li>
+                  </ul>
+                  <p v-else class="muted tiny">No pending coupon submissions found for your restaurants.</p>
+                </MerchantToolPanel>
+              </li>
 
               <!-- Rejected -->
-              <li class="link-row clickable" @click="loadRejectedCoupons">
+              <li class="link-row clickable" @click="toggleTool('rejected', 'loadRejectedCoupons')">
                 <span class="link-label"><i class="pi pi-times-circle icon-spacing-sm"></i>View Rejected Coupons</span>
                 <span class="link-helper">
                   Review coupons that were not approved and see the reason.
                 </span>
               </li>
+              <li v-if="activeToolsView === 'rejected'" class="tool-panel-li">
+                <MerchantToolPanel title="Rejected Coupons" @close="closeToolsView">
+                  <p v-if="merchantToolsError" class="tiny error-text">{{ merchantToolsError }}</p>
+                  <p v-else-if="merchantToolsLoading" class="muted tiny">Loading…</p>
+                  <ul v-else-if="rejectedCoupons.length" class="tiny-list">
+                    <li v-for="sub in rejectedCoupons" :key="sub.id">
+                      <strong>{{ sub.submissionData?.title || 'Untitled coupon' }}</strong>
+                      <span class="muted tiny">· {{ merchantNameById(sub.merchantId) }}</span>
+                      <br />
+                      <span class="muted tiny">
+                        Rejected on {{ formatDateTiny(sub.submittedAt) }}
+                        <span v-if="sub.rejectionMessage"> — Reason: {{ sub.rejectionMessage }}</span>
+                      </span>
+                    </li>
+                  </ul>
+                  <p v-else class="muted tiny">No rejected coupon submissions found for your restaurants.</p>
+                </MerchantToolPanel>
+              </li>
 
               <!-- Insights -->
-              <li class="link-row clickable" @click="loadRedemptionInsights">
+              <li class="link-row clickable" @click="toggleTool('insights', 'loadRedemptionInsights')">
                 <span class="link-label"><i class="pi pi-chart-bar icon-spacing-sm"></i>Redemption Insights</span>
                 <span class="link-helper">
                   See how many times coupons from your restaurants have been redeemed.
                 </span>
+              </li>
+              <li v-if="activeToolsView === 'insights'" class="tool-panel-li">
+                <MerchantToolPanel title="Redemption Insights" @close="closeToolsView">
+                  <p v-if="merchantToolsError" class="tiny error-text">{{ merchantToolsError }}</p>
+                  <p v-else-if="merchantToolsLoading" class="muted tiny">Loading…</p>
+                  <template v-else-if="redemptionInsights.length">
+                    <ul class="insights-list">
+                      <li v-for="row in redemptionInsights" :key="row.couponId" class="insight-row">
+                        <div class="insight-copy">
+                          <strong>{{ row.merchantName }}</strong>
+                          <div class="muted tiny">{{ row.couponTitle }}</div>
+                          <div class="muted tiny">
+                            {{ row.redemptions }} redemptions
+                            <span v-if="row.lastRedeemedAt">
+                              · Last redeemed {{ formatDateDateTime(row.lastRedeemedAt) }}
+                            </span>
+                          </div>
+                        </div>
+                        <button class="btn tertiary compact" @click="loadRedemptionDetails(row.couponId)">
+                          {{ selectedCouponId === row.couponId ? 'Refresh redeemers' : 'View redeemers' }}
+                        </button>
+                      </li>
+                    </ul>
+
+                    <div v-if="selectedCouponRow" class="redemption-details-block">
+                      <div class="details-header">
+                        <div>
+                          <strong>{{ selectedCouponRow.couponTitle }}</strong>
+                          <div class="muted tiny">{{ selectedCouponRow.merchantName }}</div>
+                        </div>
+                        <span class="muted tiny">
+                          {{ displayedRedemptionDetails.length }} row{{ displayedRedemptionDetails.length === 1 ? '' : 's' }}
+                        </span>
+                      </div>
+
+                      <div class="details-actions">
+                        <button
+                          class="btn tertiary compact"
+                          @click="copyRedeemerEmails"
+                          :disabled="detailsLoading || !displayedRedemptionDetails.length"
+                        >
+                          Copy emails
+                        </button>
+                        <button
+                          class="btn tertiary compact"
+                          @click="exportRedemptionDetails"
+                          :disabled="detailsLoading || exportingDetails"
+                        >
+                          {{ exportingDetails ? 'Exporting…' : 'Export CSV' }}
+                        </button>
+                        <label class="checkbox-row muted tiny">
+                          <input type="checkbox" v-model="uniqueEmailsOnly" />
+                          Show unique emails only
+                        </label>
+                      </div>
+
+                      <p v-if="detailsLoading" class="muted tiny">Loading redeemers…</p>
+                      <p v-else-if="detailsError" class="tiny error-text">{{ detailsError }}</p>
+
+                      <div v-else-if="displayedRedemptionDetails.length" class="details-table-wrap">
+                        <table class="details-table">
+                          <thead>
+                            <tr>
+                              <th>Customer name</th>
+                              <th>Customer email</th>
+                              <th>Redeemed at</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr v-for="row in displayedRedemptionDetails" :key="row.redemptionId">
+                              <td>{{ row.customerName || '—' }}</td>
+                              <td>{{ row.customerEmail || '—' }}</td>
+                              <td>{{ formatDateDateTime(row.redeemedAt) }}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <p v-else class="muted tiny">No redeemers found for this coupon.</p>
+                    </div>
+                  </template>
+                  <p v-else class="muted tiny">No redemptions recorded yet for coupons from your restaurants.</p>
+                </MerchantToolPanel>
               </li>
 
               <!-- Divider -->
@@ -495,338 +631,159 @@
               </li>
 
               <!-- Pending Events -->
-              <li class="link-row clickable" @click="loadPendingEvents">
+              <li class="link-row clickable" @click="toggleTool('pending-events', 'loadPendingEvents')">
                 <span class="link-label"><i class="pi pi-clock icon-spacing-sm"></i>View Pending Event Submissions</span>
                 <span class="link-helper">
                   Review and edit event submissions awaiting Foodie Group approval.
                 </span>
               </li>
+              <li v-if="activeToolsView === 'pending-events'" class="tool-panel-li">
+                <MerchantToolPanel title="Pending Event Submissions" @close="closeToolsView">
+                  <p v-if="merchantToolsError" class="tiny error-text">{{ merchantToolsError }}</p>
+                  <p v-else-if="merchantToolsLoading" class="muted tiny">Loading…</p>
+                  <ul v-else-if="pendingEvents.length" class="tiny-list">
+                    <li v-for="sub in pendingEvents" :key="sub.id" class="pending-row">
+                      <div>
+                        <strong>{{ sub.submissionData?.name || 'Untitled event' }}</strong>
+                        <span class="muted tiny">· {{ sub.merchantName || merchantNameById(sub.merchantId) }}</span>
+                        <br />
+                        <span class="muted tiny">
+                          Submitted {{ formatDateTiny(sub.submittedAt) }}
+                          <span v-if="sub.updatedAt"> · Edited {{ formatDateTiny(sub.updatedAt) }}</span>
+                        </span>
+                      </div>
+                      <span class="badge badge-pending">Pending</span>
+                      <button class="btn tertiary compact" @click="goToEditEventSubmission(sub.id)">Edit</button>
+                    </li>
+                  </ul>
+                  <p v-else class="muted tiny">No pending event submissions found for your restaurants.</p>
+                </MerchantToolPanel>
+              </li>
 
               <!-- Rejected Events -->
-              <li class="link-row clickable" @click="loadRejectedEvents">
+              <li class="link-row clickable" @click="toggleTool('rejected-events', 'loadRejectedEvents')">
                 <span class="link-label"><i class="pi pi-times-circle icon-spacing-sm"></i>View Rejected Events</span>
                 <span class="link-helper">
                   Review event submissions that were not approved and see the reason.
                 </span>
               </li>
+              <li v-if="activeToolsView === 'rejected-events'" class="tool-panel-li">
+                <MerchantToolPanel title="Rejected Events" @close="closeToolsView">
+                  <p v-if="merchantToolsError" class="tiny error-text">{{ merchantToolsError }}</p>
+                  <p v-else-if="merchantToolsLoading" class="muted tiny">Loading…</p>
+                  <ul v-else-if="rejectedEvents.length" class="tiny-list">
+                    <li v-for="sub in rejectedEvents" :key="sub.id">
+                      <strong>{{ sub.submissionData?.name || 'Untitled event' }}</strong>
+                      <span class="muted tiny">· {{ merchantNameById(sub.merchantId) }}</span>
+                      <br />
+                      <span class="muted tiny">
+                        Rejected on {{ formatDateTiny(sub.submittedAt) }}
+                        <span v-if="sub.rejectionMessage"> — Reason: {{ sub.rejectionMessage }}</span>
+                      </span>
+                    </li>
+                  </ul>
+                  <p v-else class="muted tiny">No rejected event submissions found for your restaurants.</p>
+                </MerchantToolPanel>
+              </li>
 
               <!-- Event Attendees -->
-              <li class="link-row clickable" @click="loadEventInsights">
+              <li class="link-row clickable" @click="toggleTool('event-attendees', 'loadEventInsights')">
                 <span class="link-label"><i class="pi pi-calendar icon-spacing-sm"></i>Your Events</span>
                 <span class="link-helper">
                   Add a banner image, see who has RSVPed, and manage attendance.
                 </span>
               </li>
+              <li v-if="activeToolsView === 'event-attendees'" class="tool-panel-li">
+                <MerchantToolPanel title="Your Events" @close="closeToolsView">
+                  <p v-if="merchantToolsError" class="tiny error-text">{{ merchantToolsError }}</p>
+                  <p v-else-if="merchantToolsLoading" class="muted tiny">Loading…</p>
+                  <template v-else-if="eventInsights.length">
+                    <ul class="insights-list">
+                      <li v-for="row in eventInsights" :key="row.eventId" class="insight-row insight-row-stack">
+                        <div class="insight-row-main">
+                          <div class="insight-copy">
+                            <strong>{{ row.eventName }}</strong>
+                            <div class="muted tiny">{{ row.merchantName }}</div>
+                            <div class="muted tiny">
+                              {{ row.confirmedRsvps }} confirmed · {{ row.waitlistCount }} waitlisted
+                              <span v-if="row.startDatetime"> · {{ formatDateDateTime(row.startDatetime) }}</span>
+                              <span v-if="!row.bannerImageUrl"> · <span class="muted">no banner</span></span>
+                            </div>
+                          </div>
+                          <div class="insight-row-actions">
+                            <button class="btn tertiary compact" @click="toggleBannerEditor(row.eventId)">
+                              <i class="pi pi-image icon-spacing-sm"></i>{{ bannerEditEventId === row.eventId ? 'Close' : (row.bannerImageUrl ? 'Edit banner' : 'Add banner') }}
+                            </button>
+                            <button class="btn tertiary compact" @click="loadEventAttendeeDetails(row.eventId)">
+                              {{ selectedEventId === row.eventId ? 'Refresh' : 'View attendees' }}
+                            </button>
+                          </div>
+                        </div>
+                        <EventBannerManager
+                          v-if="bannerEditEventId === row.eventId"
+                          :event-id="row.eventId"
+                          :merchant-id="row.merchantId"
+                          :banner-image-url="row.bannerImageUrl"
+                          :cover-image-url="row.coverImageUrl"
+                          @updated="onEventImagesUpdated"
+                        />
+                      </li>
+                    </ul>
+
+                    <div v-if="selectedEventRow" class="redemption-details-block">
+                      <div class="details-header">
+                        <div>
+                          <strong>{{ selectedEventRow.eventName }}</strong>
+                          <div class="muted tiny">{{ selectedEventRow.merchantName }}</div>
+                        </div>
+                        <span class="muted tiny">{{ eventAttendees.length }} attendee{{ eventAttendees.length === 1 ? '' : 's' }}</span>
+                      </div>
+
+                      <div class="details-actions">
+                        <button class="btn tertiary compact" @click="copyAttendeeEmails" :disabled="eventAttendeesLoading || !eventAttendees.length">
+                          Copy emails
+                        </button>
+                      </div>
+
+                      <p v-if="eventAttendeesLoading" class="muted tiny">Loading attendees…</p>
+                      <p v-else-if="eventAttendeesError" class="tiny error-text">{{ eventAttendeesError }}</p>
+
+                      <div v-else-if="eventAttendees.length" class="details-table-wrap">
+                        <table class="details-table">
+                          <thead>
+                            <tr>
+                              <th>Name</th>
+                              <th>Email</th>
+                              <th>Party</th>
+                              <th>Status</th>
+                              <th>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr v-for="a in eventAttendees" :key="a.id">
+                              <td>{{ a.userName || a.guestName || '—' }}</td>
+                              <td>{{ a.userEmail || a.guestEmail || '—' }}</td>
+                              <td>{{ a.attendees }}</td>
+                              <td>{{ a.status }}</td>
+                              <td class="table-actions">
+                                <button class="btn tertiary compact" :disabled="a.status !== 'waitlist'" @click="promoteAttendee(a)">Promote</button>
+                                <button class="btn tertiary compact" :disabled="a.status === 'cancelled'" @click="cancelAttendeeRsvp(a)">Cancel</button>
+                                <button class="btn tertiary compact" :disabled="a.status !== 'going'" @click="checkInAttendee(a)">Check-in</button>
+                                <button class="btn tertiary compact" :disabled="a.status !== 'going' && a.status !== 'checked_in'" @click="markNoShowAttendee(a)">No-show</button>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <p v-else class="muted tiny">No attendees found for this event.</p>
+                    </div>
+                  </template>
+                  <p v-else class="muted tiny">No events found for your restaurants yet.</p>
+                </MerchantToolPanel>
+              </li>
             </ul>
 
-            <!-- Status / errors -->
-            <p v-if="merchantToolsLoading" class="muted tiny" style="margin-top: 0.75rem;">
-              Loading…
-            </p>
-            <p v-if="merchantToolsError" class="tiny error-text" style="margin-top: 0.5rem;">
-              {{ merchantToolsError }}
-            </p>
-
-            <!-- Approved coupons list -->
-            <div v-if="activeToolsView === 'approved' && approvedCoupons.length" class="tools-results-block">
-              <h3 class="tiny-heading">Approved Coupons</h3>
-              <ul class="tiny-list">
-                <li v-for="c in approvedCoupons" :key="c.id">
-                  <strong>{{ c.title }}</strong>
-                  <span class="muted tiny">
-                    · {{ merchantNameById(c.merchant_id) }}
-                  </span>
-                </li>
-              </ul>
-            </div>
-
-            <!-- Pending coupon submissions -->
-            <div v-if="activeToolsView === 'pending' && pendingCoupons.length" class="tools-results-block">
-              <h3 class="tiny-heading">Pending Submissions</h3>
-              <ul class="tiny-list">
-                <li v-for="sub in pendingCoupons" :key="sub.id" class="pending-row">
-                  <div>
-                    <strong>{{ sub.submissionData?.title || 'Untitled coupon' }}</strong>
-                    <span class="muted tiny">
-                      · {{ sub.merchantName || merchantNameById(sub.merchantId) }}
-                    </span>
-                    <br />
-                    <span class="muted tiny">
-                      Submitted {{ formatDateTiny(sub.submittedAt) }}
-                      <span v-if="sub.updatedAt"> · Edited {{ formatDateTiny(sub.updatedAt) }}</span>
-                    </span>
-                  </div>
-                  <span class="badge badge-pending">Pending</span>
-                  <button class="btn tertiary compact" @click="goToEditSubmission(sub.id)">
-                    Edit
-                  </button>
-                </li>
-              </ul>
-            </div>
-
-            <!-- Rejected coupon submissions -->
-            <div v-if="activeToolsView === 'rejected' && rejectedCoupons.length" class="tools-results-block">
-              <h3 class="tiny-heading">Rejected Coupons</h3>
-              <ul class="tiny-list">
-                <li v-for="sub in rejectedCoupons" :key="sub.id">
-                  <strong>{{ sub.submissionData?.title || 'Untitled coupon' }}</strong>
-                  <span class="muted tiny">
-                    · {{ merchantNameById(sub.merchantId) }}
-                  </span>
-                  <br />
-                  <span class="muted tiny">
-                    Rejected on
-                    {{ formatDateTiny(sub.submittedAt) }}
-                    <span v-if="sub.rejectionMessage">
-                      — Reason: {{ sub.rejectionMessage }}
-                    </span>
-                  </span>
-                </li>
-              </ul>
-            </div>
-
-            <!-- Pending event submissions -->
-            <div v-if="activeToolsView === 'pending-events' && pendingEvents.length" class="tools-results-block">
-              <h3 class="tiny-heading">Pending Event Submissions</h3>
-              <ul class="tiny-list">
-                <li v-for="sub in pendingEvents" :key="sub.id" class="pending-row">
-                  <div>
-                    <strong>{{ sub.submissionData?.name || 'Untitled event' }}</strong>
-                    <span class="muted tiny">
-                      · {{ sub.merchantName || merchantNameById(sub.merchantId) }}
-                    </span>
-                    <br />
-                    <span class="muted tiny">
-                      Submitted {{ formatDateTiny(sub.submittedAt) }}
-                      <span v-if="sub.updatedAt"> · Edited {{ formatDateTiny(sub.updatedAt) }}</span>
-                    </span>
-                  </div>
-                  <span class="badge badge-pending">Pending</span>
-                  <button class="btn tertiary compact" @click="goToEditEventSubmission(sub.id)">
-                    Edit
-                  </button>
-                </li>
-              </ul>
-            </div>
-
-            <!-- Rejected event submissions -->
-            <div v-if="activeToolsView === 'rejected-events' && rejectedEvents.length" class="tools-results-block">
-              <h3 class="tiny-heading">Rejected Events</h3>
-              <ul class="tiny-list">
-                <li v-for="sub in rejectedEvents" :key="sub.id">
-                  <strong>{{ sub.submissionData?.name || 'Untitled event' }}</strong>
-                  <span class="muted tiny">· {{ merchantNameById(sub.merchantId) }}</span>
-                  <br />
-                  <span class="muted tiny">
-                    Rejected on {{ formatDateTiny(sub.submittedAt) }}
-                    <span v-if="sub.rejectionMessage"> — Reason: {{ sub.rejectionMessage }}</span>
-                  </span>
-                </li>
-              </ul>
-            </div>
-
-            <!-- Empty states for event views -->
-            <div v-if="activeToolsView === 'pending-events' && !merchantToolsLoading && !pendingEvents.length"
-              class="muted tiny" style="margin-top: 0.5rem;">
-              No pending event submissions found for your restaurants.
-            </div>
-            <div v-if="activeToolsView === 'rejected-events' && !merchantToolsLoading && !rejectedEvents.length"
-              class="muted tiny" style="margin-top: 0.5rem;">
-              No rejected event submissions found for your restaurants.
-            </div>
-
-            <!-- Redemption insights summary -->
-            <div v-if="activeToolsView === 'insights' && redemptionInsights.length" class="tools-results-block">
-              <h3 class="tiny-heading">Redemption Insights</h3>
-              <ul class="insights-list">
-                <li v-for="row in redemptionInsights" :key="row.couponId" class="insight-row">
-                  <div class="insight-copy">
-                    <strong>{{ row.merchantName }}</strong>
-                    <div class="muted tiny">{{ row.couponTitle }}</div>
-                    <div class="muted tiny">
-                      {{ row.redemptions }} redemptions
-                      <span v-if="row.lastRedeemedAt">
-                        · Last redeemed {{ formatDateDateTime(row.lastRedeemedAt) }}
-                      </span>
-                    </div>
-                  </div>
-
-                  <button class="btn tertiary compact" @click="loadRedemptionDetails(row.couponId)">
-                    {{ selectedCouponId === row.couponId ? 'Refresh redeemers' : 'View redeemers' }}
-                  </button>
-                </li>
-              </ul>
-
-              <div v-if="selectedCouponRow" class="redemption-details-block">
-                <div class="details-header">
-                  <div>
-                    <strong>{{ selectedCouponRow.couponTitle }}</strong>
-                    <div class="muted tiny">{{ selectedCouponRow.merchantName }}</div>
-                  </div>
-                  <span class="muted tiny">
-                    {{ displayedRedemptionDetails.length }} row{{ displayedRedemptionDetails.length === 1 ? '' : 's' }}
-                  </span>
-                </div>
-
-                <div class="details-actions">
-                  <button
-                    class="btn tertiary compact"
-                    @click="copyRedeemerEmails"
-                    :disabled="detailsLoading || !displayedRedemptionDetails.length"
-                  >
-                    Copy emails
-                  </button>
-                  <button
-                    class="btn tertiary compact"
-                    @click="exportRedemptionDetails"
-                    :disabled="detailsLoading || exportingDetails"
-                  >
-                    {{ exportingDetails ? 'Exporting…' : 'Export CSV' }}
-                  </button>
-                  <label class="checkbox-row muted tiny">
-                    <input type="checkbox" v-model="uniqueEmailsOnly" />
-                    Show unique emails only
-                  </label>
-                </div>
-
-                <p v-if="detailsLoading" class="muted tiny">Loading redeemers…</p>
-                <p v-else-if="detailsError" class="tiny error-text">{{ detailsError }}</p>
-
-                <div v-else-if="displayedRedemptionDetails.length" class="details-table-wrap">
-                  <table class="details-table">
-                    <thead>
-                      <tr>
-                        <th>Customer name</th>
-                        <th>Customer email</th>
-                        <th>Redeemed at</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="row in displayedRedemptionDetails" :key="row.redemptionId">
-                        <td>{{ row.customerName || '—' }}</td>
-                        <td>{{ row.customerEmail || '—' }}</td>
-                        <td>{{ formatDateDateTime(row.redeemedAt) }}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-
-                <p v-else class="muted tiny">
-                  No redeemers found for this coupon.
-                </p>
-              </div>
-            </div>
-
-            <!-- Empty states per view -->
-            <div v-if="activeToolsView === 'approved' && !merchantToolsLoading && !approvedCoupons.length"
-              class="muted tiny" style="margin-top: 0.5rem;">
-              No approved coupons found for your restaurants yet.
-            </div>
-
-            <div v-if="activeToolsView === 'pending' && !merchantToolsLoading && !pendingCoupons.length"
-              class="muted tiny" style="margin-top: 0.5rem;">
-              No pending coupon submissions found for your restaurants.
-            </div>
-
-            <div v-if="activeToolsView === 'rejected' && !merchantToolsLoading && !rejectedCoupons.length"
-              class="muted tiny" style="margin-top: 0.5rem;">
-              No rejected coupon submissions found for your restaurants.
-            </div>
-
-            <div v-if="activeToolsView === 'insights' && !merchantToolsLoading && !redemptionInsights.length"
-              class="muted tiny" style="margin-top: 0.5rem;">
-              No redemptions recorded yet for coupons from your restaurants.
-            </div>
-
-            <!-- Event attendees list -->
-            <div v-if="activeToolsView === 'event-attendees' && eventInsights.length" class="tools-results-block">
-              <h3 class="tiny-heading">Your Events</h3>
-              <ul class="insights-list">
-                <li v-for="row in eventInsights" :key="row.eventId" class="insight-row insight-row-stack">
-                  <div class="insight-row-main">
-                    <div class="insight-copy">
-                      <strong>{{ row.eventName }}</strong>
-                      <div class="muted tiny">{{ row.merchantName }}</div>
-                      <div class="muted tiny">
-                        {{ row.confirmedRsvps }} confirmed · {{ row.waitlistCount }} waitlisted
-                        <span v-if="row.startDatetime"> · {{ formatDateDateTime(row.startDatetime) }}</span>
-                        <span v-if="!row.bannerImageUrl"> · <span class="muted">no banner</span></span>
-                      </div>
-                    </div>
-                    <div class="insight-row-actions">
-                      <button class="btn tertiary compact" @click="toggleBannerEditor(row.eventId)">
-                        <i class="pi pi-image icon-spacing-sm"></i>{{ bannerEditEventId === row.eventId ? 'Close' : (row.bannerImageUrl ? 'Edit banner' : 'Add banner') }}
-                      </button>
-                      <button class="btn tertiary compact" @click="loadEventAttendeeDetails(row.eventId)">
-                        {{ selectedEventId === row.eventId ? 'Refresh' : 'View attendees' }}
-                      </button>
-                    </div>
-                  </div>
-                  <EventBannerManager
-                    v-if="bannerEditEventId === row.eventId"
-                    :event-id="row.eventId"
-                    :merchant-id="row.merchantId"
-                    :banner-image-url="row.bannerImageUrl"
-                    :cover-image-url="row.coverImageUrl"
-                    @updated="onEventImagesUpdated"
-                  />
-                </li>
-              </ul>
-
-              <div v-if="selectedEventRow" class="redemption-details-block">
-                <div class="details-header">
-                  <div>
-                    <strong>{{ selectedEventRow.eventName }}</strong>
-                    <div class="muted tiny">{{ selectedEventRow.merchantName }}</div>
-                  </div>
-                  <span class="muted tiny">{{ eventAttendees.length }} attendee{{ eventAttendees.length === 1 ? '' : 's' }}</span>
-                </div>
-
-                <div class="details-actions">
-                  <button class="btn tertiary compact" @click="copyAttendeeEmails" :disabled="eventAttendeesLoading || !eventAttendees.length">
-                    Copy emails
-                  </button>
-                </div>
-
-                <p v-if="eventAttendeesLoading" class="muted tiny">Loading attendees…</p>
-                <p v-else-if="eventAttendeesError" class="tiny error-text">{{ eventAttendeesError }}</p>
-
-                <div v-else-if="eventAttendees.length" class="details-table-wrap">
-                  <table class="details-table">
-                    <thead>
-                      <tr>
-                        <th>Name</th>
-                        <th>Email</th>
-                        <th>Party</th>
-                        <th>Status</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="a in eventAttendees" :key="a.id">
-                        <td>{{ a.userName || a.guestName || '—' }}</td>
-                        <td>{{ a.userEmail || a.guestEmail || '—' }}</td>
-                        <td>{{ a.attendees }}</td>
-                        <td>{{ a.status }}</td>
-                        <td class="table-actions">
-                          <button class="btn tertiary compact" :disabled="a.status !== 'waitlist'" @click="promoteAttendee(a)">Promote</button>
-                          <button class="btn tertiary compact" :disabled="a.status === 'cancelled'" @click="cancelAttendeeRsvp(a)">Cancel</button>
-                          <button class="btn tertiary compact" :disabled="a.status !== 'going'" @click="checkInAttendee(a)">Check-in</button>
-                          <button class="btn tertiary compact" :disabled="a.status !== 'going' && a.status !== 'checked_in'" @click="markNoShowAttendee(a)">No-show</button>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-
-                <p v-else class="muted tiny">No attendees found for this event.</p>
-              </div>
-            </div>
-
-            <div v-if="activeToolsView === 'event-attendees' && !merchantToolsLoading && !eventInsights.length"
-              class="muted tiny" style="margin-top: 0.5rem;">
-              No events found for your restaurants yet.
-            </div>
           </section>
 
         </template>
@@ -990,6 +947,7 @@
               </p>
 
               <ul class="link-list">
+                <!-- Create / Submit -->
                 <li class="link-row clickable" @click="goToCouponSubmissions">
                   <span class="link-label"><i class="pi pi-plus-circle icon-spacing-sm"></i>Create / Submit a
                     Coupon</span>
@@ -998,35 +956,172 @@
                   </span>
                 </li>
 
-                <li class="link-row clickable" @click="loadApprovedCoupons">
-                  <span class="link-label"><i class="pi pi-check-circle icon-spacing-sm"></i>View Approved
-                    Coupons</span>
+                <!-- Approved -->
+                <li class="link-row clickable" @click="toggleTool('approved', 'loadApprovedCoupons')">
+                  <span class="link-label"><i class="pi pi-check-circle icon-spacing-sm"></i>View Approved Coupons</span>
                   <span class="link-helper">
                     See all live, approved coupons across your restaurants.
                   </span>
                 </li>
+                <li v-if="activeToolsView === 'approved'" class="tool-panel-li">
+                  <MerchantToolPanel title="Approved Coupons" @close="closeToolsView">
+                    <p v-if="merchantToolsError" class="tiny error-text">{{ merchantToolsError }}</p>
+                    <p v-else-if="merchantToolsLoading" class="muted tiny">Loading…</p>
+                    <ul v-else-if="approvedCoupons.length" class="tiny-list">
+                      <li v-for="c in approvedCoupons" :key="c.id">
+                        <strong>{{ c.title }}</strong>
+                        <span class="muted tiny">· {{ merchantNameById(c.merchant_id) }}</span>
+                      </li>
+                    </ul>
+                    <p v-else class="muted tiny">No approved coupons found for your restaurants yet.</p>
+                  </MerchantToolPanel>
+                </li>
 
-                <li class="link-row clickable" @click="loadPendingCoupons">
-                  <span class="link-label"><i class="pi pi-clock icon-spacing-sm"></i>View Pending
-                    Submissions</span>
+                <!-- Pending -->
+                <li class="link-row clickable" @click="toggleTool('pending', 'loadPendingCoupons')">
+                  <span class="link-label"><i class="pi pi-clock icon-spacing-sm"></i>View Pending Submissions</span>
                   <span class="link-helper">
                     Review and edit submissions awaiting Foodie Group approval.
                   </span>
                 </li>
+                <li v-if="activeToolsView === 'pending'" class="tool-panel-li">
+                  <MerchantToolPanel title="Pending Submissions" @close="closeToolsView">
+                    <p v-if="merchantToolsError" class="tiny error-text">{{ merchantToolsError }}</p>
+                    <p v-else-if="merchantToolsLoading" class="muted tiny">Loading…</p>
+                    <ul v-else-if="pendingCoupons.length" class="tiny-list">
+                      <li v-for="sub in pendingCoupons" :key="sub.id" class="pending-row">
+                        <div>
+                          <strong>{{ sub.submissionData?.title || 'Untitled coupon' }}</strong>
+                          <span class="muted tiny">· {{ sub.merchantName || merchantNameById(sub.merchantId) }}</span>
+                          <br />
+                          <span class="muted tiny">
+                            Submitted {{ formatDateTiny(sub.submittedAt) }}
+                            <span v-if="sub.updatedAt"> · Edited {{ formatDateTiny(sub.updatedAt) }}</span>
+                          </span>
+                        </div>
+                        <span class="badge badge-pending">Pending</span>
+                        <button class="btn tertiary compact" @click="goToEditSubmission(sub.id)">Edit</button>
+                      </li>
+                    </ul>
+                    <p v-else class="muted tiny">No pending coupon submissions found for your restaurants.</p>
+                  </MerchantToolPanel>
+                </li>
 
-                <li class="link-row clickable" @click="loadRejectedCoupons">
-                  <span class="link-label"><i class="pi pi-times-circle icon-spacing-sm"></i>View Rejected
-                    Coupons</span>
+                <!-- Rejected -->
+                <li class="link-row clickable" @click="toggleTool('rejected', 'loadRejectedCoupons')">
+                  <span class="link-label"><i class="pi pi-times-circle icon-spacing-sm"></i>View Rejected Coupons</span>
                   <span class="link-helper">
                     Review coupons that were not approved and see the reason.
                   </span>
                 </li>
+                <li v-if="activeToolsView === 'rejected'" class="tool-panel-li">
+                  <MerchantToolPanel title="Rejected Coupons" @close="closeToolsView">
+                    <p v-if="merchantToolsError" class="tiny error-text">{{ merchantToolsError }}</p>
+                    <p v-else-if="merchantToolsLoading" class="muted tiny">Loading…</p>
+                    <ul v-else-if="rejectedCoupons.length" class="tiny-list">
+                      <li v-for="sub in rejectedCoupons" :key="sub.id">
+                        <strong>{{ sub.submissionData?.title || 'Untitled coupon' }}</strong>
+                        <span class="muted tiny">· {{ merchantNameById(sub.merchantId) }}</span>
+                        <br />
+                        <span class="muted tiny">
+                          Rejected on {{ formatDateTiny(sub.submittedAt) }}
+                          <span v-if="sub.rejectionMessage"> — Reason: {{ sub.rejectionMessage }}</span>
+                        </span>
+                      </li>
+                    </ul>
+                    <p v-else class="muted tiny">No rejected coupon submissions found for your restaurants.</p>
+                  </MerchantToolPanel>
+                </li>
 
-                <li class="link-row clickable" @click="loadRedemptionInsights">
+                <!-- Insights -->
+                <li class="link-row clickable" @click="toggleTool('insights', 'loadRedemptionInsights')">
                   <span class="link-label"><i class="pi pi-chart-bar icon-spacing-sm"></i>Redemption Insights</span>
                   <span class="link-helper">
                     See how many times coupons from your restaurants have been redeemed.
                   </span>
+                </li>
+                <li v-if="activeToolsView === 'insights'" class="tool-panel-li">
+                  <MerchantToolPanel title="Redemption Insights" @close="closeToolsView">
+                    <p v-if="merchantToolsError" class="tiny error-text">{{ merchantToolsError }}</p>
+                    <p v-else-if="merchantToolsLoading" class="muted tiny">Loading…</p>
+                    <template v-else-if="redemptionInsights.length">
+                      <ul class="insights-list">
+                        <li v-for="row in redemptionInsights" :key="row.couponId" class="insight-row">
+                          <div class="insight-copy">
+                            <strong>{{ row.merchantName }}</strong>
+                            <div class="muted tiny">{{ row.couponTitle }}</div>
+                            <div class="muted tiny">
+                              {{ row.redemptions }} redemptions
+                              <span v-if="row.lastRedeemedAt">
+                                · Last redeemed {{ formatDateDateTime(row.lastRedeemedAt) }}
+                              </span>
+                            </div>
+                          </div>
+                          <button class="btn tertiary compact" @click="loadRedemptionDetails(row.couponId)">
+                            {{ selectedCouponId === row.couponId ? 'Refresh redeemers' : 'View redeemers' }}
+                          </button>
+                        </li>
+                      </ul>
+
+                      <div v-if="selectedCouponRow" class="redemption-details-block">
+                        <div class="details-header">
+                          <div>
+                            <strong>{{ selectedCouponRow.couponTitle }}</strong>
+                            <div class="muted tiny">{{ selectedCouponRow.merchantName }}</div>
+                          </div>
+                          <span class="muted tiny">
+                            {{ displayedRedemptionDetails.length }} row{{ displayedRedemptionDetails.length === 1 ? '' : 's' }}
+                          </span>
+                        </div>
+
+                        <div class="details-actions">
+                          <button
+                            class="btn tertiary compact"
+                            @click="copyRedeemerEmails"
+                            :disabled="detailsLoading || !displayedRedemptionDetails.length"
+                          >
+                            Copy emails
+                          </button>
+                          <button
+                            class="btn tertiary compact"
+                            @click="exportRedemptionDetails"
+                            :disabled="detailsLoading || exportingDetails"
+                          >
+                            {{ exportingDetails ? 'Exporting…' : 'Export CSV' }}
+                          </button>
+                          <label class="checkbox-row muted tiny">
+                            <input type="checkbox" v-model="uniqueEmailsOnly" />
+                            Show unique emails only
+                          </label>
+                        </div>
+
+                        <p v-if="detailsLoading" class="muted tiny">Loading redeemers…</p>
+                        <p v-else-if="detailsError" class="tiny error-text">{{ detailsError }}</p>
+
+                        <div v-else-if="displayedRedemptionDetails.length" class="details-table-wrap">
+                          <table class="details-table">
+                            <thead>
+                              <tr>
+                                <th>Customer name</th>
+                                <th>Customer email</th>
+                                <th>Redeemed at</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr v-for="row in displayedRedemptionDetails" :key="row.redemptionId">
+                                <td>{{ row.customerName || '—' }}</td>
+                                <td>{{ row.customerEmail || '—' }}</td>
+                                <td>{{ formatDateDateTime(row.redeemedAt) }}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <p v-else class="muted tiny">No redeemers found for this coupon.</p>
+                      </div>
+                    </template>
+                    <p v-else class="muted tiny">No redemptions recorded yet for coupons from your restaurants.</p>
+                  </MerchantToolPanel>
                 </li>
 
                 <!-- Divider -->
@@ -1041,320 +1136,159 @@
                 </li>
 
                 <!-- Pending Events -->
-                <li class="link-row clickable" @click="loadPendingEvents">
+                <li class="link-row clickable" @click="toggleTool('pending-events', 'loadPendingEvents')">
                   <span class="link-label"><i class="pi pi-clock icon-spacing-sm"></i>View Pending Event Submissions</span>
                   <span class="link-helper">
                     Review and edit event submissions awaiting Foodie Group approval.
                   </span>
                 </li>
+                <li v-if="activeToolsView === 'pending-events'" class="tool-panel-li">
+                  <MerchantToolPanel title="Pending Event Submissions" @close="closeToolsView">
+                    <p v-if="merchantToolsError" class="tiny error-text">{{ merchantToolsError }}</p>
+                    <p v-else-if="merchantToolsLoading" class="muted tiny">Loading…</p>
+                    <ul v-else-if="pendingEvents.length" class="tiny-list">
+                      <li v-for="sub in pendingEvents" :key="sub.id" class="pending-row">
+                        <div>
+                          <strong>{{ sub.submissionData?.name || 'Untitled event' }}</strong>
+                          <span class="muted tiny">· {{ sub.merchantName || merchantNameById(sub.merchantId) }}</span>
+                          <br />
+                          <span class="muted tiny">
+                            Submitted {{ formatDateTiny(sub.submittedAt) }}
+                            <span v-if="sub.updatedAt"> · Edited {{ formatDateTiny(sub.updatedAt) }}</span>
+                          </span>
+                        </div>
+                        <span class="badge badge-pending">Pending</span>
+                        <button class="btn tertiary compact" @click="goToEditEventSubmission(sub.id)">Edit</button>
+                      </li>
+                    </ul>
+                    <p v-else class="muted tiny">No pending event submissions found for your restaurants.</p>
+                  </MerchantToolPanel>
+                </li>
 
                 <!-- Rejected Events -->
-                <li class="link-row clickable" @click="loadRejectedEvents">
+                <li class="link-row clickable" @click="toggleTool('rejected-events', 'loadRejectedEvents')">
                   <span class="link-label"><i class="pi pi-times-circle icon-spacing-sm"></i>View Rejected Events</span>
                   <span class="link-helper">
                     Review event submissions that were not approved and see the reason.
                   </span>
                 </li>
+                <li v-if="activeToolsView === 'rejected-events'" class="tool-panel-li">
+                  <MerchantToolPanel title="Rejected Events" @close="closeToolsView">
+                    <p v-if="merchantToolsError" class="tiny error-text">{{ merchantToolsError }}</p>
+                    <p v-else-if="merchantToolsLoading" class="muted tiny">Loading…</p>
+                    <ul v-else-if="rejectedEvents.length" class="tiny-list">
+                      <li v-for="sub in rejectedEvents" :key="sub.id">
+                        <strong>{{ sub.submissionData?.name || 'Untitled event' }}</strong>
+                        <span class="muted tiny">· {{ merchantNameById(sub.merchantId) }}</span>
+                        <br />
+                        <span class="muted tiny">
+                          Rejected on {{ formatDateTiny(sub.submittedAt) }}
+                          <span v-if="sub.rejectionMessage"> — Reason: {{ sub.rejectionMessage }}</span>
+                        </span>
+                      </li>
+                    </ul>
+                    <p v-else class="muted tiny">No rejected event submissions found for your restaurants.</p>
+                  </MerchantToolPanel>
+                </li>
 
                 <!-- Event Attendees -->
-                <li class="link-row clickable" @click="loadEventInsights">
-                  <span class="link-label"><i class="pi pi-users icon-spacing-sm"></i>Event Attendees</span>
+                <li class="link-row clickable" @click="toggleTool('event-attendees', 'loadEventInsights')">
+                  <span class="link-label"><i class="pi pi-calendar icon-spacing-sm"></i>Your Events</span>
                   <span class="link-helper">
-                    See who has RSVPed for your events and manage attendance.
+                    Add a banner image, see who has RSVPed, and manage attendance.
                   </span>
+                </li>
+                <li v-if="activeToolsView === 'event-attendees'" class="tool-panel-li">
+                  <MerchantToolPanel title="Your Events" @close="closeToolsView">
+                    <p v-if="merchantToolsError" class="tiny error-text">{{ merchantToolsError }}</p>
+                    <p v-else-if="merchantToolsLoading" class="muted tiny">Loading…</p>
+                    <template v-else-if="eventInsights.length">
+                      <ul class="insights-list">
+                        <li v-for="row in eventInsights" :key="row.eventId" class="insight-row insight-row-stack">
+                          <div class="insight-row-main">
+                            <div class="insight-copy">
+                              <strong>{{ row.eventName }}</strong>
+                              <div class="muted tiny">{{ row.merchantName }}</div>
+                              <div class="muted tiny">
+                                {{ row.confirmedRsvps }} confirmed · {{ row.waitlistCount }} waitlisted
+                                <span v-if="row.startDatetime"> · {{ formatDateDateTime(row.startDatetime) }}</span>
+                                <span v-if="!row.bannerImageUrl"> · <span class="muted">no banner</span></span>
+                              </div>
+                            </div>
+                            <div class="insight-row-actions">
+                              <button class="btn tertiary compact" @click="toggleBannerEditor(row.eventId)">
+                                <i class="pi pi-image icon-spacing-sm"></i>{{ bannerEditEventId === row.eventId ? 'Close' : (row.bannerImageUrl ? 'Edit banner' : 'Add banner') }}
+                              </button>
+                              <button class="btn tertiary compact" @click="loadEventAttendeeDetails(row.eventId)">
+                                {{ selectedEventId === row.eventId ? 'Refresh' : 'View attendees' }}
+                              </button>
+                            </div>
+                          </div>
+                          <EventBannerManager
+                            v-if="bannerEditEventId === row.eventId"
+                            :event-id="row.eventId"
+                            :merchant-id="row.merchantId"
+                            :banner-image-url="row.bannerImageUrl"
+                            :cover-image-url="row.coverImageUrl"
+                            @updated="onEventImagesUpdated"
+                          />
+                        </li>
+                      </ul>
+
+                      <div v-if="selectedEventRow" class="redemption-details-block">
+                        <div class="details-header">
+                          <div>
+                            <strong>{{ selectedEventRow.eventName }}</strong>
+                            <div class="muted tiny">{{ selectedEventRow.merchantName }}</div>
+                          </div>
+                          <span class="muted tiny">{{ eventAttendees.length }} attendee{{ eventAttendees.length === 1 ? '' : 's' }}</span>
+                        </div>
+
+                        <div class="details-actions">
+                          <button class="btn tertiary compact" @click="copyAttendeeEmails" :disabled="eventAttendeesLoading || !eventAttendees.length">
+                            Copy emails
+                          </button>
+                        </div>
+
+                        <p v-if="eventAttendeesLoading" class="muted tiny">Loading attendees…</p>
+                        <p v-else-if="eventAttendeesError" class="tiny error-text">{{ eventAttendeesError }}</p>
+
+                        <div v-else-if="eventAttendees.length" class="details-table-wrap">
+                          <table class="details-table">
+                            <thead>
+                              <tr>
+                                <th>Name</th>
+                                <th>Email</th>
+                                <th>Party</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr v-for="a in eventAttendees" :key="a.id">
+                                <td>{{ a.userName || a.guestName || '—' }}</td>
+                                <td>{{ a.userEmail || a.guestEmail || '—' }}</td>
+                                <td>{{ a.attendees }}</td>
+                                <td>{{ a.status }}</td>
+                                <td class="table-actions">
+                                  <button class="btn tertiary compact" :disabled="a.status !== 'waitlist'" @click="promoteAttendee(a)">Promote</button>
+                                  <button class="btn tertiary compact" :disabled="a.status === 'cancelled'" @click="cancelAttendeeRsvp(a)">Cancel</button>
+                                  <button class="btn tertiary compact" :disabled="a.status !== 'going'" @click="checkInAttendee(a)">Check-in</button>
+                                  <button class="btn tertiary compact" :disabled="a.status !== 'going' && a.status !== 'checked_in'" @click="markNoShowAttendee(a)">No-show</button>
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <p v-else class="muted tiny">No attendees found for this event.</p>
+                      </div>
+                    </template>
+                    <p v-else class="muted tiny">No events found for your restaurants yet.</p>
+                  </MerchantToolPanel>
                 </li>
               </ul>
 
-              <p v-if="merchantToolsLoading" class="muted tiny" style="margin-top: 0.75rem;">
-                Loading…
-              </p>
-              <p v-if="merchantToolsError" class="tiny error-text" style="margin-top: 0.5rem;">
-                {{ merchantToolsError }}
-              </p>
-
-              <div v-if="activeToolsView === 'approved' && approvedCoupons.length" class="tools-results-block">
-                <h3 class="tiny-heading">Approved Coupons</h3>
-                <ul class="tiny-list">
-                  <li v-for="c in approvedCoupons" :key="c.id">
-                    <strong>{{ c.title }}</strong>
-                    <span class="muted tiny">· {{ merchantNameById(c.merchant_id) }}</span>
-                  </li>
-                </ul>
-              </div>
-
-              <div v-if="activeToolsView === 'pending' && pendingCoupons.length" class="tools-results-block">
-                <h3 class="tiny-heading">Pending Submissions</h3>
-                <ul class="tiny-list">
-                  <li v-for="sub in pendingCoupons" :key="sub.id" class="pending-row">
-                    <div>
-                      <strong>{{ sub.submissionData?.title || 'Untitled coupon' }}</strong>
-                      <span class="muted tiny">
-                        · {{ sub.merchantName || merchantNameById(sub.merchantId) }}
-                      </span>
-                      <br />
-                      <span class="muted tiny">
-                        Submitted {{ formatDateTiny(sub.submittedAt) }}
-                        <span v-if="sub.updatedAt"> · Edited {{ formatDateTiny(sub.updatedAt) }}</span>
-                      </span>
-                    </div>
-                    <span class="badge badge-pending">Pending</span>
-                    <button class="btn tertiary compact" @click="goToEditSubmission(sub.id)">
-                      Edit
-                    </button>
-                  </li>
-                </ul>
-              </div>
-
-              <div v-if="activeToolsView === 'rejected' && rejectedCoupons.length" class="tools-results-block">
-                <h3 class="tiny-heading">Rejected Coupons</h3>
-                <ul class="tiny-list">
-                  <li v-for="sub in rejectedCoupons" :key="sub.id">
-                    <strong>{{ sub.submissionData?.title || 'Untitled coupon' }}</strong>
-                    <span class="muted tiny">· {{ merchantNameById(sub.merchantId) }}</span>
-                    <br />
-                    <span class="muted tiny">
-                      Rejected on {{ formatDateTiny(sub.submittedAt) }}
-                      <span v-if="sub.rejectionMessage"> — Reason: {{ sub.rejectionMessage }}</span>
-                    </span>
-                  </li>
-                </ul>
-              </div>
-
-              <!-- Pending event submissions -->
-              <div v-if="activeToolsView === 'pending-events' && pendingEvents.length" class="tools-results-block">
-                <h3 class="tiny-heading">Pending Event Submissions</h3>
-                <ul class="tiny-list">
-                  <li v-for="sub in pendingEvents" :key="sub.id" class="pending-row">
-                    <div>
-                      <strong>{{ sub.submissionData?.name || 'Untitled event' }}</strong>
-                      <span class="muted tiny">
-                        · {{ sub.merchantName || merchantNameById(sub.merchantId) }}
-                      </span>
-                      <br />
-                      <span class="muted tiny">
-                        Submitted {{ formatDateTiny(sub.submittedAt) }}
-                        <span v-if="sub.updatedAt"> · Edited {{ formatDateTiny(sub.updatedAt) }}</span>
-                      </span>
-                    </div>
-                    <span class="badge badge-pending">Pending</span>
-                    <button class="btn tertiary compact" @click="goToEditEventSubmission(sub.id)">
-                      Edit
-                    </button>
-                  </li>
-                </ul>
-              </div>
-
-              <!-- Rejected event submissions -->
-              <div v-if="activeToolsView === 'rejected-events' && rejectedEvents.length" class="tools-results-block">
-                <h3 class="tiny-heading">Rejected Events</h3>
-                <ul class="tiny-list">
-                  <li v-for="sub in rejectedEvents" :key="sub.id">
-                    <strong>{{ sub.submissionData?.name || 'Untitled event' }}</strong>
-                    <span class="muted tiny">· {{ merchantNameById(sub.merchantId) }}</span>
-                    <br />
-                    <span class="muted tiny">
-                      Rejected on {{ formatDateTiny(sub.submittedAt) }}
-                      <span v-if="sub.rejectionMessage"> — Reason: {{ sub.rejectionMessage }}</span>
-                    </span>
-                  </li>
-                </ul>
-              </div>
-
-              <!-- Empty states for event views -->
-              <div v-if="activeToolsView === 'pending-events' && !merchantToolsLoading && !pendingEvents.length"
-                class="muted tiny" style="margin-top: 0.5rem;">
-                No pending event submissions found for your restaurants.
-              </div>
-              <div v-if="activeToolsView === 'rejected-events' && !merchantToolsLoading && !rejectedEvents.length"
-                class="muted tiny" style="margin-top: 0.5rem;">
-                No rejected event submissions found for your restaurants.
-              </div>
-
-              <div v-if="activeToolsView === 'insights' && redemptionInsights.length" class="tools-results-block">
-                <h3 class="tiny-heading">Redemption Insights</h3>
-                <ul class="insights-list">
-                  <li v-for="row in redemptionInsights" :key="row.couponId" class="insight-row">
-                    <div class="insight-copy">
-                      <strong>{{ row.merchantName }}</strong>
-                      <div class="muted tiny">{{ row.couponTitle }}</div>
-                      <div class="muted tiny">
-                        {{ row.redemptions }} redemptions
-                        <span v-if="row.lastRedeemedAt">
-                          · Last redeemed {{ formatDateDateTime(row.lastRedeemedAt) }}
-                        </span>
-                      </div>
-                    </div>
-
-                    <button class="btn tertiary compact" @click="loadRedemptionDetails(row.couponId)">
-                      {{ selectedCouponId === row.couponId ? 'Refresh redeemers' : 'View redeemers' }}
-                    </button>
-                  </li>
-                </ul>
-
-                <div v-if="selectedCouponRow" class="redemption-details-block">
-                  <div class="details-header">
-                    <div>
-                      <strong>{{ selectedCouponRow.couponTitle }}</strong>
-                      <div class="muted tiny">{{ selectedCouponRow.merchantName }}</div>
-                    </div>
-                    <span class="muted tiny">
-                      {{ displayedRedemptionDetails.length }} row{{ displayedRedemptionDetails.length === 1 ? '' : 's' }}
-                    </span>
-                  </div>
-
-                  <div class="details-actions">
-                    <button
-                      class="btn tertiary compact"
-                      @click="copyRedeemerEmails"
-                      :disabled="detailsLoading || !displayedRedemptionDetails.length"
-                    >
-                      Copy emails
-                    </button>
-                    <button
-                      class="btn tertiary compact"
-                      @click="exportRedemptionDetails"
-                      :disabled="detailsLoading || exportingDetails"
-                    >
-                      {{ exportingDetails ? 'Exporting…' : 'Export CSV' }}
-                    </button>
-                    <label class="checkbox-row muted tiny">
-                      <input type="checkbox" v-model="uniqueEmailsOnly" />
-                      Show unique emails only
-                    </label>
-                  </div>
-
-                  <p v-if="detailsLoading" class="muted tiny">Loading redeemers…</p>
-                  <p v-else-if="detailsError" class="tiny error-text">{{ detailsError }}</p>
-
-                  <div v-else-if="displayedRedemptionDetails.length" class="details-table-wrap">
-                    <table class="details-table">
-                      <thead>
-                        <tr>
-                          <th>Customer name</th>
-                          <th>Customer email</th>
-                          <th>Redeemed at</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr v-for="row in displayedRedemptionDetails" :key="row.redemptionId">
-                          <td>{{ row.customerName || '—' }}</td>
-                          <td>{{ row.customerEmail || '—' }}</td>
-                          <td>{{ formatDateDateTime(row.redeemedAt) }}</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <p v-else class="muted tiny">
-                    No redeemers found for this coupon.
-                  </p>
-                </div>
-              </div>
-
-              <div v-if="activeToolsView === 'approved' && !merchantToolsLoading && !approvedCoupons.length"
-                class="muted tiny" style="margin-top: 0.5rem;">
-                No approved coupons found for your restaurants yet.
-              </div>
-
-              <div v-if="activeToolsView === 'rejected' && !merchantToolsLoading && !rejectedCoupons.length"
-                class="muted tiny" style="margin-top: 0.5rem;">
-                No rejected coupon submissions found for your restaurants.
-              </div>
-
-              <div v-if="activeToolsView === 'insights' && !merchantToolsLoading && !redemptionInsights.length"
-                class="muted tiny" style="margin-top: 0.5rem;">
-                No redemptions recorded yet for coupons from your restaurants.
-              </div>
-
-              <!-- Event attendees list -->
-              <div v-if="activeToolsView === 'event-attendees' && eventInsights.length" class="tools-results-block">
-                <h3 class="tiny-heading">Your Events</h3>
-                <ul class="insights-list">
-                  <li v-for="row in eventInsights" :key="row.eventId" class="insight-row insight-row-stack">
-                    <div class="insight-row-main">
-                      <div class="insight-copy">
-                        <strong>{{ row.eventName }}</strong>
-                        <div class="muted tiny">{{ row.merchantName }}</div>
-                        <div class="muted tiny">
-                          {{ row.confirmedRsvps }} confirmed · {{ row.waitlistCount }} waitlisted
-                          <span v-if="row.startDatetime"> · {{ formatDateDateTime(row.startDatetime) }}</span>
-                          <span v-if="!row.bannerImageUrl"> · <span class="muted">no banner</span></span>
-                        </div>
-                      </div>
-                      <div class="insight-row-actions">
-                        <button class="btn tertiary compact" @click="toggleBannerEditor(row.eventId)">
-                          <i class="pi pi-image icon-spacing-sm"></i>{{ bannerEditEventId === row.eventId ? 'Close' : (row.bannerImageUrl ? 'Edit banner' : 'Add banner') }}
-                        </button>
-                        <button class="btn tertiary compact" @click="loadEventAttendeeDetails(row.eventId)">
-                          {{ selectedEventId === row.eventId ? 'Refresh' : 'View attendees' }}
-                        </button>
-                      </div>
-                    </div>
-                    <EventBannerManager
-                      v-if="bannerEditEventId === row.eventId"
-                      :event-id="row.eventId"
-                      :merchant-id="row.merchantId"
-                      :banner-image-url="row.bannerImageUrl"
-                      :cover-image-url="row.coverImageUrl"
-                      @updated="onEventImagesUpdated"
-                    />
-                  </li>
-                </ul>
-
-                <div v-if="selectedEventRow" class="redemption-details-block">
-                  <div class="details-header">
-                    <div>
-                      <strong>{{ selectedEventRow.eventName }}</strong>
-                      <div class="muted tiny">{{ selectedEventRow.merchantName }}</div>
-                    </div>
-                    <span class="muted tiny">{{ eventAttendees.length }} attendee{{ eventAttendees.length === 1 ? '' : 's' }}</span>
-                  </div>
-
-                  <div class="details-actions">
-                    <button class="btn tertiary compact" @click="copyAttendeeEmails" :disabled="eventAttendeesLoading || !eventAttendees.length">
-                      Copy emails
-                    </button>
-                  </div>
-
-                  <p v-if="eventAttendeesLoading" class="muted tiny">Loading attendees…</p>
-                  <p v-else-if="eventAttendeesError" class="tiny error-text">{{ eventAttendeesError }}</p>
-
-                  <div v-else-if="eventAttendees.length" class="details-table-wrap">
-                    <table class="details-table">
-                      <thead>
-                        <tr>
-                          <th>Name</th>
-                          <th>Email</th>
-                          <th>Party</th>
-                          <th>Status</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr v-for="a in eventAttendees" :key="a.id">
-                          <td>{{ a.userName || a.guestName || '—' }}</td>
-                          <td>{{ a.userEmail || a.guestEmail || '—' }}</td>
-                          <td>{{ a.attendees }}</td>
-                          <td>{{ a.status }}</td>
-                          <td class="table-actions">
-                            <button class="btn tertiary compact" :disabled="a.status !== 'waitlist'" @click="promoteAttendee(a)">Promote</button>
-                            <button class="btn tertiary compact" :disabled="a.status === 'cancelled'" @click="cancelAttendeeRsvp(a)">Cancel</button>
-                            <button class="btn tertiary compact" :disabled="a.status !== 'going'" @click="checkInAttendee(a)">Check-in</button>
-                            <button class="btn tertiary compact" :disabled="a.status !== 'going' && a.status !== 'checked_in'" @click="markNoShowAttendee(a)">No-show</button>
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <p v-else class="muted tiny">No attendees found for this event.</p>
-                </div>
-              </div>
-
-              <div v-if="activeToolsView === 'event-attendees' && !merchantToolsLoading && !eventInsights.length"
-                class="muted tiny" style="margin-top: 0.5rem;">
-                No events found for your restaurants yet.
-              </div>
             </section>
           </template>
         </template>
@@ -1449,6 +1383,7 @@ import { createBillingPortalSession } from "@/services/subscriptionService";
 import { getMyRsvps, getMyEventCredits } from "@/services/eventService";
 import CancelRsvpModal from "@/components/Events/CancelRsvpModal.vue";
 import EventBannerManager from "@/components/Events/EventBannerManager.vue";
+import MerchantToolPanel from "@/components/Merchant/MerchantToolPanel.vue";
 import Modal from "@/components/Common/Modal.vue";
 import ComingSoonOverlay from "@/components/Common/ComingSoonOverlay.vue";
 import { FEATURES } from "@/config/features";
@@ -1456,7 +1391,7 @@ import { FEATURES } from "@/config/features";
 export default {
   name: "UserProfile",
 
-  components: { Modal, ComingSoonOverlay, CancelRsvpModal, EventBannerManager },
+  components: { Modal, ComingSoonOverlay, CancelRsvpModal, EventBannerManager, MerchantToolPanel },
 
   data() {
     return {
@@ -2087,6 +2022,22 @@ export default {
       for (const [key, prop] of Object.entries(lists)) {
         if (key !== view) this[prop] = [];
       }
+    },
+
+    // Collapse any open Merchant Tools panel and clear its drill-down state.
+    closeToolsView() {
+      this.resetMerchantToolsState(null);
+      this.bannerEditEventId = null;
+    },
+
+    // Clicking a tool toggles its inline panel: open (and load) if closed,
+    // collapse it if it is already the active view.
+    toggleTool(view, loaderName) {
+      if (this.activeToolsView === view) {
+        this.closeToolsView();
+        return;
+      }
+      this[loaderName]();
     },
 
     // Navigate to SurveyJS coupon submission page
@@ -3233,6 +3184,16 @@ export default {
   margin-top: var(--spacing-lg);
   padding-top: var(--spacing-lg);
   box-shadow: inset 0 14px 18px -22px rgba(0, 0, 0, 0.24);
+}
+
+/* Inline results panel that opens directly beneath a Merchant Tools task.
+   It is a sibling <li> of the task card, so it inherits the card chrome from
+   `.link-list li`; the accent + tuck-up visually tie it to the task above. */
+.link-list li.tool-panel-li {
+  border-left: 3px solid var(--color-primary);
+  margin-top: calc(-1 * var(--spacing-xs));
+  background: color-mix(in srgb, var(--surface-1) 58%, var(--surface-2));
+  cursor: default;
 }
 
 .tiny-heading {
