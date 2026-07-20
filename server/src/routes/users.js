@@ -256,14 +256,38 @@ router.post('/sync', async (req, res) => {
         console.log(`📦  inserted new user id=${row.id}`);
       }
     } else {
-      // ---- 4) User exists by sub → patch missing fields ----
+      // ---- 4) User exists by sub → patch missing OR placeholder fields ----
+      // resolveLocalUser can lazily create a row from an ACCESS token, which has
+      // no email/name claim, leaving a "<sub>@unknown.local" email and a
+      // "user-xxxxxx" name. This /sync runs with the ID token, which DOES carry
+      // the real email/name, so heal those placeholders here (the previous
+      // `!row.email` guard never fired because the placeholder isn't empty).
+      const emailIsPlaceholder = !row.email || row.email.endsWith('@unknown.local');
+      const nameIsPlaceholder =
+        !row.name || row.name === 'user' || /^user-[0-9a-f]{4,}$/i.test(row.name);
+
       const patch = {};
-      if (!row.email && email) patch.email = email;
-      if (!row.name && name) patch.name = name;
+      if (email && emailIsPlaceholder && email !== row.email) {
+        // Respect the unique(email) constraint: only heal if no OTHER user owns
+        // this email (else it's a pre-existing duplicate needing a manual merge).
+        const [emailOwner] = await db
+          .select({ id: user.id })
+          .from(user)
+          .where(eq(user.email, email))
+          .limit(1);
+        if (!emailOwner || emailOwner.id === row.id) {
+          patch.email = email;
+        } else {
+          console.warn(
+            `📦  cannot heal email for user ${row.id}: "${email}" already belongs to user ${emailOwner.id}`
+          );
+        }
+      }
+      if (name && nameIsPlaceholder && name !== row.name) patch.name = name;
 
       if (Object.keys(patch).length > 0) {
         console.log(
-          `📦  updating user id=${row.id} with patch=${JSON.stringify(patch)}`
+          `📦  healing user id=${row.id} with patch=${JSON.stringify(patch)}`
         );
         [row] = await db
           .update(user)
