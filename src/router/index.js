@@ -95,9 +95,17 @@ const routes = [
     name: 'Profile',
     component: Profile
   },
-  { path: '/callback', 
-    name: 'AuthCallback', 
-    component: AuthCallback 
+  { path: '/callback',
+    name: 'AuthCallback',
+    component: AuthCallback
+  },
+  // Consumer-UI design prototype (three directions, real coupon data).
+  // meta.bare hides the site header/footer so it reads as a real mobile app.
+  {
+    path: '/ui-preview',
+    name: 'UiPreview',
+    component: () => import('@/views/UiPreview.vue'),
+    meta: { bare: true }
   },
   // Dashboard routes (for testing purposes)
   {

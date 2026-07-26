@@ -6,7 +6,10 @@ export default defineConfig({
   devServer: {
     proxy: {
       '/api': {
-        target: 'http://[::1]:3000',
+        // Defaults to the local Express server. Set API_PROXY_TARGET to point
+        // the dev frontend at a deployed API instead — handy for UI-only work
+        // when you don't want to run the backend + DB locally.
+        target: process.env.API_PROXY_TARGET || 'http://[::1]:3000',
         changeOrigin: true,
         // if your Express routes are exactly under /api,
         // you can keep the path as-is:

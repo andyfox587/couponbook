@@ -8,9 +8,9 @@
       </span>
       <button class="exit-impersonation" @click="exitImpersonation">Exit</button>
     </div>
-    <AppHeader />
+    <AppHeader v-if="!bare" />
     <router-view />
-    <AppFooter />
+    <AppFooter v-if="!bare" />
   </div>
 </template>
 
@@ -30,6 +30,13 @@ export default {
       // Read once at mount; start/exit both trigger a full navigation, which
       // re-mounts App and re-reads this from localStorage.
       impersonating: getImpersonatedUser()
+    }
+  },
+  computed: {
+    // Routes flagged meta.bare render without the site header/footer (used by
+    // the full-screen mobile UI prototype).
+    bare() {
+      return !!this.$route.meta?.bare
     }
   },
   methods: {
