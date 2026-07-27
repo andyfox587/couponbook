@@ -1,11 +1,21 @@
 <template>
   <!-- 1b — Tear-Off Ticket: stub-and-notch cards, Outfit + Space Mono -->
-  <div class="dirB">
+  <div class="dirB" :class="{ desktop }">
+    <nav v-if="desktop" class="topnav">
+      <span class="topnav-brand">CHAPEL HILL · CARRBORO</span>
+      <div class="topnav-links">
+        <button class="topnav-link on" type="button">My Book</button>
+        <button class="topnav-link" type="button">Events</button>
+        <button class="topnav-link" type="button">Saved</button>
+        <span class="topnav-avatar">{{ memberInitials }}</span>
+      </div>
+    </nav>
+
     <header class="head">
-      <p class="eyebrow">CHAPEL HILL · CARRBORO</p>
+      <p v-if="!desktop" class="eyebrow">CHAPEL HILL · CARRBORO</p>
       <div class="head-row">
         <h1 class="title">Foodies Book</h1>
-        <span class="avatar">{{ memberInitials }}</span>
+        <span v-if="!desktop" class="avatar">{{ memberInitials }}</span>
       </div>
     </header>
 
@@ -85,7 +95,7 @@
       </div>
     </section>
 
-    <nav class="tabbar">
+    <nav v-if="!desktop" class="tabbar">
       <button class="tab on" type="button">My Book</button>
       <button class="tab" type="button">Events</button>
       <span class="tab-avatar">{{ memberInitials }}</span>
@@ -105,6 +115,7 @@ export default {
     totalCount: { type: Number, default: 0 },
     savings: { type: Number, default: 0 },
     memberInitials: { type: String, default: 'AF' },
+    desktop: { type: Boolean, default: false },
   },
   emits: ['chip', 'open'],
   computed: {
@@ -321,4 +332,94 @@ export default {
   display: flex; align-items: center; justify-content: center;
   font-size: 10px; font-weight: 700;
 }
+
+/* ───────────────────────────────────────────────────────────────
+   DESKTOP — top nav replaces the floating pill bar, the unredeemed
+   strip becomes a full-width banner, and tickets tile into a grid so
+   the whole book reads at once. Keyed off .desktop (prop), not @media.
+   ─────────────────────────────────────────────────────────────── */
+.dirB.desktop { padding: 0 0 60px; }
+.dirB.desktop .head,
+.dirB.desktop .strip,
+.dirB.desktop .chips,
+.dirB.desktop .rail-head,
+.dirB.desktop .rail {
+  max-width: 1280px; margin-left: auto; margin-right: auto;
+  padding-left: 40px; padding-right: 40px;
+}
+
+.topnav {
+  display: flex; align-items: center;
+  max-width: 1280px; margin: 0 auto;
+  padding: 18px 40px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+.topnav-brand {
+  font-family: 'Space Mono', monospace;
+  font-size: 10.5px; letter-spacing: 0.16em; color: rgba(255, 255, 255, 0.5);
+}
+.topnav-links { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.topnav-link {
+  background: none; border: none; border-radius: 999px;
+  color: rgba(255, 255, 255, 0.6);
+  font-family: inherit; font-size: 14px; font-weight: 500;
+  padding: 8px 16px; cursor: pointer;
+  transition: color .15s, background .15s;
+}
+.topnav-link:hover { color: #fff; background: rgba(255, 255, 255, 0.07); }
+.topnav-link.on { background: var(--orange); color: #fff; font-weight: 600; }
+.topnav-avatar {
+  margin-left: 10px;
+  width: 32px; height: 32px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700;
+}
+
+.dirB.desktop .head { padding-top: 30px; }
+.dirB.desktop .title { font-size: 46px; }
+.dirB.desktop .strip {
+  margin-top: 22px; padding-top: 20px; padding-bottom: 22px;
+  border-radius: 16px;
+}
+.dirB.desktop .strip-big { font-size: 22px; }
+.dirB.desktop .strip-big strong { font-size: 36px; }
+.dirB.desktop .strip-label,
+.dirB.desktop .strip-count { font-size: 10.5px; }
+
+.dirB.desktop .chips { padding-top: 24px; flex-wrap: wrap; overflow: visible; }
+.dirB.desktop .chip { font-size: 14px; padding: 9px 17px; transition: background .15s, color .15s; }
+.dirB.desktop .chip:hover:not(.on) { background: rgba(255, 255, 255, 0.1); color: #fff; }
+
+.dirB.desktop .rail-block { margin-top: 40px; }
+.dirB.desktop .rail-head { padding-bottom: 16px; }
+.dirB.desktop .rail-head h2 { font-size: 25px; }
+.dirB.desktop .see-all { font-size: 11px; }
+.dirB.desktop .see-all:hover { color: #fff; }
+
+.dirB.desktop .rail {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 20px;
+  overflow: visible;
+}
+.dirB.desktop .ticket {
+  width: auto; min-height: 165px;
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+.dirB.desktop .ticket:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.45);
+}
+.dirB.desktop .ticket-main { padding: 16px 18px 15px; }
+.dirB.desktop .ticket-stub { width: 52px; }
+.dirB.desktop .ticket::before,
+.dirB.desktop .ticket::after { right: 52px; }
+.dirB.desktop .t-value { font-size: 44px; }
+.dirB.desktop .t-label { font-size: 13px; }
+.dirB.desktop .m-name { font-size: 12px; }
+
+.dirB.desktop .event { width: auto; }
+.dirB.desktop .event-img { height: 120px; }
+.dirB.desktop .event-name { font-size: 17px; }
 </style>

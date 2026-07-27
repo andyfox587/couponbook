@@ -15,20 +15,29 @@
         >
           <b>{{ d.key }}</b> {{ d.name }}
         </button>
+        <button
+          v-if="wideScreen"
+          class="sw-btn sw-view"
+          type="button"
+          @click="phoneView = !phoneView"
+        >
+          {{ phoneView ? '🖥 Desktop view' : '📱 Phone view' }}
+        </button>
       </div>
       <p class="sw-note">
         {{ status }}
       </p>
     </header>
 
-    <div class="stage">
-      <div class="phone">
+    <div class="stage" :class="{ wide: isDesktop }">
+      <div class="frame" :class="{ phone: !isDesktop }">
         <div v-if="loading" class="state">Loading your book…</div>
         <div v-else-if="error" class="state err">{{ error }}</div>
 
         <component
           v-else
           :is="activeComponent"
+          :desktop="isDesktop"
           :group-name="groupName"
           :banner-url="bannerUrl"
           :rails="rails"
@@ -104,9 +113,22 @@ export default {
       bannerUrl: '',
       openCoupon: null,
       redeemed: false,
+      // Desktop is a first-class layout, not a stretched phone. `phoneView`
+      // lets you force the mobile frame on a big screen to compare the two.
+      phoneView: false,
+      winWidth: typeof window !== 'undefined' ? window.innerWidth : 1440,
     };
   },
   computed: {
+    wideScreen() {
+      return this.winWidth >= 1024;
+    },
+    // Direction components key their desktop styles off this prop rather than
+    // @media, because the phone frame is narrower than the viewport — a
+    // viewport media query would fire inside a 390px frame and break it.
+    isDesktop() {
+      return this.wideScreen && !this.phoneView;
+    },
     activeComponent() {
       return (this.directions.find((d) => d.key === this.active) || this.directions[0]).comp;
     },
@@ -147,7 +169,11 @@ export default {
     }
     const d = this.$route.query.d;
     if (d && this.directions.some((x) => x.key === d)) this.active = d;
+    window.addEventListener('resize', this.onResize);
     this.fetch();
+  },
+  beforeUnmount() {
+    window.removeEventListener('resize', this.onResize);
   },
   methods: {
     async fetch() {
@@ -169,6 +195,9 @@ export default {
       } finally {
         this.loading = false;
       }
+    },
+    onResize() {
+      this.winWidth = window.innerWidth;
     },
     select(key) {
       this.active = key;
@@ -210,7 +239,9 @@ export default {
 .sw-note { margin: 7px 0 0; font-size: 10.5px; opacity: 0.45; }
 
 .stage { display: flex; justify-content: center; padding: 0; }
-.phone {
+
+/* Phone frame — used on real phones, and on desktop when you pick "Phone view" */
+.frame.phone {
   width: 100%;
   max-width: 390px;
   min-height: calc(100vh - 62px);
@@ -218,14 +249,22 @@ export default {
   overflow-x: hidden;
 }
 @media (min-width: 720px) {
-  .stage { padding: 22px 0 34px; }
-  .phone {
+  .stage:not(.wide) { padding: 22px 0 34px; }
+  .stage:not(.wide) .frame.phone {
     min-height: 844px; height: 844px;
     overflow-y: auto;
     border-radius: 26px;
     border: 1px solid rgba(255, 255, 255, 0.12);
     box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
   }
+}
+
+/* Desktop — the layout fills the window, no frame */
+.stage.wide { padding: 0; }
+.stage.wide .frame {
+  width: 100%;
+  min-height: calc(100vh - 62px);
+  background: #10151a;
 }
 
 .state { padding: 40px 20px; text-align: center; opacity: 0.6; font-size: 14px; }

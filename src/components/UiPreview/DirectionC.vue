@@ -1,10 +1,19 @@
 <template>
   <!-- 1c — Premium Dining Club: hairline cards, Instrument Serif values, gold accent -->
-  <div class="dirC">
+  <div class="dirC" :class="{ desktop }">
+    <nav v-if="desktop" class="topnav">
+      <span class="topnav-brand">VIVASPOT</span>
+      <div class="topnav-links">
+        <button v-for="t in tabs" :key="t" class="topnav-link" :class="{ on: t === 'BOOK' }" type="button">
+          {{ t }}
+        </button>
+      </div>
+    </nav>
+
     <header class="head">
       <div class="head-row">
         <p class="eyebrow">MEMBER · CHAPEL HILL</p>
-        <span class="mark">VIVASPOT</span>
+        <span v-if="!desktop" class="mark">VIVASPOT</span>
       </div>
       <h1 class="title">The Foodies Book</h1>
     </header>
@@ -73,7 +82,7 @@
       </div>
     </section>
 
-    <nav class="tabs">
+    <nav v-if="!desktop" class="tabs">
       <button v-for="t in tabs" :key="t" class="tab" :class="{ on: t === 'BOOK' }" type="button">
         {{ t }}
       </button>
@@ -91,6 +100,7 @@ export default {
     events: { type: Array, default: () => [] },
     unusedCount: { type: Number, default: 0 },
     savings: { type: Number, default: 0 },
+    desktop: { type: Boolean, default: false },
   },
   emits: ['chip', 'open'],
   data: () => ({ tabs: ['BOOK', 'EVENTS', 'SAVED', 'YOU'] }),
@@ -263,4 +273,80 @@ export default {
   transform: translateX(-50%);
   width: 20px; height: 1px; background: var(--gold);
 }
+
+/* ───────────────────────────────────────────────────────────────
+   DESKTOP — the club look scales up well: wider hairline rules, a
+   letterspaced top nav, and a 4-up catalogue grid. Keyed off .desktop
+   (prop), not @media, so the phone-frame preview stays intact.
+   ─────────────────────────────────────────────────────────────── */
+.dirC.desktop { padding: 0 0 60px; }
+.dirC.desktop .head,
+.dirC.desktop .avail,
+.dirC.desktop .chips,
+.dirC.desktop .rail-head,
+.dirC.desktop .grid,
+.dirC.desktop .events {
+  max-width: 1240px; margin-left: auto; margin-right: auto;
+  padding-left: 44px; padding-right: 44px;
+}
+
+.topnav {
+  display: flex; align-items: center;
+  max-width: 1240px; margin: 0 auto;
+  padding: 20px 44px;
+  border-bottom: 1px solid var(--line);
+}
+.topnav-brand { font-size: 10px; letter-spacing: 0.24em; color: rgba(242, 239, 233, 0.45); font-weight: 600; }
+.topnav-links { display: flex; gap: 30px; margin-left: auto; }
+.topnav-link {
+  background: none; border: none;
+  color: rgba(242, 239, 233, 0.5);
+  font-family: inherit; font-size: 10.5px; letter-spacing: 0.18em; font-weight: 600;
+  cursor: pointer; padding: 4px 0; position: relative;
+  transition: color .15s;
+}
+.topnav-link:hover { color: #f2efe9; }
+.topnav-link.on { color: #f2efe9; }
+.topnav-link.on::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: -6px;
+  height: 1px; background: var(--gold);
+}
+
+.dirC.desktop .head { padding-top: 40px; }
+.dirC.desktop .title { font-size: 60px; margin-top: 14px; }
+.dirC.desktop .eyebrow { font-size: 10px; }
+.dirC.desktop .avail { margin-top: 30px; padding-bottom: 26px; align-items: flex-end; }
+.dirC.desktop .avail-big { font-size: 44px; }
+.dirC.desktop .avail-big span { font-size: 19px; }
+.dirC.desktop .avail-sub { font-size: 13px; }
+.dirC.desktop .search { font-size: 11px; padding: 11px 24px; transition: border-color .15s, color .15s; }
+.dirC.desktop .search:hover { border-color: var(--gold); color: var(--gold); }
+
+.dirC.desktop .chips { padding-top: 24px; flex-wrap: wrap; overflow: visible; }
+.dirC.desktop .chip { font-size: 13px; padding: 9px 18px; transition: border-color .15s, color .15s; }
+.dirC.desktop .chip:hover:not(.on) { border-color: rgba(242, 239, 233, 0.4); color: #f2efe9; }
+
+.dirC.desktop .rail-block { margin-top: 44px; }
+.dirC.desktop .rail-head { padding-bottom: 18px; }
+.dirC.desktop .rail-head h2 { font-size: 11px; letter-spacing: 0.24em; }
+.dirC.desktop .see-all { font-size: 13px; }
+.dirC.desktop .see-all:hover { color: var(--gold); }
+
+.dirC.desktop .grid {
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 18px;
+}
+.dirC.desktop .offer {
+  min-height: 190px; padding: 20px 20px 17px;
+  transition: border-color .15s ease, transform .15s ease;
+}
+.dirC.desktop .offer:hover { border-color: var(--gold); transform: translateY(-2px); }
+.dirC.desktop .o-value { font-size: 46px; }
+.dirC.desktop .o-label { font-size: 11px; }
+.dirC.desktop .m-name { font-size: 12px; }
+
+.dirC.desktop .events { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.dirC.desktop .event { padding: 18px 20px; transition: border-color .15s; }
+.dirC.desktop .event:hover { border-color: var(--gold); }
+.dirC.desktop .event-name { font-size: 21px; }
 </style>
