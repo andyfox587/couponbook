@@ -44,7 +44,7 @@ Copy every variable from the production project, then **change these five**:
 | `STRIPE_MODE` | `test` | no real charges |
 | `STRIPE_SECRET_KEY` | your `sk_test_…` | " |
 | `STRIPE_PUBLISHABLE_KEY` | your `pk_test_…` | " |
-| `STRIPE_WEBHOOK_SECRET` | a **test-mode** `whsec_…` | " |
+| `STRIPE_WEBHOOK_SECRET` | a **test-mode** `whsec_…` for the *staging URL* | see below |
 
 Keep identical to production: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASS`,
 `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, the `AWS_S3_*`
@@ -56,6 +56,25 @@ and add it to `ALLOWED_APP_ORIGINS`.
 
 > ⚠️ **Do not** leave `DB_NAME` as `vivaspot`. That single variable is what
 > keeps staging from writing to live customer records.
+
+### The Stripe keys
+
+`pk_test_…` and `sk_test_…` both come from
+[dashboard.stripe.com/test/apikeys](https://dashboard.stripe.com/test/apikeys)
+(publishable is visible; secret needs **Reveal test key**).
+
+`STRIPE_WEBHOOK_SECRET` is different: signing secrets are **per endpoint**, so
+an old test secret pointing at couponbook.vivaspot.com will not validate
+anything sent to staging. Mint one for the staging URL:
+
+```bash
+STRIPE_KEY=sk_test_… node scripts/stripe-create-webhook.mjs \
+  --url https://<staging-url>
+```
+
+It subscribes the same 14 events the handler processes and prints the secret
+once. Only needed if you want to test purchases; browsing and redemption work
+without it.
 
 ## 3 · Cognito callback — *me, once you have the URL*
 
