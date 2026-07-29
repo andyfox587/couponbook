@@ -20,8 +20,10 @@
 
     <section class="avail">
       <div>
-        <p class="avail-big">${{ savings }}+ <span>available</span></p>
-        <p class="avail-sub">across {{ unusedCount }} unredeemed offers</p>
+        <p class="avail-big">{{ unusedCount }} <span>of {{ totalCount }} unredeemed</span></p>
+        <p class="avail-sub">
+          across {{ merchantCount }} restaurants<span v-if="endingSoonCount"> · {{ endingSoonCount }} end this week</span>
+        </p>
       </div>
       <button class="search" type="button">SEARCH</button>
     </section>
@@ -53,14 +55,15 @@
           role="listitem"
           @click="$emit('open', c)"
         >
-          <p v-if="c.badge" class="badge">{{ c.badge.text }}</p>
-          <p class="o-value">{{ c.value }}</p>
-          <p class="o-label">{{ c.label }}</p>
-          <div class="merchant">
+          <!-- merchant header (Turn 3) — the card leads with the restaurant -->
+          <div class="m-head">
             <img v-if="c.logo" :src="c.logo" :alt="c.merchant" class="m-logo" />
-            <span v-else class="m-init">{{ c.initials }}</span>
+            <span v-else class="m-logo m-init">{{ c.initials }}</span>
             <span class="m-name">{{ c.merchant }}</span>
           </div>
+          <p class="o-value">{{ c.value }}</p>
+          <p class="o-label">{{ c.label }}</p>
+          <p v-if="c.badge" class="badge">{{ c.badge.text }}</p>
         </article>
       </div>
     </section>
@@ -99,11 +102,14 @@ export default {
     activeChip: { type: String, default: 'all' },
     events: { type: Array, default: () => [] },
     unusedCount: { type: Number, default: 0 },
+    totalCount: { type: Number, default: 0 },
+    endingSoonCount: { type: Number, default: 0 },
+    merchantCount: { type: Number, default: 0 },
     savings: { type: Number, default: 0 },
     desktop: { type: Boolean, default: false },
   },
   emits: ['chip', 'open'],
-  data: () => ({ tabs: ['BOOK', 'EVENTS', 'SAVED', 'YOU'] }),
+  data: () => ({ tabs: ['BOOK', 'RESTAURANTS', 'EVENTS', 'YOU'] }),
 };
 </script>
 
@@ -195,39 +201,46 @@ export default {
 .offer {
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: 13px 13px 11px;
-  min-height: 132px;
+  padding: 14px 14px 12px;
+  min-height: 200px;
   display: flex; flex-direction: column;
   cursor: pointer;
 }
-.badge {
-  margin: 0 0 9px;
-  font-size: 8.5px; letter-spacing: 0.14em; font-weight: 600;
-  color: var(--gold);
+/* merchant header — restaurant first, hairline rule under it */
+.m-head {
+  display: flex; align-items: center; gap: 10px;
+  padding-bottom: 12px; margin-bottom: 13px;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
 }
+.m-logo, .m-init {
+  width: 44px; height: 44px; flex: none;
+  border-radius: 11px; background: #fff; object-fit: contain; padding: 2px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; color: #12181f;
+}
+.m-name {
+  font-size: 15px; font-weight: 600; line-height: 1.2;
+  color: #f2efe9;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: break-word;
+}
+
 .o-value {
   margin: 0;
   font-family: 'Instrument Serif', Georgia, serif;
-  font-size: 34px; line-height: 0.95; font-weight: 400;
+  font-size: 38px; line-height: 0.95; font-weight: 400;
 }
 .o-label {
   margin: 6px 0 0;
   font-size: 9.5px; letter-spacing: 0.11em; font-weight: 600;
   color: rgba(242, 239, 233, 0.7); line-height: 1.35;
 }
-.merchant {
-  margin-top: auto; padding-top: 11px;
-  display: flex; align-items: center; gap: 7px; min-width: 0;
-}
-.m-logo, .m-init {
-  width: 18px; height: 18px; flex: none;
-  border-radius: 3px; background: #fff; object-fit: contain;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 7px; font-weight: 700; color: #12181f;
-}
-.m-name {
-  font-size: 10.5px; color: rgba(242, 239, 233, 0.72);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+.badge {
+  margin: auto 0 0;
+  padding-top: 12px;
+  font-size: 8.5px; letter-spacing: 0.14em; font-weight: 600;
+  color: var(--gold);
 }
 
 .events { padding: 0 22px; display: flex; flex-direction: column; gap: 10px; }
@@ -333,17 +346,17 @@ export default {
 .dirC.desktop .see-all:hover { color: var(--gold); }
 
 .dirC.desktop .grid {
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 18px;
 }
 .dirC.desktop .offer {
-  min-height: 190px; padding: 20px 20px 17px;
+  min-height: 240px; padding: 20px 20px 17px;
   transition: border-color .15s ease, transform .15s ease;
 }
 .dirC.desktop .offer:hover { border-color: var(--gold); transform: translateY(-2px); }
-.dirC.desktop .o-value { font-size: 46px; }
+.dirC.desktop .o-value { font-size: 48px; }
 .dirC.desktop .o-label { font-size: 11px; }
-.dirC.desktop .m-name { font-size: 12px; }
+.dirC.desktop .m-name { font-size: 16px; }
 
 .dirC.desktop .events { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .dirC.desktop .event { padding: 18px 20px; transition: border-color .15s; }

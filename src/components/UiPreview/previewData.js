@@ -119,7 +119,16 @@ export function buildRails(coupons) {
 
   const rails = [];
   if (endingSoon.length) {
-    rails.push({ key: 'ending', title: 'Ending soon', caps: 'ENDING SOON', items: endingSoon });
+    // Only call it "Ending soon" if something genuinely is. Chapel Hill's live
+    // coupons run months out, so the honest label there is "Ending soonest" —
+    // otherwise the rail contradicts the "N ending this week" stat above it.
+    const genuinelySoon = endingSoon.some((c) => c.daysLeft <= 30);
+    rails.push({
+      key: 'ending',
+      title: genuinelySoon ? 'Ending soon' : 'Ending soonest',
+      caps: genuinelySoon ? 'ENDING SOON' : 'ENDING SOONEST',
+      items: endingSoon,
+    });
   }
   if (rest.length) {
     rails.push({ key: 'more', title: 'More in your book', caps: 'MORE IN YOUR BOOK', items: rest });
@@ -127,9 +136,38 @@ export function buildRails(coupons) {
   return rails;
 }
 
+/**
+ * Group deals under their restaurant — the "Browse by restaurant" view (3d).
+ * Sorted by deal count so the most-invested restaurants lead.
+ */
+export function buildMerchants(coupons) {
+  const byId = new Map();
+  for (const c of coupons) {
+    const key = c.merchant_id || c.merchant_name;
+    if (!key) continue;
+    if (!byId.has(key)) {
+      byId.set(key, {
+        id: key,
+        name: c.merchant_name,
+        logo: c.merchant_logo,
+        initials: initials(c.merchant_name),
+        // Real data has no address/distance, so the sub-line uses what exists:
+        // cuisine (when set) and the deal count.
+        cuisine: c.cuisine_type || null,
+        deals: [],
+      });
+    }
+    byId.get(key).deals.push(normalize(c));
+  }
+  return [...byId.values()].sort((a, b) => b.deals.length - a.deals.length);
+}
+
 /** Filter chips — derived from the data so they're never empty/lying. */
 export function buildChips(coupons) {
-  const chips = [{ key: 'all', label: `All ${coupons.length}` }];
+  const chips = [
+    { key: 'all', label: `All ${coupons.length}` },
+    { key: 'by-restaurant', label: 'By restaurant' },
+  ];
   const cuisines = [...new Set(coupons.map((c) => c.cuisine_type).filter(Boolean))];
   cuisines.slice(0, 4).forEach((c) => chips.push({ key: `cuisine:${c}`, label: c }));
   if (cuisines.length === 0) {
@@ -143,7 +181,7 @@ export function buildChips(coupons) {
 }
 
 export function applyChip(coupons, key) {
-  if (!key || key === 'all') return coupons;
+  if (!key || key === 'all' || key === 'by-restaurant') return coupons;
   if (key === 'soon') {
     return coupons.filter((c) => {
       const d = daysLeft(c);

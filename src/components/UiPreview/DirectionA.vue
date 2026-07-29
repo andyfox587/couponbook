@@ -23,8 +23,10 @@
 
       <section class="stat">
         <div>
-          <p class="stat-big">{{ unusedCount }} deals unused</p>
-          <p class="stat-sub">${{ savings }}+ off, plus freebies</p>
+          <p class="stat-big">{{ unusedCount }} of {{ totalCount }} unredeemed</p>
+          <p class="stat-sub">
+            across {{ merchantCount }} restaurants<span v-if="endingSoonCount"> · {{ endingSoonCount }} ending this week</span>
+          </p>
         </div>
         <button class="stat-btn" type="button" aria-label="Refresh">↻</button>
       </section>
@@ -59,13 +61,17 @@
           role="listitem"
           @click="$emit('open', c)"
         >
-          <span v-if="c.badge" class="badge">{{ c.badge.text }}</span>
-          <p class="deal-value">{{ c.value }}</p>
-          <p class="deal-label">{{ c.label }}</p>
-          <div class="merchant">
+          <!-- Merchant is the header now (Turn 3): 44px mark, name wraps to
+               2 lines rather than ellipsizing. Header row stays merchant-only. -->
+          <div class="m-head">
             <img v-if="c.logo" :src="c.logo" :alt="c.merchant" class="m-logo" />
-            <span v-else class="m-init">{{ c.initials }}</span>
+            <span v-else class="m-logo m-init">{{ c.initials }}</span>
             <span class="m-name">{{ c.merchant }}</span>
+          </div>
+          <div class="deal-body">
+            <p class="deal-value">{{ c.value }}</p>
+            <p class="deal-label">{{ c.label }}</p>
+            <span v-if="c.badge" class="badge">{{ c.badge.text }}</span>
           </div>
         </article>
       </div>
@@ -105,11 +111,14 @@ export default {
     activeChip: { type: String, default: 'all' },
     events: { type: Array, default: () => [] },
     unusedCount: { type: Number, default: 0 },
+    totalCount: { type: Number, default: 0 },
+    endingSoonCount: { type: Number, default: 0 },
+    merchantCount: { type: Number, default: 0 },
     savings: { type: Number, default: 0 },
     desktop: { type: Boolean, default: false },
   },
   emits: ['chip', 'open'],
-  data: () => ({ tabs: ['Book', 'Events', 'Saved', 'You'] }),
+  data: () => ({ tabs: ['Book', 'Restaurants', 'Events', 'You'] }),
   computed: {
     bannerStyle() {
       return this.bannerUrl
@@ -232,33 +241,49 @@ export default {
 
 .deal {
   flex: none;
-  width: 150px;
-  min-height: 168px;
+  width: 200px;
+  min-height: 178px;
   scroll-snap-align: start;
   background: var(--cream);
   color: #12181f;
   border-radius: 16px;
-  padding: 12px 13px 11px;
+  padding: 0;
   display: flex; flex-direction: column;
   cursor: pointer;
+  overflow: hidden;
 }
 .deal.accent { background: var(--orange); color: #fff; }
 
-.badge {
-  display: inline-block;
-  align-self: flex-start;
-  font-size: 8.5px; font-weight: 800;
-  letter-spacing: 0.09em;
-  padding: 3px 7px;
-  border-radius: 5px;
-  background: var(--orange); color: #fff;
-  margin-bottom: 8px;
+/* Merchant header — the restaurant is what the member is choosing */
+.m-head {
+  display: flex; align-items: center; gap: 9px;
+  padding: 11px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.09);
 }
-.deal.accent .badge { background: rgba(0, 0, 0, 0.28); }
+.deal.accent .m-head { border-bottom-color: rgba(255, 255, 255, 0.25); }
+.m-logo, .m-init {
+  width: 44px; height: 44px; flex: none;
+  border-radius: 11px;
+  background: #fff;           /* uploaded marks keep their own ground */
+  object-fit: contain; padding: 2px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 800; color: #12181f;
+}
+.m-name {
+  font-size: 15px; font-weight: 800; line-height: 1.18;
+  /* wrap to 2 lines rather than ellipsizing a real 30-char restaurant name */
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: break-word; hyphens: auto;
+}
 
+.deal-body {
+  flex: 1;
+  padding: 12px 13px 13px;
+  display: flex; flex-direction: column; align-items: flex-start;
+}
 .deal-value {
   margin: 0;
-  font-size: 40px; line-height: 0.94;
+  font-size: 44px; line-height: 0.94;
   font-weight: 800; letter-spacing: -0.035em;
 }
 .deal-label {
@@ -266,24 +291,18 @@ export default {
   font-size: 11px; font-weight: 700;
   letter-spacing: 0.03em; line-height: 1.25;
 }
-
-.merchant {
+/* expiry sits under the value so the header row stays merchant-only */
+.badge {
+  display: inline-block;
   margin-top: auto;
-  padding-top: 10px;
-  display: flex; align-items: center; gap: 6px;
+  padding-top: 0;
+  font-size: 8.5px; font-weight: 800;
+  letter-spacing: 0.09em;
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: var(--orange); color: #fff;
 }
-.m-logo, .m-init {
-  width: 20px; height: 20px; flex: none;
-  border-radius: 5px; background: #fff;
-  object-fit: contain;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 7.5px; font-weight: 800; color: #12181f;
-  border: 1px solid rgba(0, 0, 0, 0.1);
-}
-.m-name {
-  font-size: 11px; font-weight: 600;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
+.deal.accent .badge { background: rgba(0, 0, 0, 0.28); }
 
 .event {
   flex: none; width: 190px;
@@ -382,23 +401,24 @@ export default {
 /* the key desktop move: rail -> grid, whole book visible at once */
 .dirA.desktop .rail {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
   gap: 18px;
   padding: 0;
   overflow: visible;
 }
 .dirA.desktop .deal {
-  width: auto; min-height: 210px;
-  padding: 16px 17px 15px;
+  width: auto; min-height: 230px;
   transition: transform .15s ease, box-shadow .15s ease;
 }
 .dirA.desktop .deal:hover {
   transform: translateY(-3px);
   box-shadow: 0 14px 32px rgba(0, 0, 0, 0.4);
 }
-.dirA.desktop .deal-value { font-size: 52px; }
+.dirA.desktop .m-head { padding: 13px 15px; }
+.dirA.desktop .m-name { font-size: 16px; }
+.dirA.desktop .deal-body { padding: 14px 16px 15px; }
+.dirA.desktop .deal-value { font-size: 56px; }
 .dirA.desktop .deal-label { font-size: 13px; }
-.dirA.desktop .m-name { font-size: 12px; }
 .dirA.desktop .badge { font-size: 9.5px; }
 
 .dirA.desktop .event { width: auto; }

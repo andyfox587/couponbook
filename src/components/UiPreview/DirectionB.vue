@@ -5,8 +5,8 @@
       <span class="topnav-brand">CHAPEL HILL · CARRBORO</span>
       <div class="topnav-links">
         <button class="topnav-link on" type="button">My Book</button>
+        <button class="topnav-link" type="button">Restaurants</button>
         <button class="topnav-link" type="button">Events</button>
-        <button class="topnav-link" type="button">Saved</button>
         <span class="topnav-avatar">{{ memberInitials }}</span>
       </div>
     </nav>
@@ -25,7 +25,7 @@
         <p class="strip-count">{{ unusedCount }} OF {{ totalCount }} LEFT</p>
       </div>
       <p class="strip-big">
-        <strong>{{ unusedCount }}</strong> deals · ${{ savings }}+ off
+        <strong>{{ unusedCount }}</strong> of {{ totalCount }} deals
       </p>
       <div class="strip-bar"><span :style="{ width: pct + '%' }"></span></div>
     </section>
@@ -59,16 +59,17 @@
           @click="$emit('open', c)"
         >
           <div class="ticket-main">
-            <span v-if="c.badge" class="badge">{{ c.badge.text }}</span>
+            <!-- merchant header (Turn 3) — 44px mark, name wraps, never clipped -->
+            <div class="m-head">
+              <img v-if="c.logo" :src="c.logo" :alt="c.merchant" class="m-logo" />
+              <span v-else class="m-logo m-init">{{ c.initials }}</span>
+              <span class="m-name">{{ c.merchant }}</span>
+            </div>
             <p class="t-value">
               {{ c.value }}<span v-if="isMoney(c)" class="t-off">OFF</span>
             </p>
             <p class="t-label">{{ c.label }}</p>
-            <div class="merchant">
-              <img v-if="c.logo" :src="c.logo" :alt="c.merchant" class="m-logo" />
-              <span v-else class="m-init">{{ c.initials }}</span>
-              <span class="m-name">{{ c.merchant }}</span>
-            </div>
+            <span v-if="c.badge" class="badge">{{ c.badge.text }}</span>
           </div>
           <div class="ticket-stub"><span>REDEEM</span></div>
         </article>
@@ -97,6 +98,7 @@
 
     <nav v-if="!desktop" class="tabbar">
       <button class="tab on" type="button">My Book</button>
+      <button class="tab" type="button">Restaurants</button>
       <button class="tab" type="button">Events</button>
       <span class="tab-avatar">{{ memberInitials }}</span>
     </nav>
@@ -222,7 +224,7 @@ export default {
 /* Ticket: main body + tear-off stub, joined by a perforation with notches */
 .ticket {
   flex: none;
-  width: 218px; min-height: 132px;
+  width: 250px; min-height: 186px;
   scroll-snap-align: start;
   display: flex;
   background: var(--cream);
@@ -263,28 +265,36 @@ export default {
 .ticket::before { top: -7px; }
 .ticket::after { bottom: -7px; }
 
+/* merchant header — leads the ticket */
+.m-head {
+  display: flex; align-items: center; gap: 9px;
+  margin-bottom: 11px;
+  min-width: 0;
+}
+.m-logo, .m-init {
+  width: 44px; height: 44px; flex: none;
+  border-radius: 11px; background: #fff; object-fit: contain; padding: 2px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; color: #12181f;
+}
+.m-name {
+  font-size: 15px; font-weight: 700; line-height: 1.18;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: break-word;
+}
+
 .badge {
   align-self: flex-start;
+  margin-top: auto;
   font-size: 8px; letter-spacing: 0.1em;
-  padding: 3px 6px; border-radius: 4px;
+  padding: 4px 6px; border-radius: 4px;
   background: var(--orange); color: #fff;
-  margin-bottom: 7px;
 }
 .ticket.green .badge { background: rgba(0, 0, 0, 0.25); }
 
 .t-value { margin: 0; font-size: 33px; line-height: 1; font-weight: 700; letter-spacing: -0.03em; }
 .t-off { font-size: 12px; letter-spacing: 0.06em; margin-left: 5px; opacity: 0.75; }
-.t-label { margin: 4px 0 0; font-size: 11.5px; font-weight: 500; opacity: 0.85; }
-
-.merchant { margin-top: auto; padding-top: 9px; display: flex; align-items: center; gap: 6px; min-width: 0; }
-.m-logo, .m-init {
-  width: 19px; height: 19px; flex: none;
-  border-radius: 4px; background: #fff; object-fit: contain;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 7px; font-weight: 700; color: #12181f;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-}
-.m-name { font-size: 11px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.t-label { margin: 4px 0 9px; font-size: 11.5px; font-weight: 500; opacity: 0.85; }
 
 .event {
   flex: none; width: 215px;
@@ -404,7 +414,7 @@ export default {
   overflow: visible;
 }
 .dirB.desktop .ticket {
-  width: auto; min-height: 165px;
+  width: auto; min-height: 200px;
   transition: transform .15s ease, box-shadow .15s ease;
 }
 .dirB.desktop .ticket:hover {
@@ -417,7 +427,7 @@ export default {
 .dirB.desktop .ticket::after { right: 52px; }
 .dirB.desktop .t-value { font-size: 44px; }
 .dirB.desktop .t-label { font-size: 13px; }
-.dirB.desktop .m-name { font-size: 12px; }
+.dirB.desktop .m-name { font-size: 16px; }
 
 .dirB.desktop .event { width: auto; }
 .dirB.desktop .event-img { height: 120px; }

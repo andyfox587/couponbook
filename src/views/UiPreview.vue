@@ -46,6 +46,8 @@
           :events="events"
           :unused-count="unusedCount"
           :total-count="totalCount"
+          :ending-soon-count="endingSoonCount"
+          :merchant-count="merchantCount"
           :savings="savings"
           @chip="activeChip = $event"
           @open="openDeal"
@@ -57,19 +59,32 @@
     <div v-if="openCoupon" class="sheet-overlay" @click.self="openCoupon = null">
       <div class="sheet">
         <button class="sheet-close" type="button" @click="openCoupon = null">✕</button>
-        <p class="sheet-merchant">{{ openCoupon.merchant }}</p>
-        <p class="sheet-value">{{ openCoupon.value }}</p>
-        <p class="sheet-label">{{ openCoupon.label }}</p>
-        <p class="sheet-desc">{{ openCoupon.description }}</p>
-        <p v-if="openCoupon.daysLeft !== null" class="sheet-meta">
-          {{ openCoupon.daysLeft }} days left to use
-        </p>
-        <button class="sheet-cta" type="button" @click="redeemed = true">
-          {{ redeemed ? '✓ Show this to staff' : 'Redeem now' }}
-        </button>
-        <div v-if="redeemed" class="sheet-code">
-          <div class="code-box">{{ shortCode }}</div>
-          <p class="sheet-meta">Prototype only — no redemption was recorded.</p>
+
+        <!-- Merchant unmistakable (3e): staff must see at a glance that this
+             code is for THEIR restaurant. -->
+        <div class="sheet-head">
+          <img v-if="openCoupon.logo" :src="openCoupon.logo" :alt="openCoupon.merchant" class="sheet-logo" />
+          <span v-else class="sheet-logo sheet-init">{{ openCoupon.initials }}</span>
+          <div class="sheet-head-text">
+            <p class="sheet-merchant">{{ openCoupon.merchant }}</p>
+            <p v-if="openCoupon.cuisine" class="sheet-sub">{{ openCoupon.cuisine }}</p>
+          </div>
+        </div>
+
+        <div class="sheet-body">
+          <p class="sheet-value">{{ openCoupon.value }}</p>
+          <p class="sheet-label">{{ openCoupon.label }}</p>
+          <p class="sheet-desc">{{ openCoupon.description }}</p>
+          <p v-if="openCoupon.daysLeft !== null" class="sheet-meta">
+            {{ openCoupon.daysLeft }} days left to use
+          </p>
+          <button class="sheet-cta" type="button" @click="redeemed = true">
+            {{ redeemed ? '✓ Show this at the counter' : 'Redeem now' }}
+          </button>
+          <div v-if="redeemed" class="sheet-code">
+            <div class="code-box">{{ shortCode }}</div>
+            <p class="sheet-meta">Prototype only — no redemption was recorded.</p>
+          </div>
         </div>
       </div>
     </div>
@@ -85,7 +100,9 @@ import {
   loadGroup,
   buildRails,
   buildChips,
+  buildMerchants,
   applyChip,
+  daysLeft,
   knownSavings,
   SAMPLE_EVENTS,
 } from '@/components/UiPreview/previewData';
@@ -135,8 +152,28 @@ export default {
     filtered() {
       return applyChip(this.coupons, this.activeChip);
     },
+    // "By restaurant" (Turn 3, screen 3d) reuses the rail renderer — one rail
+    // per restaurant, titled with the restaurant — so all three directions get
+    // the grouped browse with no per-direction markup.
     rails() {
+      if (this.activeChip === 'by-restaurant') {
+        return buildMerchants(this.coupons).map((m) => ({
+          key: m.id,
+          title: m.name,
+          caps: (m.name || '').toUpperCase(),
+          items: m.deals,
+        }));
+      }
       return buildRails(this.filtered);
+    },
+    merchantCount() {
+      return buildMerchants(this.coupons).length;
+    },
+    endingSoonCount() {
+      return this.coupons.filter((c) => {
+        const d = daysLeft(c);
+        return d !== null && d >= 0 && d <= 7;
+      }).length;
     },
     chips() {
       return buildChips(this.coupons);
@@ -282,17 +319,38 @@ export default {
   width: 100%; max-width: 390px;
   background: #f6f1e7; color: #12181f;
   border-radius: 20px 20px 0 0;
-  padding: 26px 22px calc(26px + env(safe-area-inset-bottom, 0px));
+  padding: 0 0 calc(22px + env(safe-area-inset-bottom, 0px));
   text-align: center;
+  overflow: hidden;
 }
 @media (min-width: 720px) { .sheet { border-radius: 20px; } }
 .sheet-close {
-  position: absolute; top: 12px; right: 14px;
+  position: absolute; top: 14px; right: 14px;
   border: none; background: rgba(0, 0, 0, 0.07);
   width: 30px; height: 30px; border-radius: 50%;
   font-size: 14px; cursor: pointer; color: #12181f;
+  z-index: 2;
 }
-.sheet-merchant { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.1em; opacity: 0.6; }
+/* merchant header band — big mark, full name, never clipped */
+.sheet-head {
+  display: flex; align-items: center; gap: 13px;
+  text-align: left;
+  padding: 20px 54px 18px 22px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+.sheet-logo, .sheet-init {
+  width: 56px; height: 56px; flex: none;
+  border-radius: 14px; background: #fff; object-fit: contain; padding: 3px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; font-weight: 800; color: #12181f;
+}
+.sheet-head-text { min-width: 0; }
+.sheet-body { padding: 22px 22px 4px; }
+.sheet-merchant {
+  margin: 0; font-size: 20px; font-weight: 800; line-height: 1.2;
+  overflow-wrap: break-word;
+}
+.sheet-sub { margin: 3px 0 0; font-size: 12.5px; opacity: 0.6; }
 .sheet-value { margin: 8px 0 0; font-size: 60px; line-height: 1; font-weight: 800; letter-spacing: -0.04em; }
 .sheet-label { margin: 6px 0 0; font-size: 13px; font-weight: 700; letter-spacing: 0.05em; }
 .sheet-desc { margin: 14px 0 0; font-size: 13px; line-height: 1.5; opacity: 0.75; white-space: pre-line; }
