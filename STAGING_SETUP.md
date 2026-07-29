@@ -16,15 +16,23 @@ redemptions and uploads all work, and none of it touches live customers.
 
 ## 1 · Create the Vercel project — *5 min, you*
 
-Vercel → **Add New → Project** → import **`andyfox587/couponbook`** (the same repo;
-Vercel already has access).
+Order matters, because the two settings happen at different times: **env vars are
+set during import; the branch can only be changed after the project exists.**
 
-Then, before the first deploy:
+1. Vercel → **Add New → Project** → import **`andyfox587/couponbook`**
+   (the same repo — Vercel already has access).
+2. **Project Name:** `couponbook-staging`. Leave framework/build as detected.
+3. Expand **Environment Variables** on that same screen and add them all
+   (see §2). Doing it now means the first build already works.
+4. **Deploy.** This first build comes from `main`, because Vercel defaults to the
+   repo's default branch and offers no branch choice during import. That's
+   expected and harmless — production *code* against the staging *database* —
+   and it proves the DB connection works.
+5. **Settings → Git → Production Branch:** change `main` → **`staging`**.
+6. **Deployments → ⋯ → Redeploy.** Now you're running the staging branch.
 
-- **Project Name:** `couponbook-staging`
-- **Settings → Git → Production Branch:** change `main` → **`staging`**
-  *(critical — otherwise staging deploys production code)*
-- Framework preset / build command: leave as detected (same as prod)
+> Step 6 is the easy one to forget. Until it's done the site looks exactly like
+> production and you'll wonder where the new UI went.
 
 ## 2 · Environment variables
 
