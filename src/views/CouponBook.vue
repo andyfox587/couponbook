@@ -45,7 +45,6 @@ import {
 } from '@/components/UiPreview/previewData';
 import { listEvents } from '@/services/eventService';
 import { getAccessToken, signIn } from '@/services/authService';
-import { ensureCouponsHaveCuisine } from '@/utils/helpers';
 
 // DirectionA is set in Archivo; load it so the real page matches the design.
 const FONTS =
@@ -185,8 +184,10 @@ export default {
         const res = await fetch('/api/v1/coupons');
         if (!res.ok) throw new Error(`Server responded ${res.status}`);
         const raw = await res.json();
-        const base = ensureCouponsHaveCuisine(raw);
-        this.coupons = base.map((c) => ({ ...c, redeemed_by_user: false }));
+        // Use the raw payload (as the approved prototype does). NOTE: do NOT run
+        // this through ensureCouponsHaveCuisine — its type-normalizer rewrites
+        // free_item/bogo to a default, which would turn "FREE" into "DEAL".
+        this.coupons = raw.map((c) => ({ ...c, redeemed_by_user: false }));
       } catch (err) {
         console.error('Failed to load coupons', err);
         this.error = 'Could not load coupons. ' + err.message;
