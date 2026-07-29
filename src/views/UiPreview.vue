@@ -39,6 +39,9 @@
             v-model.number="scrim"
           />
           <span class="sw-val">{{ Math.round(scrim * 100) }}%</span>
+          <button class="sw-btn sw-mini" type="button" @click="showPicker = true">
+            Set per restaurant…
+          </button>
         </template>
       </div>
       <p class="sw-note">
@@ -73,6 +76,14 @@
         />
       </div>
     </div>
+
+    <BackgroundPicker
+      v-if="showPicker"
+      :merchants="merchants"
+      @close="showPicker = false"
+      @set="setBackground"
+      @reset="resetBackgrounds"
+    />
 
     <!-- Redemption sheet: proves the "3 taps to a redeemable code" goal -->
     <div v-if="openCoupon" class="sheet-overlay" @click.self="openCoupon = null">
@@ -114,12 +125,16 @@
 import DirectionA from '@/components/UiPreview/DirectionA.vue';
 import DirectionB from '@/components/UiPreview/DirectionB.vue';
 import DirectionC from '@/components/UiPreview/DirectionC.vue';
+import BackgroundPicker from '@/components/UiPreview/BackgroundPicker.vue';
 import {
   loadCoupons,
   loadGroup,
   buildRails,
   buildChips,
   buildMerchants,
+  loadBackgroundChoices,
+  saveBackgroundChoice,
+  resetBackgroundChoices,
   applyChip,
   daysLeft,
   knownSavings,
@@ -131,7 +146,7 @@ const FONTS =
 
 export default {
   name: 'UiPreview',
-  components: { DirectionA, DirectionB, DirectionC },
+  components: { DirectionA, DirectionB, DirectionC, BackgroundPicker },
   data() {
     return {
       directions: [
@@ -154,6 +169,8 @@ export default {
       phoneView: false,
       backgrounds: true,
       scrim: 0.82,
+      bgChoices: {},
+      showPicker: false,
       winWidth: typeof window !== 'undefined' ? window.innerWidth : 1440,
     };
   },
@@ -178,17 +195,20 @@ export default {
     // the grouped browse with no per-direction markup.
     rails() {
       if (this.activeChip === 'by-restaurant') {
-        return buildMerchants(this.coupons).map((m) => ({
+        return buildMerchants(this.coupons, this.bgChoices).map((m) => ({
           key: m.id,
           title: m.name,
           caps: (m.name || '').toUpperCase(),
           items: m.deals,
         }));
       }
-      return buildRails(this.filtered);
+      return buildRails(this.filtered, this.bgChoices);
+    },
+    merchants() {
+      return buildMerchants(this.coupons, this.bgChoices);
     },
     merchantCount() {
-      return buildMerchants(this.coupons).length;
+      return this.merchants.length;
     },
     endingSoonCount() {
       return this.coupons.filter((c) => {
@@ -227,6 +247,7 @@ export default {
     }
     const d = this.$route.query.d;
     if (d && this.directions.some((x) => x.key === d)) this.active = d;
+    this.bgChoices = loadBackgroundChoices();
     window.addEventListener('resize', this.onResize);
     this.fetch();
   },
@@ -256,6 +277,13 @@ export default {
     },
     onResize() {
       this.winWidth = window.innerWidth;
+    },
+    setBackground({ id, value }) {
+      this.bgChoices = { ...saveBackgroundChoice(id, value) };
+    },
+    resetBackgrounds() {
+      resetBackgroundChoices();
+      this.bgChoices = {};
     },
     select(key) {
       this.active = key;
@@ -302,6 +330,7 @@ export default {
 .sw-label { opacity: 0.5; }
 .sw-range { width: 150px; accent-color: #f2542d; cursor: pointer; }
 .sw-val { opacity: 0.7; font-variant-numeric: tabular-nums; min-width: 34px; }
+.sw-mini { padding: 5px 11px; font-size: 11.5px; }
 
 .stage { display: flex; justify-content: center; padding: 0; }
 

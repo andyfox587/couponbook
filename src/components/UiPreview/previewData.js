@@ -93,14 +93,18 @@ export function initials(name) {
  * judged and the scrim tuned. Swap for `coupon.merchant_background_url` once
  * the upload lands.
  */
-const SAMPLE_BACKGROUNDS = [
-  'https://images.unsplash.com/photo-1552566626-52f8b828add9?w=800&q=70',
-  'https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=800&q=70',
-  'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&q=70',
-  'https://images.unsplash.com/photo-1466978913421-dad2ebd01d17?w=800&q=70',
-  'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=800&q=70',
-  'https://images.unsplash.com/photo-1424847651672-bf20a4b0982b?w=800&q=70',
+export const BACKGROUND_LIBRARY = [
+  { id: 'table',   label: 'Shared table',  url: 'https://images.unsplash.com/photo-1552566626-52f8b828add9?w=900&q=70' },
+  { id: 'counter', label: 'Counter',       url: 'https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=900&q=70' },
+  { id: 'dining',  label: 'Dining room',   url: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=900&q=70' },
+  { id: 'greens',  label: 'Fresh produce', url: 'https://images.unsplash.com/photo-1466978913421-dad2ebd01d17?w=900&q=70' },
+  { id: 'spread',  label: 'Table spread',  url: 'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=900&q=70' },
+  { id: 'pastry',  label: 'Bakery case',   url: 'https://images.unsplash.com/photo-1424847651672-bf20a4b0982b?w=900&q=70' },
+  { id: 'coffee',  label: 'Coffee bar',    url: 'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=900&q=70' },
+  { id: 'tacos',   label: 'Tacos',         url: 'https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?w=900&q=70' },
 ];
+
+const SAMPLE_BACKGROUNDS = BACKGROUND_LIBRARY.map((b) => b.url);
 
 /**
  * Style for the offer area's background: the restaurant's photo under a flat
@@ -130,12 +134,84 @@ export function sampleBackground(merchantKey) {
   return SAMPLE_BACKGROUNDS[h % SAMPLE_BACKGROUNDS.length];
 }
 
+
+/**
+ * Merchant background choices.
+ *
+ * In the real product this is one column on `merchant`, set from a picker in
+ * Merchant Tools. The prototype keeps it in localStorage so the whole merchant
+ * flow (pick from library / upload your own / remove) can be demonstrated with
+ * no DB write and no S3 round-trip.
+ *
+ * Value is a library URL or a downscaled data: URL from an upload.
+ * `null` explicitly means "no background — plain card".
+ */
+const BG_KEY = 'uiPreviewMerchantBackgrounds';
+
+export function loadBackgroundChoices() {
+  try {
+    return JSON.parse(localStorage.getItem(BG_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+export function saveBackgroundChoice(merchantId, value) {
+  const all = loadBackgroundChoices();
+  if (value === undefined) delete all[merchantId];
+  else all[merchantId] = value;
+  try {
+    localStorage.setItem(BG_KEY, JSON.stringify(all));
+  } catch (e) {
+    console.warn('Could not persist background choice (storage full?)', e);
+  }
+  return all;
+}
+
+export function resetBackgroundChoices() {
+  localStorage.removeItem(BG_KEY);
+}
+
+/** Explicit merchant choice wins; otherwise fall back to the demo sample. */
+export function backgroundFor(merchantId, merchantName, choices) {
+  const key = merchantId || merchantName;
+  if (choices && Object.prototype.hasOwnProperty.call(choices, key)) {
+    return choices[key];
+  }
+  return sampleBackground(key);
+}
+
+/**
+ * Downscale an uploaded image in-browser before storing it — keeps
+ * localStorage small and mirrors the resize a real upload endpoint would do.
+ */
+export function fileToScaledDataUrl(file, maxW = 900, quality = 0.72) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read that file.'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('That file is not a readable image.'));
+      img.onload = () => {
+        const scale = Math.min(1, maxW / img.width);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 /** Normalize one API coupon into what the design components consume. */
-export function normalize(c) {
+export function normalize(c, choices) {
   return {
     id: c.id,
     // per-restaurant background, applied behind the offer only
-    background: c.merchant_background_url || sampleBackground(c.merchant_id || c.merchant_name),
+    background: c.merchant_background_url || backgroundFor(c.merchant_id, c.merchant_name, choices),
     value: dealValue(c),
     label: dealLabel(c),
     title: c.title,
@@ -153,12 +229,12 @@ export function normalize(c) {
 }
 
 /** Rails: the horizontal, swipeable groupings that replace the endless scroll. */
-export function buildRails(coupons) {
+export function buildRails(coupons, choices) {
   const live = coupons.filter((c) => {
     const d = daysLeft(c);
     return d === null || d >= 0;
   });
-  const norm = live.map(normalize);
+  const norm = live.map((c) => normalize(c, choices));
 
   const endingSoon = [...norm]
     .filter((c) => c.daysLeft !== null)
@@ -191,7 +267,7 @@ export function buildRails(coupons) {
  * Group deals under their restaurant — the "Browse by restaurant" view (3d).
  * Sorted by deal count so the most-invested restaurants lead.
  */
-export function buildMerchants(coupons) {
+export function buildMerchants(coupons, choices) {
   const byId = new Map();
   for (const c of coupons) {
     const key = c.merchant_id || c.merchant_name;
@@ -205,10 +281,11 @@ export function buildMerchants(coupons) {
         // Real data has no address/distance, so the sub-line uses what exists:
         // cuisine (when set) and the deal count.
         cuisine: c.cuisine_type || null,
+        background: backgroundFor(c.merchant_id, c.merchant_name, choices),
         deals: [],
       });
     }
-    byId.get(key).deals.push(normalize(c));
+    byId.get(key).deals.push(normalize(c, choices));
   }
   return [...byId.values()].sort((a, b) => b.deals.length - a.deals.length);
 }
