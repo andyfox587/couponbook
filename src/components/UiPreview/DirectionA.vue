@@ -68,7 +68,9 @@
             <span v-else class="m-logo m-init">{{ c.initials }}</span>
             <span class="m-name">{{ c.merchant }}</span>
           </div>
-          <div class="deal-body">
+          <!-- Restaurant background sits behind the OFFER only, under a white
+               scrim. The merchant header above stays solid and untouched. -->
+          <div class="deal-body" :style="bodyStyle(c, ri === 1 && i % 3 === 0)">
             <p class="deal-value">{{ c.value }}</p>
             <p class="deal-label">{{ c.label }}</p>
             <span v-if="c.badge" class="badge">{{ c.badge.text }}</span>
@@ -101,6 +103,8 @@
 </template>
 
 <script>
+import { offerBackgroundStyle } from '@/components/UiPreview/previewData';
+
 export default {
   name: 'DirectionA',
   props: {
@@ -116,9 +120,16 @@ export default {
     merchantCount: { type: Number, default: 0 },
     savings: { type: Number, default: 0 },
     desktop: { type: Boolean, default: false },
+    backgrounds: { type: Boolean, default: true },
+    scrim: { type: Number, default: 0.82 },
   },
   emits: ['chip', 'open'],
   data: () => ({ tabs: ['Book', 'Restaurants', 'Events', 'You'] }),
+  methods: {
+    bodyStyle(c, accent) {
+      return offerBackgroundStyle(c, { enabled: this.backgrounds, scrim: this.scrim, accent });
+    },
+  },
   computed: {
     bannerStyle() {
       return this.bannerUrl

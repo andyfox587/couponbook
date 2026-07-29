@@ -61,9 +61,11 @@
             <span v-else class="m-logo m-init">{{ c.initials }}</span>
             <span class="m-name">{{ c.merchant }}</span>
           </div>
-          <p class="o-value">{{ c.value }}</p>
-          <p class="o-label">{{ c.label }}</p>
-          <p v-if="c.badge" class="badge">{{ c.badge.text }}</p>
+          <div class="o-body" :style="bodyStyle(c)">
+            <p class="o-value">{{ c.value }}</p>
+            <p class="o-label">{{ c.label }}</p>
+            <p v-if="c.badge" class="badge">{{ c.badge.text }}</p>
+          </div>
         </article>
       </div>
     </section>
@@ -94,6 +96,8 @@
 </template>
 
 <script>
+import { offerBackgroundStyle } from '@/components/UiPreview/previewData';
+
 export default {
   name: 'DirectionC',
   props: {
@@ -107,9 +111,22 @@ export default {
     merchantCount: { type: Number, default: 0 },
     savings: { type: Number, default: 0 },
     desktop: { type: Boolean, default: false },
+    backgrounds: { type: Boolean, default: true },
+    scrim: { type: Number, default: 0.82 },
   },
   emits: ['chip', 'open'],
   data: () => ({ tabs: ['BOOK', 'RESTAURANTS', 'EVENTS', 'YOU'] }),
+  methods: {
+    bodyStyle(c) {
+      // Club direction is dark, so a white scrim would break it — tint with the
+      // page ink instead, a touch lighter than the slider so the photo reads.
+      return offerBackgroundStyle(c, {
+        enabled: this.backgrounds,
+        scrim: Math.max(0.35, this.scrim - 0.25),
+        overlayRgb: '16,21,26',
+      });
+    },
+  },
 };
 </script>
 
@@ -226,15 +243,27 @@ export default {
   overflow: hidden; overflow-wrap: break-word;
 }
 
+/* offer area — carries the restaurant background, bled to the card edges */
+.o-body {
+  flex: 1;
+  display: flex; flex-direction: column;
+  margin: 0 -14px -12px;
+  padding: 0 14px 12px;
+  border-radius: 0 0 10px 10px;
+  background-repeat: no-repeat;
+}
+
 .o-value {
   margin: 0;
   font-family: 'Instrument Serif', Georgia, serif;
   font-size: 38px; line-height: 0.95; font-weight: 400;
+  text-shadow: 0 1px 3px rgba(0,0,0,.5);
 }
 .o-label {
   margin: 6px 0 0;
   font-size: 9.5px; letter-spacing: 0.11em; font-weight: 600;
-  color: rgba(242, 239, 233, 0.7); line-height: 1.35;
+  color: rgba(242, 239, 233, 0.92); line-height: 1.35;
+  text-shadow: 0 1px 2px rgba(0,0,0,.45);
 }
 .badge {
   margin: auto 0 0;
@@ -355,6 +384,7 @@ export default {
 }
 .dirC.desktop .offer:hover { border-color: var(--gold); transform: translateY(-2px); }
 .dirC.desktop .o-value { font-size: 48px; }
+.dirC.desktop .o-body { margin: 0 -20px -17px; padding: 0 20px 17px; }
 .dirC.desktop .o-label { font-size: 11px; }
 .dirC.desktop .m-name { font-size: 16px; }
 

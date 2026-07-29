@@ -81,10 +81,61 @@ export function initials(name) {
     .toUpperCase();
 }
 
+/**
+ * SAMPLE restaurant backgrounds.
+ *
+ * The real feature is: a merchant uploads ONE background image and it backs
+ * all of their coupons — behind the OFFER only, never behind the merchant
+ * header, and always under a white scrim so the deal stays legible.
+ *
+ * Nothing in the schema stores this yet, so the prototype assigns a stable
+ * sample photo per merchant (hashed off the id) purely so the effect can be
+ * judged and the scrim tuned. Swap for `coupon.merchant_background_url` once
+ * the upload lands.
+ */
+const SAMPLE_BACKGROUNDS = [
+  'https://images.unsplash.com/photo-1552566626-52f8b828add9?w=800&q=70',
+  'https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=800&q=70',
+  'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&q=70',
+  'https://images.unsplash.com/photo-1466978913421-dad2ebd01d17?w=800&q=70',
+  'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=800&q=70',
+  'https://images.unsplash.com/photo-1424847651672-bf20a4b0982b?w=800&q=70',
+];
+
+/**
+ * Style for the offer area's background: the restaurant's photo under a flat
+ * white scrim, so the image reads but the deal value stays the loudest thing
+ * on the card. `scrim` is 0–1 white opacity (higher = more washed out).
+ *
+ * Returns {} when disabled, when there's no image, or on a solid accent card
+ * (white text on a white scrim would be unreadable — those keep their colour).
+ */
+export function offerBackgroundStyle(
+  coupon,
+  { enabled = true, scrim = 0.82, accent = false, overlayRgb = '255,255,255' } = {},
+) {
+  if (!enabled || accent || !coupon || !coupon.background) return {};
+  const tint = `rgba(${overlayRgb},${scrim})`;
+  return {
+    backgroundImage: `linear-gradient(${tint}, ${tint}), url("${coupon.background}")`,
+    backgroundSize: 'cover',
+    backgroundPosition: 'center',
+  };
+}
+
+export function sampleBackground(merchantKey) {
+  const s = String(merchantKey || '');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return SAMPLE_BACKGROUNDS[h % SAMPLE_BACKGROUNDS.length];
+}
+
 /** Normalize one API coupon into what the design components consume. */
 export function normalize(c) {
   return {
     id: c.id,
+    // per-restaurant background, applied behind the offer only
+    background: c.merchant_background_url || sampleBackground(c.merchant_id || c.merchant_name),
     value: dealValue(c),
     label: dealLabel(c),
     title: c.title,

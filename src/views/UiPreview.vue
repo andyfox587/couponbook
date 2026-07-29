@@ -24,6 +24,23 @@
           {{ phoneView ? '🖥 Desktop view' : '📱 Phone view' }}
         </button>
       </div>
+
+      <!-- Restaurant backgrounds behind the offer + scrim tuner -->
+      <div class="sw-row sw-bg">
+        <label class="sw-toggle">
+          <input type="checkbox" v-model="backgrounds" />
+          Restaurant backgrounds
+        </label>
+        <template v-if="backgrounds">
+          <span class="sw-label">white overlay</span>
+          <input
+            class="sw-range"
+            type="range" min="0.5" max="0.95" step="0.01"
+            v-model.number="scrim"
+          />
+          <span class="sw-val">{{ Math.round(scrim * 100) }}%</span>
+        </template>
+      </div>
       <p class="sw-note">
         {{ status }}
       </p>
@@ -38,6 +55,8 @@
           v-else
           :is="activeComponent"
           :desktop="isDesktop"
+          :backgrounds="backgrounds"
+          :scrim="scrim"
           :group-name="groupName"
           :banner-url="bannerUrl"
           :rails="rails"
@@ -133,6 +152,8 @@ export default {
       // Desktop is a first-class layout, not a stretched phone. `phoneView`
       // lets you force the mobile frame on a big screen to compare the two.
       phoneView: false,
+      backgrounds: true,
+      scrim: 0.82,
       winWidth: typeof window !== 'undefined' ? window.innerWidth : 1440,
     };
   },
@@ -274,6 +295,13 @@ export default {
 .sw-btn b { font-weight: 800; margin-right: 3px; }
 .sw-btn.on { background: #f2542d; border-color: #f2542d; color: #fff; }
 .sw-note { margin: 7px 0 0; font-size: 10.5px; opacity: 0.45; }
+
+.sw-bg { margin-top: 8px; gap: 10px; font-size: 12px; }
+.sw-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; opacity: 0.85; }
+.sw-toggle input { accent-color: #f2542d; cursor: pointer; }
+.sw-label { opacity: 0.5; }
+.sw-range { width: 150px; accent-color: #f2542d; cursor: pointer; }
+.sw-val { opacity: 0.7; font-variant-numeric: tabular-nums; min-width: 34px; }
 
 .stage { display: flex; justify-content: center; padding: 0; }
 

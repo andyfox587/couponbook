@@ -65,11 +65,13 @@
               <span v-else class="m-logo m-init">{{ c.initials }}</span>
               <span class="m-name">{{ c.merchant }}</span>
             </div>
-            <p class="t-value">
-              {{ c.value }}<span v-if="isMoney(c)" class="t-off">OFF</span>
-            </p>
-            <p class="t-label">{{ c.label }}</p>
-            <span v-if="c.badge" class="badge">{{ c.badge.text }}</span>
+            <div class="t-body" :style="bodyStyle(c, (ri + i) % 3 === 1)">
+              <p class="t-value">
+                {{ c.value }}<span v-if="isMoney(c)" class="t-off">OFF</span>
+              </p>
+              <p class="t-label">{{ c.label }}</p>
+              <span v-if="c.badge" class="badge">{{ c.badge.text }}</span>
+            </div>
           </div>
           <div class="ticket-stub"><span>REDEEM</span></div>
         </article>
@@ -106,6 +108,8 @@
 </template>
 
 <script>
+import { offerBackgroundStyle } from '@/components/UiPreview/previewData';
+
 export default {
   name: 'DirectionB',
   props: {
@@ -118,6 +122,8 @@ export default {
     savings: { type: Number, default: 0 },
     memberInitials: { type: String, default: 'AF' },
     desktop: { type: Boolean, default: false },
+    backgrounds: { type: Boolean, default: true },
+    scrim: { type: Number, default: 0.82 },
   },
   emits: ['chip', 'open'],
   computed: {
@@ -127,6 +133,9 @@ export default {
     },
   },
   methods: {
+    bodyStyle(c, accent) {
+      return offerBackgroundStyle(c, { enabled: this.backgrounds, scrim: this.scrim, accent });
+    },
     isMoney(c) {
       return c.type === 'amount' || c.type === 'percent';
     },
@@ -237,6 +246,14 @@ export default {
 .ticket.green { background: var(--green); color: #fff; }
 
 .ticket-main { flex: 1; padding: 11px 12px 10px; display: flex; flex-direction: column; min-width: 0; }
+/* offer area only — never behind the merchant header */
+.t-body {
+  flex: 1;
+  display: flex; flex-direction: column;
+  margin: 0 -12px -10px;
+  padding: 0 12px 10px;
+  background-repeat: no-repeat;
+}
 
 .ticket-stub {
   flex: none; width: 40px;
@@ -422,6 +439,7 @@ export default {
   box-shadow: 0 14px 32px rgba(0, 0, 0, 0.45);
 }
 .dirB.desktop .ticket-main { padding: 16px 18px 15px; }
+.dirB.desktop .t-body { margin: 0 -18px -15px; padding: 0 18px 15px; }
 .dirB.desktop .ticket-stub { width: 52px; }
 .dirB.desktop .ticket::before,
 .dirB.desktop .ticket::after { right: 52px; }
