@@ -76,6 +76,34 @@ async function main() {
   const mode = isLive ? 'LIVE' : 'TEST';
   console.log(`\n=== Stripe webhook (${mode} mode) ===\n`);
 
+  // Validate the URL before any network call so a typo fails instantly.
+  let url = null;
+  let base = null;
+  if (!flag('list')) {
+    base = (opt('url', '') || '').trim();
+    if (!base) die('--url is required, e.g. --url https://couponbook-staging.vercel.app');
+
+    // Tolerate the common paste mistakes rather than failing cryptically:
+    // a doubled scheme, a missing scheme, a trailing slash, or the webhook
+    // path already appended.
+    base = base.replace(/^(https?:\/\/)+/i, 'https://');
+    if (!/^https:\/\//i.test(base)) base = `https://${base.replace(/^\/+/, '')}`;
+    base = base.replace(/\/+$/, '').replace(new RegExp(`${WEBHOOK_PATH}$`), '');
+
+    let host;
+    try {
+      host = new URL(base).host;
+    } catch {
+      die(`Could not parse --url "${opt('url', '')}". Pass just the base URL, e.g. https://couponbook-staging.vercel.app`);
+    }
+    if (!host || host.includes('/') || !host.includes('.')) {
+      die(`"${base}" does not look like a valid base URL.`);
+    }
+
+    url = base + WEBHOOK_PATH;
+    console.log(`   target: ${url}\n`);
+  }
+
   const existing = await stripe.webhookEndpoints.list({ limit: 100 });
 
   if (flag('list')) {
@@ -85,10 +113,7 @@ async function main() {
     process.exit(0);
   }
 
-  const base = (opt('url', '') || '').replace(/\/+$/, '');
-  if (!base) die('--url is required, e.g. --url https://couponbook-staging.vercel.app');
-  if (!/^https:\/\//.test(base)) die('--url must be https.');
-  const url = base + WEBHOOK_PATH;
+
 
   const dup = existing.data.find((e) => e.url === url);
   if (dup) {
