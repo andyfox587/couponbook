@@ -1,8 +1,10 @@
 <template>
   <!-- 1a — Bold Editorial Menu: cream deal chips on ink, value as huge numerals -->
-  <div class="dirA" :class="{ desktop }">
-    <!-- Desktop gets a real top nav; mobile keeps the bottom tab bar -->
-    <nav v-if="desktop" class="topnav">
+  <div class="dirA" :class="{ desktop, 'no-chrome': !chrome }">
+    <!-- Desktop gets a real top nav; mobile keeps the bottom tab bar.
+         When embedded in the real site (which already has a header/footer and
+         sign-in), pass :chrome="false" to suppress this component's own nav. -->
+    <nav v-if="desktop && chrome" class="topnav">
       <span class="topnav-brand">VIVASPOT</span>
       <div class="topnav-links">
         <button v-for="t in tabs" :key="t" class="topnav-link" :class="{ on: t === 'Book' }" type="button">
@@ -12,7 +14,7 @@
     </nav>
 
     <div class="banner" :style="bannerStyle">
-      <span v-if="!desktop" class="banner-mark">VIVASPOT</span>
+      <span v-if="!desktop && chrome" class="banner-mark">VIVASPOT</span>
     </div>
 
     <div class="shell">
@@ -57,7 +59,7 @@
           v-for="(c, i) in rail.items"
           :key="c.id"
           class="deal"
-          :class="{ accent: ri === 1 && i % 3 === 0 }"
+          :class="{ accent: ri === 1 && i % 3 === 0, redeemed: c.redeemed }"
           role="listitem"
           @click="$emit('open', c)"
         >
@@ -73,13 +75,14 @@
           <div class="deal-body" :style="bodyStyle(c, ri === 1 && i % 3 === 0)">
             <p class="deal-value">{{ c.value }}</p>
             <p class="deal-label">{{ c.label }}</p>
-            <span v-if="c.badge" class="badge">{{ c.badge.text }}</span>
+            <span v-if="c.redeemed" class="badge badge-redeemed">✓ REDEEMED</span>
+            <span v-else-if="c.badge" class="badge">{{ c.badge.text }}</span>
           </div>
         </article>
       </div>
     </section>
 
-    <section class="rail-block shell">
+    <section v-if="events.length" class="rail-block shell">
       <div class="rail-head">
         <h2>Events this week</h2>
         <button class="see-all" type="button">See all</button>
@@ -94,7 +97,7 @@
       </div>
     </section>
 
-    <nav v-if="!desktop" class="tabs">
+    <nav v-if="!desktop && chrome" class="tabs">
       <button v-for="t in tabs" :key="t" class="tab" :class="{ on: t === 'Book' }" type="button">
         <span class="tab-dot"></span>{{ t }}
       </button>
@@ -122,6 +125,9 @@ export default {
     desktop: { type: Boolean, default: false },
     backgrounds: { type: Boolean, default: true },
     scrim: { type: Number, default: 0.82 },
+    // When false, hide this component's own top nav / bottom tabs / brand mark
+    // so it can sit inside the real site shell (which already has those).
+    chrome: { type: Boolean, default: true },
   },
   emits: ['chip', 'open'],
   data: () => ({ tabs: ['Book', 'Restaurants', 'Events', 'You'] }),
@@ -314,6 +320,14 @@ export default {
   background: var(--orange); color: #fff;
 }
 .deal.accent .badge { background: rgba(0, 0, 0, 0.28); }
+.badge-redeemed { background: var(--green); }
+
+/* Redeemed offers dim so the member can see what's already used */
+.deal.redeemed { opacity: 0.62; }
+.deal.redeemed .deal-value { text-decoration: line-through; text-decoration-thickness: 2px; }
+
+/* Embedded in the real site shell: no bottom tab bar, so less bottom padding */
+.dirA.no-chrome { padding-bottom: 24px; }
 
 .event {
   flex: none; width: 190px;
