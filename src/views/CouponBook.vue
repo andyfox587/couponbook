@@ -104,14 +104,14 @@ export default {
     rails() {
       // "By restaurant" reuses the rail renderer: one rail per restaurant.
       if (this.activeChip === 'by-restaurant') {
-        return buildMerchants(this.liveCoupons, {}).map((m) => ({
+        return buildMerchants(this.liveCoupons, {}, { sampleFallback: false }).map((m) => ({
           key: m.id,
           title: m.name,
           caps: (m.name || '').toUpperCase(),
           items: m.deals,
         }));
       }
-      return buildRails(this.filtered, {});
+      return buildRails(this.filtered, {}, { sampleFallback: false });
     },
 
     chips() {
@@ -119,7 +119,7 @@ export default {
     },
 
     merchants() {
-      return buildMerchants(this.liveCoupons, {});
+      return buildMerchants(this.liveCoupons, {}, { sampleFallback: false });
     },
     merchantCount() {
       return this.merchants.length;

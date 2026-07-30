@@ -206,12 +206,22 @@ export function fileToScaledDataUrl(file, maxW = 900, quality = 0.72) {
   });
 }
 
-/** Normalize one API coupon into what the design components consume. */
-export function normalize(c, choices) {
+/**
+ * Normalize one API coupon into what the design components consume.
+ *
+ * opts.sampleFallback (default true): when a merchant hasn't set a real
+ * background, fall back to a demo library photo. The real coupon book passes
+ * false so unset restaurants render as clean cards (only genuine, merchant-set
+ * photos appear); the /ui-preview playground keeps the samples.
+ */
+export function normalize(c, choices, opts = {}) {
+  const { sampleFallback = true } = opts;
   return {
     id: c.id,
     // per-restaurant background, applied behind the offer only
-    background: c.merchant_background_url || backgroundFor(c.merchant_id, c.merchant_name, choices),
+    background:
+      c.merchant_background_url ||
+      (sampleFallback ? backgroundFor(c.merchant_id, c.merchant_name, choices) : null),
     value: dealValue(c),
     label: dealLabel(c),
     title: c.title,
@@ -229,12 +239,12 @@ export function normalize(c, choices) {
 }
 
 /** Rails: the horizontal, swipeable groupings that replace the endless scroll. */
-export function buildRails(coupons, choices) {
+export function buildRails(coupons, choices, opts = {}) {
   const live = coupons.filter((c) => {
     const d = daysLeft(c);
     return d === null || d >= 0;
   });
-  const norm = live.map((c) => normalize(c, choices));
+  const norm = live.map((c) => normalize(c, choices, opts));
 
   const endingSoon = [...norm]
     .filter((c) => c.daysLeft !== null)
@@ -267,7 +277,8 @@ export function buildRails(coupons, choices) {
  * Group deals under their restaurant — the "Browse by restaurant" view (3d).
  * Sorted by deal count so the most-invested restaurants lead.
  */
-export function buildMerchants(coupons, choices) {
+export function buildMerchants(coupons, choices, opts = {}) {
+  const { sampleFallback = true } = opts;
   const byId = new Map();
   for (const c of coupons) {
     const key = c.merchant_id || c.merchant_name;
@@ -281,11 +292,13 @@ export function buildMerchants(coupons, choices) {
         // Real data has no address/distance, so the sub-line uses what exists:
         // cuisine (when set) and the deal count.
         cuisine: c.cuisine_type || null,
-        background: backgroundFor(c.merchant_id, c.merchant_name, choices),
+        background:
+          c.merchant_background_url ||
+          (sampleFallback ? backgroundFor(c.merchant_id, c.merchant_name, choices) : null),
         deals: [],
       });
     }
-    byId.get(key).deals.push(normalize(c, choices));
+    byId.get(key).deals.push(normalize(c, choices, opts));
   }
   return [...byId.values()].sort((a, b) => b.deals.length - a.deals.length);
 }
