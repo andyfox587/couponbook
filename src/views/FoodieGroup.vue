@@ -5,20 +5,14 @@
       <p>Group not found.</p>
     </div>
     <div v-else>
-      <!-- Dynamic Banner -->
-      <header class="group-banner" :style="{ backgroundImage: `url(${group.bannerImageUrl || '/default-banner.jpg'})` }">
-        <div class="banner-overlay">
-          <div class="banner-content">
-            <h1>{{ group.name }}</h1>
-            <p>{{ group.description }}</p>
-            <div class="social-links" v-if="group.socialLinks">
-              <a v-if="group.socialLinks.facebook" :href="group.socialLinks.facebook" target="_blank">Facebook</a>
-              <a v-if="group.socialLinks.instagram" :href="group.socialLinks.instagram" target="_blank">Instagram</a>
-              <a v-if="group.socialLinks.twitter" :href="group.socialLinks.twitter" target="_blank">Twitter</a>
-            </div>
-          </div>
-        </div>
-      </header>
+      <!-- Group-aware cover: this group's badge + per-group counts, with a
+           Get-the-Book (non-member) or Open-my-book (member) CTA. -->
+      <FoodieCover
+        :group-id="group.id"
+        :is-member="hasPurchasedCouponBook"
+        context="group"
+        @get-book="onPurchaseClick"
+      />
 
       <div class="foodie-group-view container">
         <!-- Purchase Coupon Book Banner -->
@@ -195,6 +189,7 @@ import CouponList from '@/components/Coupons/CouponList.vue';
 import EventList from '@/components/Events/EventList.vue';
 import ComingSoonOverlay from '@/components/Common/ComingSoonOverlay.vue';
 import SidebarFilters from '@/components/Coupons/SidebarFilters.vue';
+import FoodieCover from '@/components/Consumer/FoodieCover.vue';
 import { mapGetters } from 'vuex';
 import { signIn, getAccessToken } from '@/services/authService';
 import { ensureCouponsHaveCuisine } from '@/utils/helpers';
@@ -204,7 +199,7 @@ import { listGroupPrices } from '@/services/subscriptionService';
 
 export default {
   name: 'FoodieGroupView',
-  components: { CouponList, EventList, ComingSoonOverlay, SidebarFilters },
+  components: { CouponList, EventList, ComingSoonOverlay, SidebarFilters, FoodieCover },
 
   data() {
     return {
