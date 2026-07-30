@@ -29,6 +29,38 @@
       @chip="onChip"
       @open="onOpen"
     />
+
+    <!-- Offer-detail sheet: explains the offer before the member redeems.
+         Its CTA runs the real redemption flow (sign-in / purchase / popup). -->
+    <div v-if="activeDeal" class="sheet-overlay" @click.self="closeSheet">
+      <div class="sheet">
+        <button class="sheet-close" type="button" aria-label="Close" @click="closeSheet">✕</button>
+
+        <div class="sheet-head">
+          <img v-if="activeDeal.logo" :src="activeDeal.logo" :alt="activeDeal.merchant" class="sheet-logo" />
+          <span v-else class="sheet-logo sheet-init">{{ activeDeal.initials }}</span>
+          <div class="sheet-head-text">
+            <p class="sheet-merchant">{{ activeDeal.merchant }}</p>
+            <p v-if="activeDeal.cuisine" class="sheet-sub">{{ activeDeal.cuisine }}</p>
+          </div>
+        </div>
+
+        <div class="sheet-body">
+          <p class="sheet-value">{{ activeDeal.value }}</p>
+          <p class="sheet-label">{{ activeDeal.label }}</p>
+          <p v-if="activeDeal.description" class="sheet-desc">{{ activeDeal.description }}</p>
+          <p v-if="activeDeal.daysLeft !== null && activeDeal.daysLeft >= 0" class="sheet-meta">
+            {{ activeDeal.daysLeft }} {{ activeDeal.daysLeft === 1 ? 'day' : 'days' }} left to use
+          </p>
+          <p v-if="activeDeal.redeemed" class="sheet-meta sheet-redeemed">✓ You’ve already redeemed this</p>
+
+          <button class="sheet-cta" type="button" @click="onRedeemCta">
+            {{ redeemState.label }}
+          </button>
+          <p v-if="redeemState.hint" class="sheet-meta">{{ redeemState.hint }}</p>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -76,6 +108,7 @@ export default {
       groupName: 'Your Coupon Book',
       bannerUrl: '',
       purchasedGroupIds: [],
+      activeDeal: null,
       winWidth: typeof window !== 'undefined' ? window.innerWidth : 1280,
     };
   },
@@ -145,6 +178,28 @@ export default {
 
     eventCards() {
       return this.events.map(mapEvent).filter(Boolean);
+    },
+
+    // Drives the offer-sheet CTA: label + what tapping it does, based on the
+    // member's auth + whether they own the book + whether it's already used.
+    redeemState() {
+      const card = this.activeDeal;
+      if (!card) return { label: 'Redeem now', mode: 'redeem' };
+      const coupon = this.couponById(card.id);
+      if (card.redeemed || (coupon && coupon.redeemed_by_user)) {
+        return { label: 'Show your code', mode: 'show' };
+      }
+      if (!this.isAuthenticated) {
+        return { label: 'Sign in to redeem', mode: 'signin' };
+      }
+      if (coupon && coupon.foodie_group_id && !this.purchasedGroupIds.includes(coupon.foodie_group_id)) {
+        return {
+          label: 'Get this coupon book',
+          mode: 'purchase',
+          hint: 'This offer is part of a coupon book you don’t own yet.',
+        };
+      }
+      return { label: 'Redeem now', mode: 'redeem' };
     },
   },
 
@@ -301,19 +356,25 @@ export default {
       this.activeChip = key;
     },
 
-    // A deal card was tapped. Gate on auth + book purchase, then open the
-    // real redemption popup (same flow the old list used).
+    // Tapping a deal opens the offer-detail sheet first (explains the offer);
+    // redemption itself happens from the sheet's CTA.
     onOpen(card) {
+      this.activeDeal = card;
+    },
+
+    closeSheet() {
+      this.activeDeal = null;
+    },
+
+    // The sheet CTA. Runs the real flow based on redeemState.mode:
+    // sign in, go buy the book, or open the real redemption popup.
+    onRedeemCta() {
+      const card = this.activeDeal;
+      if (!card) return;
       const coupon = this.couponById(card.id);
-      if (!coupon) return;
+      const mode = this.redeemState.mode;
 
-      // Already used → reopen the popup so they can show the code again.
-      if (coupon.redeemed_by_user) {
-        this.openRedeemPopup(coupon);
-        return;
-      }
-
-      if (!this.isAuthenticated) {
+      if (mode === 'signin') {
         try {
           signIn();
         } catch (e) {
@@ -322,14 +383,16 @@ export default {
         return;
       }
 
-      // Foodie-group coupons need an active purchased book. If they don't own
-      // it yet, send them to that group's page to buy it.
-      if (coupon.foodie_group_id && !this.purchasedGroupIds.includes(coupon.foodie_group_id)) {
-        this.$router.push({ name: 'FoodieGroupView', params: { id: coupon.foodie_group_id } });
+      if (mode === 'purchase') {
+        if (coupon && coupon.foodie_group_id) {
+          this.$router.push({ name: 'FoodieGroupView', params: { id: coupon.foodie_group_id } });
+        }
         return;
       }
 
-      this.openRedeemPopup(coupon);
+      // 'redeem' or 'show' → open the real redemption popup, then close the sheet.
+      if (coupon) this.openRedeemPopup(coupon);
+      this.closeSheet();
     },
 
     openRedeemPopup(coupon) {
@@ -369,4 +432,117 @@ export default {
 .cb-error {
   color: var(--color-error, #ff6b57);
 }
+
+/* ── Offer-detail sheet (ported from the /ui-preview prototype) ─────────── */
+.sheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+@media (min-width: 720px) {
+  .sheet-overlay { align-items: center; }
+}
+.sheet {
+  position: relative;
+  width: 100%;
+  max-width: 390px;
+  background: #f6f1e7;
+  color: #12181f;
+  border-radius: 20px 20px 0 0;
+  padding: 0 0 calc(22px + env(safe-area-inset-bottom, 0px));
+  text-align: center;
+  overflow: hidden;
+  font-family: 'Archivo', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+@media (min-width: 720px) {
+  .sheet { border-radius: 20px; }
+}
+.sheet-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  border: none;
+  background: rgba(0, 0, 0, 0.07);
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  font-size: 14px;
+  cursor: pointer;
+  color: #12181f;
+  z-index: 2;
+}
+.sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  text-align: left;
+  padding: 20px 54px 18px 22px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+.sheet-logo,
+.sheet-init {
+  width: 56px;
+  height: 56px;
+  flex: none;
+  border-radius: 14px;
+  background: #fff;
+  object-fit: contain;
+  padding: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 800;
+  color: #12181f;
+}
+.sheet-head-text { min-width: 0; }
+.sheet-body { padding: 22px 22px 4px; }
+.sheet-merchant {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.2;
+  overflow-wrap: break-word;
+}
+.sheet-sub { margin: 3px 0 0; font-size: 12.5px; opacity: 0.6; }
+.sheet-value {
+  margin: 8px 0 0;
+  font-size: 60px;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+.sheet-label {
+  margin: 6px 0 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+.sheet-desc {
+  margin: 14px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  opacity: 0.75;
+  white-space: pre-line;
+}
+.sheet-meta { margin: 10px 0 0; font-size: 11px; opacity: 0.55; }
+.sheet-redeemed { color: #1f9c73; opacity: 1; font-weight: 700; font-size: 12px; }
+.sheet-cta {
+  margin-top: 20px;
+  width: 100%;
+  border: none;
+  border-radius: 12px;
+  background: #f2542d;
+  color: #fff;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  padding: 15px;
+  cursor: pointer;
+}
+.sheet-cta:hover { background: #e04a25; }
 </style>
