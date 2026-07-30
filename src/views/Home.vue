@@ -1,11 +1,13 @@
 <!-- src/views/Home.vue
      The Foodies Coupon Book cover / front page (Claude Design "4b — Two paths").
-     Full-bleed food hero with two CTAs: open the book (members) or join the
-     group (newcomers). Counts + group name/link come from real data; the hero
-     photo is a swappable placeholder. -->
+     Desktop: full-bleed food hero, centered content over a directional scrim.
+     Mobile: photo banner on top, left-aligned content below on dark, buttons
+     stacked. Counts + group name/link come from real data; hero photo is a
+     swappable placeholder. -->
 <template>
   <div class="foodie-cover">
-    <section class="cover-hero" :style="heroStyle">
+    <section class="cover-hero">
+      <div class="cover-photo" :style="heroStyle"></div>
       <div class="cover-scrim"></div>
 
       <div class="cover-content">
@@ -104,7 +106,6 @@ export default {
           live.map((c) => c.merchant_id || c.merchant_name).filter(Boolean),
         ).size;
 
-        // Dominant group → its name (badge) + id (join link).
         const counts = {};
         for (const c of live) {
           if (c.foodie_group_id) counts[c.foodie_group_id] = (counts[c.foodie_group_id] || 0) + 1;
@@ -139,33 +140,38 @@ export default {
   background: #0f151c;
 }
 
+/* ── Desktop / default: full-bleed photo, centered content over a scrim ── */
 .cover-hero {
   position: relative;
-  min-height: calc(100vh - 70px);
-  background-color: #0f151c;
-  background-size: cover;
-  background-position: center;
+  min-height: calc(100vh - 72px);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 48px 22px 64px;
+  overflow: hidden;
+  background: #0f151c;
+  padding: 56px 24px 72px;
 }
-
-/* Directional scrim (not a flat grey box) so the headline stays legible on
-   the dark side of the photo. */
+.cover-photo {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+}
+/* Directional scrim: darker toward the center-where-text-sits and the bottom,
+   lighter across the middle so the food photo stays vivid (not a flat box). */
 .cover-scrim {
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(180deg, rgba(10, 14, 19, 0.55) 0%, rgba(10, 14, 19, 0.35) 42%, rgba(10, 14, 19, 0.9) 100%),
-    radial-gradient(120% 90% at 50% 40%, rgba(10, 14, 19, 0.15) 0%, rgba(10, 14, 19, 0.6) 100%);
+    linear-gradient(180deg, rgba(9, 13, 18, 0.45) 0%, rgba(9, 13, 18, 0.26) 38%, rgba(9, 13, 18, 0.82) 100%),
+    radial-gradient(78% 66% at 50% 46%, rgba(9, 13, 18, 0.5) 0%, rgba(9, 13, 18, 0.14) 72%);
 }
 
 .cover-content {
   position: relative;
   z-index: 1;
   width: 100%;
-  max-width: 720px;
+  max-width: 760px;
   text-align: center;
   color: #fff;
   display: flex;
@@ -175,25 +181,26 @@ export default {
 
 .cover-badge {
   display: inline-block;
-  padding: 6px 15px;
-  border: 1px solid rgba(255, 255, 255, 0.5);
+  padding: 6px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
   border-radius: 999px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.16em;
-  color: rgba(255, 255, 255, 0.92);
-  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.95);
+  background: rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(2px);
 }
 
 .cover-title {
-  margin: 20px 0 0;
-  font-size: 56px;
-  line-height: 1.02;
+  margin: 22px 0 0;
+  font-size: clamp(40px, 6.2vw, 74px);
+  line-height: 0.98;
   font-weight: 800;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.025em;
   color: #f4eee4;
-  max-width: 15ch;
+  max-width: 16ch;
+  text-shadow: 0 2px 30px rgba(0, 0, 0, 0.45);
 }
 
 .cover-powered {
@@ -201,32 +208,33 @@ export default {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  margin-top: 18px;
+  margin-top: 20px;
 }
 .cover-powered-label {
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.16em;
-  color: rgba(255, 255, 255, 0.7);
+  letter-spacing: 0.18em;
+  color: rgba(255, 255, 255, 0.72);
 }
 .cover-logo {
-  height: 22px;
+  height: 24px;
   width: auto;
   object-fit: contain;
 }
 
 .cover-sub {
   margin: 20px 0 0;
-  max-width: 30rem;
+  max-width: 32rem;
   font-size: 18px;
   line-height: 1.5;
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(255, 255, 255, 0.88);
+  text-shadow: 0 1px 16px rgba(0, 0, 0, 0.4);
 }
 
 .cover-ctas {
   display: flex;
   gap: 14px;
-  margin-top: 28px;
+  margin-top: 30px;
   flex-wrap: wrap;
   justify-content: center;
 }
@@ -244,47 +252,93 @@ export default {
 .cover-btn.primary {
   background: #f2542d;
   color: #fff;
-  box-shadow: 0 12px 30px rgba(242, 84, 45, 0.35);
+  box-shadow: 0 14px 34px rgba(242, 84, 45, 0.4);
 }
 .cover-btn.primary:hover {
   background: #e04a25;
   transform: translateY(-2px);
 }
 .cover-btn.outline {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.08);
   color: #fff;
-  border: 1.5px solid rgba(255, 255, 255, 0.55);
+  border: 1.5px solid rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(2px);
 }
 .cover-btn.outline:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.16);
   transform: translateY(-2px);
 }
 
 .cover-foot {
-  margin: 18px 0 0;
+  margin: 20px 0 0;
   font-size: 12.5px;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(255, 255, 255, 0.62);
 }
 
-/* Mobile: tighter type, full-width stacked buttons */
+/* ── Mobile: photo banner on top, left-aligned content below, stacked CTAs ── */
 @media (max-width: 640px) {
   .cover-hero {
-    min-height: calc(100vh - 60px);
-    padding: 40px 20px 52px;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    min-height: 0;
+    padding: 0;
+  }
+  .cover-photo {
+    position: relative;
+    inset: auto;
+    width: 100%;
+    height: 264px;
+    flex: none;
+  }
+  /* fade the photo into the dark content below */
+  .cover-photo::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 72px;
+    background: linear-gradient(rgba(15, 21, 28, 0), #0f151c);
+  }
+  .cover-scrim {
+    display: none;
+  }
+  .cover-content {
+    max-width: none;
+    text-align: left;
+    align-items: flex-start;
+    padding: 22px 22px 40px;
   }
   .cover-title {
-    font-size: 36px;
+    margin-top: 14px;
+    font-size: 34px;
+    line-height: 1.03;
+    max-width: none;
+    text-shadow: none;
+  }
+  .cover-powered {
+    justify-content: flex-start;
+    margin-top: 16px;
   }
   .cover-sub {
-    font-size: 16px;
+    margin-top: 16px;
+    font-size: 15.5px;
+    text-shadow: none;
   }
   .cover-ctas {
+    margin-top: 22px;
     flex-direction: column;
     align-self: stretch;
     gap: 12px;
   }
   .cover-btn {
     width: 100%;
+  }
+  .cover-foot {
+    align-self: center;
+    text-align: center;
+    margin-top: 18px;
   }
 }
 </style>
