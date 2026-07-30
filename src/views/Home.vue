@@ -24,7 +24,7 @@
 
         <div class="cover-ctas">
           <router-link class="cover-btn primary" to="/coupon-book">Open my coupon book</router-link>
-          <router-link class="cover-btn outline" :to="joinTo">Join the group</router-link>
+          <router-link class="cover-btn outline" :to="joinTo">Get the Book</router-link>
         </div>
 
         <p class="cover-foot">Already a member? Your book is waiting · No card required</p>
