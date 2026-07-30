@@ -343,6 +343,7 @@ router.get('/me', auth(), resolveLocalUser, async (req, res, next) => {
         id: merchant.id,
         name: merchant.name,
         logoUrl: merchant.logoUrl,
+        backgroundImageUrl: merchant.backgroundImageUrl,
         websiteUrl: merchant.websiteUrl,
         ownerId: merchant.ownerId,
         createdAt: merchant.createdAt,
@@ -365,6 +366,7 @@ router.get('/me', auth(), resolveLocalUser, async (req, res, next) => {
       id: m.id,
       name: m.name,
       logo_url: m.logoUrl,
+      background_image_url: m.backgroundImageUrl || null,
       website_url: m.websiteUrl || null,
       access,
     });

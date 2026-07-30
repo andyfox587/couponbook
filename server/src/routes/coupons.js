@@ -124,6 +124,7 @@ router.get('/', async (req, res) => {
         merchant_id:       coupon.merchantId,
         merchant_name:     merchant.name,
         merchant_logo:     merchant.logoUrl,
+        merchant_background_url: merchant.backgroundImageUrl,
         foodie_group_id:   coupon.groupId,
         foodie_group_name: foodieGroup.name,
       })

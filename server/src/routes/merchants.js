@@ -63,6 +63,7 @@ router.get('/mine', auth(), resolveLocalUser, async (req, res, next) => {
         id: merchant.id,
         name: merchant.name,
         logoUrl: merchant.logoUrl,
+        backgroundImageUrl: merchant.backgroundImageUrl,
         websiteUrl: merchant.websiteUrl,
         ownerId: merchant.ownerId,
         createdAt: merchant.createdAt,
@@ -234,6 +235,12 @@ router.put('/:id', auth(), resolveLocalUser, async (req, res, next) => {
     const updates = {};
     if (req.body.name !== undefined) updates.name = req.body.name;
     if (req.body.logo_url !== undefined) updates.logoUrl = req.body.logo_url;
+    // Background image: a library URL to set, or null/'' to clear it.
+    if (req.body.background_image_url !== undefined) {
+      const raw = req.body.background_image_url;
+      updates.backgroundImageUrl =
+        raw === null || raw === '' ? null : String(raw).slice(0, 500);
+    }
     if (req.body.owner_id !== undefined) updates.ownerId = req.body.owner_id;
     if (req.body.website_url !== undefined) {
       const raw = req.body.website_url;
@@ -278,6 +285,7 @@ router.put('/:id', auth(), resolveLocalUser, async (req, res, next) => {
       id: updated.id,
       name: updated.name,
       logo_url: updated.logoUrl,
+      background_image_url: updated.backgroundImageUrl,
       website_url: updated.websiteUrl,
       owner_id: updated.ownerId,
     });
@@ -410,6 +418,89 @@ router.post(
       });
     } catch (err) {
       console.error('📦  error in POST /merchant/:id/logo', err);
+      return next(err);
+    }
+  },
+);
+
+// ────────────────────────────────────────────────────────────────
+// POST /api/v1/merchants/:id/background
+// Upload/update the restaurant background photo (owner only).
+// Shown behind the offer on that merchant's coupon cards.
+// Field name: "file" in multipart/form-data
+// ────────────────────────────────────────────────────────────────
+router.post(
+  '/:id/background',
+  auth(),
+  resolveLocalUser,
+  upload.single('file'),
+  handleMulterError,
+  async (req, res, next) => {
+    const merchantId = req.params.id;
+    console.log('📦  POST /api/v1/merchants/' + merchantId + '/background');
+
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+
+      const dbUser = req.dbUser;
+      const allowed = await canManageMerchant(dbUser, merchantId);
+      if (!allowed) {
+        return res.status(403).json({ error: 'Forbidden: You do not own this merchant' });
+      }
+
+      const { mimetype, buffer } = req.file;
+      if (!ALLOWED_MIME_TYPES.includes(mimetype)) {
+        return res.status(400).json({ error: 'Unsupported file type' });
+      }
+
+      // Dev / unconfigured-S3 fallback so the UI still works locally.
+      if (!LOGO_BUCKET || !LOGO_BASE_URL) {
+        console.warn('📦  Background bucket not configured – dev fake URL only');
+        const ext = getExtensionFromMime(mimetype);
+        const fakeUrl = `/dev-merchant-bg/${merchantId}.${ext}`;
+        const [updatedDev] = await db
+          .update(merchant)
+          .set({ backgroundImageUrl: fakeUrl })
+          .where(eq(merchant.id, merchantId))
+          .returning();
+        return res.json({
+          id: updatedDev.id,
+          name: updatedDev.name,
+          background_image_url: updatedDev.backgroundImageUrl,
+          owner_id: updatedDev.ownerId,
+        });
+      }
+
+      // Real S3 upload — same bucket as logos, different key prefix.
+      const ext = getExtensionFromMime(mimetype);
+      const randomSuffix = Math.random().toString(36).slice(2);
+      const key = `backgrounds/merchants/${merchantId}/bg-${randomSuffix}.${ext}`;
+
+      const backgroundImageUrl = await uploadFileToS3({
+        bucket: LOGO_BUCKET,
+        baseUrl: LOGO_BASE_URL,
+        key,
+        buffer,
+        mimetype,
+      });
+
+      const [updated] = await db
+        .update(merchant)
+        .set({ backgroundImageUrl })
+        .where(eq(merchant.id, merchantId))
+        .returning();
+
+      console.log('📦  updated merchant background id:', updated.id);
+      return res.json({
+        id: updated.id,
+        name: updated.name,
+        background_image_url: updated.backgroundImageUrl,
+        owner_id: updated.ownerId,
+      });
+    } catch (err) {
+      console.error('📦  error in POST /merchant/:id/background', err);
       return next(err);
     }
   },

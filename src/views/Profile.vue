@@ -376,6 +376,8 @@
                     all coupons for this restaurant.
                   </p>
 
+                  <MerchantBackgroundPicker :merchant="m" @updated="onMerchantBackgroundUpdated" />
+
                   <!-- Admins section -->
                   <div class="merchant-admins-section">
                     <div class="merchant-admins-header">
@@ -908,6 +910,8 @@
                       all coupons for this restaurant.
                     </p>
 
+                    <MerchantBackgroundPicker :merchant="m" @updated="onMerchantBackgroundUpdated" />
+
                     <!-- Admins section -->
                     <div class="merchant-admins-section">
                       <div class="merchant-admins-header">
@@ -1384,6 +1388,7 @@ import { getMyRsvps, getMyEventCredits } from "@/services/eventService";
 import CancelRsvpModal from "@/components/Events/CancelRsvpModal.vue";
 import EventBannerManager from "@/components/Events/EventBannerManager.vue";
 import MerchantToolPanel from "@/components/Merchant/MerchantToolPanel.vue";
+import MerchantBackgroundPicker from "@/components/Merchant/MerchantBackgroundPicker.vue";
 import Modal from "@/components/Common/Modal.vue";
 import ComingSoonOverlay from "@/components/Common/ComingSoonOverlay.vue";
 import { FEATURES } from "@/config/features";
@@ -1391,7 +1396,7 @@ import { FEATURES } from "@/config/features";
 export default {
   name: "UserProfile",
 
-  components: { Modal, ComingSoonOverlay, CancelRsvpModal, EventBannerManager, MerchantToolPanel },
+  components: { Modal, ComingSoonOverlay, CancelRsvpModal, EventBannerManager, MerchantToolPanel, MerchantBackgroundPicker },
 
   data() {
     return {
@@ -1856,6 +1861,13 @@ export default {
       }
     }
     ,
+
+    // Background picker saved a new photo / library pick / removal for a merchant.
+    onMerchantBackgroundUpdated({ id, background_image_url }) {
+      this.merchants = this.merchants.map((m) =>
+        m.id === id ? { ...m, background_image_url } : m
+      );
+    },
 
     syncWebsiteDrafts() {
       const next = {};
