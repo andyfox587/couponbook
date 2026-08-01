@@ -15,10 +15,9 @@
       />
 
       <div class="foodie-group-view container">
-        <!-- Purchase Coupon Book Banner -->
-        <div v-if="showPurchaseBanner" class="purchase-banner">
-          <p v-if="showPurchaseControls">Purchase the coupon book to unlock all group coupons and RSVP for events.</p>
-          <p v-else>You already have access. You can still gift this subscription to someone else.</p>
+        <!-- Purchase banner — only for non-members who still need the book. -->
+        <div v-if="showPurchaseControls" class="purchase-banner">
+          <p>Get the coupon book to unlock all group coupons and RSVP for events.</p>
 
           <div v-if="showPurchaseControls" class="promo-code-row">
             <input
@@ -62,100 +61,15 @@
           </div>
 
           <div class="purchase-buttons">
-            <button v-if="showPurchaseControls" @click="onPurchaseClick" :disabled="checkoutLoading" class="purchase-btn">
+            <button @click="onPurchaseClick" :disabled="checkoutLoading" class="purchase-btn">
               {{ purchaseButtonLabel }}
             </button>
-            <button
-              v-if="showGiftActions"
-              @click="onGiftClick"
-              :disabled="giftLoading || !canGiftSubscription"
-              :title="giftButtonTooltip"
-              class="purchase-btn gift-btn"
-            >
-              {{ giftLoading ? 'Processing...' : 'Gift a Subscription' }}
-            </button>
           </div>
-          <p v-if="showGiftActions && !canGiftSubscription && giftIneligibleMessage" class="gift-hint">
-            {{ giftIneligibleMessage }}
-          </p>
 
-          <!-- Gift modal -->
-          <div v-if="showGiftModal" class="gift-modal-overlay" @click.self="showGiftModal = false">
-            <div class="gift-modal">
-              <h3>Gift a Subscription</h3>
-              <p>Enter the email address of the person you'd like to gift access to <strong>{{ group.name }}</strong>.</p>
-              <!-- Gift tier picker (only when there's a real choice) -->
-              <div v-if="activeTiers.length > 1" class="gift-tier-list">
-                <label v-for="tier in activeTiers" :key="tier.id" class="gift-tier-option">
-                  <input type="radio" name="giftTier" :value="tier.id" v-model="giftTierId" />
-                  <span>
-                    <strong>{{ tier.label || formatTierLabel(tier) }}</strong>
-                    — {{ tier.display }} · {{ formatTierCadence(tier) }}
-                  </span>
-                </label>
-              </div>
-              <input
-                v-model="giftEmail"
-                type="email"
-                placeholder="recipient@email.com"
-                class="gift-email-input"
-                @keyup.enter="submitGift"
-              />
-              <p v-if="giftError" class="gift-error">{{ giftError }}</p>
-              <div class="gift-modal-actions">
-                <button @click="submitGift" :disabled="giftLoading || !giftEmail.trim()" class="purchase-btn">
-                  {{ giftLoading ? 'Processing...' : 'Send Gift' }}
-                </button>
-                <button @click="showGiftModal = false" class="btn-cancel">Cancel</button>
-              </div>
-            </div>
-          </div>
         </div>
 
-      <!-- Coupons Section -->
-      <section class="coupons-section section-card">
-        <h2>Group Coupons</h2>
-
-        <div class="coupons-layout">
-          <!-- 🧱 LEFT: sidebar filters -->
-          <aside class="coupons-sidebar">
-            <SidebarFilters 
-              :availableCuisines="availableCuisines"
-              @filter-changed="updateFilters" 
-            />
-
-            <!-- Active filter chips -->
-            <div class="active-filter-tags">
-              <span v-if="filters.keyword" class="filter-tag" @click="removeFilter('keyword')">
-                Keyword: {{ filters.keyword }} &times;
-              </span>
-
-              <span v-if="filters.activeOnly" class="filter-tag" @click="removeFilter('activeOnly')">
-                Active Only &times;
-              </span>
-
-              <span v-if="filters.couponType" class="filter-tag" @click="removeFilter('couponType')">
-                Type: {{ filters.couponType }} &times;
-              </span>
-
-              <span v-if="filters.cuisineType" class="filter-tag" @click="removeFilter('cuisineType')">
-                Cuisine: {{ filters.cuisineType }} &times;
-              </span>
-            </div>
-
-          </aside>
-
-          <!-- 📄 RIGHT: coupons list -->
-          <div class="coupons-main">
-
-            <p v-if="loadingCoupons">Loading coupons…</p>
-            <p v-else-if="couponError" class="error">⚠️ {{ couponError }}</p>
-
-            <CouponList v-else :coupons="filteredCoupons" :hasPurchasedCouponBook="hasPurchasedCouponBook"
-              :isAuthenticated="isAuthenticated" @redeem="handleRedeemCoupon" />
-          </div>
-        </div>
-      </section>
+      <!-- Group coupons now live in the redesigned book at /coupon-book; the
+           old-format list and gifting were removed from the group page. -->
 
       <section class="events-section section-card">
         <ComingSoonOverlay v-if="!eventsEnabled">
@@ -185,10 +99,8 @@
 </template>
 
 <script>
-import CouponList from '@/components/Coupons/CouponList.vue';
 import EventList from '@/components/Events/EventList.vue';
 import ComingSoonOverlay from '@/components/Common/ComingSoonOverlay.vue';
-import SidebarFilters from '@/components/Coupons/SidebarFilters.vue';
 import FoodieCover from '@/components/Consumer/FoodieCover.vue';
 import { mapGetters } from 'vuex';
 import { signIn, getAccessToken } from '@/services/authService';
@@ -199,7 +111,7 @@ import { listGroupPrices } from '@/services/subscriptionService';
 
 export default {
   name: 'FoodieGroupView',
-  components: { CouponList, EventList, ComingSoonOverlay, SidebarFilters, FoodieCover },
+  components: { EventList, ComingSoonOverlay, FoodieCover },
 
   data() {
     return {
