@@ -3,9 +3,11 @@
   <div class="coupon-submissions">
     <!-- NOT AUTHENTICATED -->
     <section v-if="!isAuthenticated" class="section-card signin-card">
-      <h1>{{ editMode ? 'Edit Pending Coupon Submission' : 'Submit a New Coupon' }}</h1>
+      <h1>{{ pageHeading }}</h1>
       <p class="muted">
-        You need to be signed in as a merchant or super admin to submit coupons.
+        {{ merchantName
+          ? `Sign in as a merchant to add a coupon for ${merchantName}.`
+          : 'You need to be signed in as a merchant or super admin to submit coupons.' }}
       </p>
       <button class="btn primary" @click="signInNow">
         <i class="pi pi-sign-in icon-spacing-sm"></i>Sign In to Continue
@@ -17,7 +19,7 @@
 
     <!-- ACCESS CHECK IN PROGRESS -->
     <section v-else-if="!authChecked" class="section-card access-check-card">
-      <h1>{{ editMode ? 'Edit Pending Coupon Submission' : 'Submit a New Coupon' }}</h1>
+      <h1>{{ pageHeading }}</h1>
       <p class="subtitle">Checking your permissions…</p>
     </section>
 
@@ -79,7 +81,7 @@
 
       <!-- SURVEY FORM -->
       <div v-else class="submissions">
-        <h1>{{ editMode ? 'Edit Pending Coupon Submission' : 'Submit a New Coupon' }}</h1>
+        <h1>{{ pageHeading }}</h1>
         <p v-if="editMode" class="edit-hint">You can edit this submission until it is reviewed by the Foodie Group admin.</p>
         <survey-component :model="survey" />
       </div>
@@ -150,6 +152,22 @@ export default {
         return true
       }
       return false
+    },
+
+    // Personalized-link support: /submissions?merchant=<id>&name=<restaurant>
+    merchantName() {
+      const n = this.$route.query.name
+      return typeof n === 'string' && n.trim() ? n.trim() : ''
+    },
+
+    prefillMerchantId() {
+      const m = this.$route.query.merchant
+      return typeof m === 'string' && m.trim() ? m.trim() : ''
+    },
+
+    pageHeading() {
+      if (this.editMode) return 'Edit Pending Coupon Submission'
+      return this.merchantName ? `Add a Deal for ${this.merchantName}` : 'Submit a New Coupon'
     },
   },
 
@@ -324,10 +342,24 @@ export default {
       this.survey.showCompletedPage = false
 
       // Load dropdown choices
-      await Promise.all([
+      const [, merchantItems] = await Promise.all([
         this.loadChoices('group_id', 'groups'),
         this.loadChoices('merchant_id', 'merchants/mine', { authRequired: true }),
       ])
+
+      // Pre-select the restaurant: from ?merchant=<id> when the signed-in user
+      // actually owns it, or automatically when they manage exactly one. (Skipped
+      // in edit mode — the existing submission's merchant is preloaded instead.)
+      // Note: this only PRE-SELECTS; the server still validates ownership on submit.
+      if (!this.editMode && Array.isArray(merchantItems)) {
+        let pick = null
+        if (this.prefillMerchantId && merchantItems.some((m) => m.id === this.prefillMerchantId)) {
+          pick = this.prefillMerchantId
+        } else if (merchantItems.length === 1) {
+          pick = merchantItems[0].id
+        }
+        if (pick) this.survey.setValue('merchant_id', pick)
+      }
 
       // Register the completion handler
       this.survey.onComplete.add(this.handleSubmit)
