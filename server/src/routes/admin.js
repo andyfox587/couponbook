@@ -20,6 +20,30 @@ const cognitoAdmin = new CognitoIdentityProviderClient({
 });
 const ADMIN_USER_POOL_ID = (process.env.COGNITO_USER_POOL_ID || '').trim();
 
+// Cold-start permission probe: try one of the admin calls this router needs,
+// against a user that cannot exist. UserNotFound → the permission is in place.
+// AccessDenied → the error message names the runtime IAM identity, which is
+// exactly what's needed to grant least-privilege (the key itself is sensitive
+// in Vercel and can't be revealed). One lightweight call per cold start.
+if (ADMIN_USER_POOL_ID) {
+  (async () => {
+    try {
+      await cognitoAdmin.send(new AdminSetUserPasswordCommand({
+        UserPoolId: ADMIN_USER_POOL_ID,
+        Username: 'permission-probe@nonexistent.invalid',
+        Password: 'Probe-Only-1!aA',
+        Permanent: false,
+      }));
+    } catch (e) {
+      if (e?.name === 'UserNotFoundException') {
+        console.log('🔐 cognito admin probe: AdminSetUserPassword AUTHORIZED');
+      } else {
+        console.log('🔐 cognito admin probe:', e?.name, '—', (e?.message || '').slice(0, 400));
+      }
+    }
+  })();
+}
+
 const router = express.Router();
 
 console.log('📦  admin router loaded');
@@ -488,6 +512,11 @@ router.post('/users', async (req, res, next) => {
       if (err?.name === 'InvalidParameterException' || err?.name === 'InvalidPasswordException') {
         return res.status(400).json({ error: err.message });
       }
+      if (err?.name === 'AccessDeniedException') {
+        return res.status(500).json({
+          error: `The server's AWS credentials lack Cognito admin permission. ${err.message}`,
+        });
+      }
       throw err;
     }
 
@@ -509,6 +538,11 @@ router.post('/users', async (req, res, next) => {
           return res.status(400).json({
             error: `Password rejected by the sign-in system: ${err.message}. ` +
               'The account was created — retry with a stronger password, or resend as an invite.',
+          });
+        }
+        if (err?.name === 'AccessDeniedException') {
+          return res.status(500).json({
+            error: `The server's AWS credentials lack Cognito admin permission. ${err.message}`,
           });
         }
         throw err;
