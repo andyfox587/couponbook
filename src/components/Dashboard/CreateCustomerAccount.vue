@@ -7,8 +7,8 @@
   <div class="cca-card">
     <button type="button" class="cca-toggle" @click="open = !open">
       <i class="pi" :class="open ? 'pi-chevron-down' : 'pi-chevron-right'"></i>
-      Create customer account
-      <span class="cca-hint">— for members who need help signing up</span>
+      Create account
+      <span class="cca-hint">— help a customer or merchant who's stuck signing up</span>
     </button>
 
     <form v-if="open" class="cca-form" @submit.prevent="submit">
@@ -20,6 +20,17 @@
         <label class="cca-field">
           <span>Email</span>
           <input v-model.trim="email" type="email" placeholder="jane@example.com" required maxlength="255" />
+        </label>
+      </div>
+
+      <div class="cca-roles">
+        <label class="cca-role" :class="{ on: role === 'customer' }">
+          <input type="radio" value="customer" v-model="role" />
+          <span>Customer</span>
+        </label>
+        <label class="cca-role" :class="{ on: role === 'merchant' }">
+          <input type="radio" value="merchant" v-model="role" />
+          <span>Merchant <small>(restaurant owner — link their restaurant afterwards)</small></span>
         </label>
       </div>
 
@@ -86,6 +97,7 @@ export default {
       open: false,
       name: '',
       email: '',
+      role: 'customer',
       mode: 'invite',
       password: '',
       showPassword: false,
@@ -139,6 +151,7 @@ export default {
           body: JSON.stringify({
             name: this.name,
             email: this.email,
+            role: this.role,
             mode: this.mode,
             ...(this.mode === 'password' ? { password: this.password } : {}),
           }),
@@ -219,6 +232,34 @@ export default {
   color: inherit;
   font: inherit;
 }
+.cca-roles {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.8rem;
+}
+.cca-role {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.85rem;
+  border: 1px solid var(--surface-2, rgba(128, 128, 128, 0.35));
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+.cca-role.on {
+  border-color: #f2542d;
+}
+.cca-role input {
+  accent-color: #f2542d;
+}
+.cca-role small {
+  font-weight: 400;
+  opacity: 0.65;
+}
+
 .cca-modes {
   display: flex;
   gap: 0.75rem;

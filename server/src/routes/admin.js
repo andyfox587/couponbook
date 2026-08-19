@@ -10,6 +10,9 @@ import {
   CognitoIdentityProviderClient,
   AdminCreateUserCommand,
   AdminSetUserPasswordCommand,
+  AdminGetUserCommand,
+  AdminConfirmSignUpCommand,
+  AdminUpdateUserAttributesCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
 
 // Cognito admin client for creating customer accounts on a member's behalf.
@@ -459,8 +462,13 @@ router.post('/users', async (req, res, next) => {
   const rawEmail = (req.body?.email || '').trim().toLowerCase();
   const name = (req.body?.name || '').trim();
   const mode = req.body?.mode === 'password' ? 'password' : 'invite';
+  const role = req.body?.role === 'merchant' ? 'merchant' : 'customer';
   const password = req.body?.password || '';
-  console.log('📦  POST /api/v1/admin/users', { email: rawEmail, mode });
+  console.log('📦  POST /api/v1/admin/users', { email: rawEmail, mode, role });
+
+  const accessDenied = (err) => res.status(500).json({
+    error: `The server's AWS credentials lack Cognito admin permission. ${err.message}`,
+  });
 
   try {
     if (!ADMIN_USER_POOL_ID) {
@@ -476,17 +484,23 @@ router.post('/users', async (req, res, next) => {
       return res.status(400).json({ error: 'Password mode needs a password of at least 8 characters' });
     }
 
-    // Friendly duplicate check against the app DB first.
+    // Already fully present in the app? Nothing for this tool to do.
     const [existing] = await db
       .select({ id: schema.user.id })
       .from(schema.user)
       .where(and(eq(schema.user.email, rawEmail), isNull(schema.user.deletedAt)))
       .limit(1);
     if (existing) {
-      return res.status(409).json({ error: 'A user with this email already exists in the app' });
+      return res.status(409).json({ error: 'A user with this email already exists in the app (see User Management)' });
     }
 
-    // 1) Create the Cognito account (no verification code involved).
+    // 1) Create the Cognito account — or ADOPT an existing one. The common
+    //    support case is a self-signup stuck at the verification code
+    //    (UNCONFIRMED): confirm it, verify the email, and link it into the app.
+    let sub = null;
+    let adopted = false;
+    let wasUnconfirmed = false;
+
     const createParams = {
       UserPoolId: ADMIN_USER_POOL_ID,
       Username: rawEmail,
@@ -502,27 +516,43 @@ router.post('/users', async (req, res, next) => {
       createParams.DesiredDeliveryMediums = ['EMAIL']; // invite email w/ temporary password
     }
 
-    let created;
     try {
-      created = await cognitoAdmin.send(new AdminCreateUserCommand(createParams));
+      const created = await cognitoAdmin.send(new AdminCreateUserCommand(createParams));
+      sub = created.User?.Attributes?.find((a) => a.Name === 'sub')?.Value;
     } catch (err) {
       if (err?.name === 'UsernameExistsException') {
-        return res.status(409).json({ error: 'An account with this email already exists in the sign-in system' });
-      }
-      if (err?.name === 'InvalidParameterException' || err?.name === 'InvalidPasswordException') {
+        adopted = true;
+        const found = await cognitoAdmin.send(new AdminGetUserCommand({
+          UserPoolId: ADMIN_USER_POOL_ID,
+          Username: rawEmail,
+        }));
+        const attrs = Object.fromEntries((found.UserAttributes || []).map((a) => [a.Name, a.Value]));
+        sub = attrs.sub;
+        wasUnconfirmed = found.UserStatus === 'UNCONFIRMED';
+        if (wasUnconfirmed) {
+          await cognitoAdmin.send(new AdminConfirmSignUpCommand({
+            UserPoolId: ADMIN_USER_POOL_ID,
+            Username: rawEmail,
+          }));
+        }
+        if (attrs.email_verified !== 'true') {
+          await cognitoAdmin.send(new AdminUpdateUserAttributesCommand({
+            UserPoolId: ADMIN_USER_POOL_ID,
+            Username: rawEmail,
+            UserAttributes: [{ Name: 'email_verified', Value: 'true' }],
+          }));
+        }
+      } else if (err?.name === 'InvalidParameterException' || err?.name === 'InvalidPasswordException') {
         return res.status(400).json({ error: err.message });
+      } else if (err?.name === 'AccessDeniedException') {
+        return accessDenied(err);
+      } else {
+        throw err;
       }
-      if (err?.name === 'AccessDeniedException') {
-        return res.status(500).json({
-          error: `The server's AWS credentials lack Cognito admin permission. ${err.message}`,
-        });
-      }
-      throw err;
     }
 
-    const sub = created.User?.Attributes?.find((a) => a.Name === 'sub')?.Value;
-
     // 2) Password mode: make the chosen password permanent (no forced reset).
+    //    On an adopted account this REPLACES their previous password.
     if (mode === 'password') {
       try {
         await cognitoAdmin.send(new AdminSetUserPasswordCommand({
@@ -533,18 +563,12 @@ router.post('/users', async (req, res, next) => {
         }));
       } catch (err) {
         if (err?.name === 'InvalidPasswordException') {
-          // Cognito account exists but has no usable password; surface the
-          // policy error so the admin can retry with a stronger one.
           return res.status(400).json({
             error: `Password rejected by the sign-in system: ${err.message}. ` +
-              'The account was created — retry with a stronger password, or resend as an invite.',
+              'The account exists — retry with a stronger password.',
           });
         }
-        if (err?.name === 'AccessDeniedException') {
-          return res.status(500).json({
-            error: `The server's AWS credentials lack Cognito admin permission. ${err.message}`,
-          });
-        }
+        if (err?.name === 'AccessDeniedException') return accessDenied(err);
         throw err;
       }
     }
@@ -557,7 +581,7 @@ router.post('/users', async (req, res, next) => {
       try {
         [localRow] = await db
           .insert(schema.user)
-          .values({ cognitoSub: sub, email: rawEmail, name, role: 'customer' })
+          .values({ cognitoSub: sub, email: rawEmail, name, role })
           .returning();
       } catch (err) {
         console.error('📦  local user row insert failed (sync will heal on first sign-in)', err);
@@ -565,20 +589,40 @@ router.post('/users', async (req, res, next) => {
       }
     }
 
-    await logAdminAction(req.dbUser.id, 'user_create', 'user', localRow?.id || sub || rawEmail, {
+    await logAdminAction(req.dbUser.id, adopted ? 'user_adopt' : 'user_create', 'user', localRow?.id || sub || rawEmail, {
       email: rawEmail,
       mode,
+      role,
+      wasUnconfirmed,
     });
+
+    // Message: say exactly what happened, including the adoption cases.
+    let message;
+    if (!adopted) {
+      message = mode === 'invite'
+        ? `Invitation sent to ${rawEmail} with a temporary password (valid 7 days). They set their own password at first sign-in.`
+        : `Account created and password set — ${rawEmail} can sign in immediately.`;
+    } else if (wasUnconfirmed) {
+      message = mode === 'password'
+        ? `This email had a signup stuck at the verification code — it's now confirmed and the password you set replaced theirs. They can sign in immediately.`
+        : `This email had a signup stuck at the verification code — it's now confirmed and linked into the app. They sign in with the password they chose at signup (use password mode if they've forgotten it).`;
+    } else {
+      message = mode === 'password'
+        ? `This email already had a working sign-in account — it's now linked into the app and the password you set replaced theirs.`
+        : `This email already had a working sign-in account — it's now linked into the app. Their existing password still works.`;
+    }
+    if (role === 'merchant') {
+      message += ' Next: link their restaurant in the Merchants tab (create or assign it with them as owner).';
+    }
 
     return res.status(201).json({
       id: localRow?.id || null,
       email: rawEmail,
       name,
-      role: 'customer',
+      role,
       mode,
-      message: mode === 'invite'
-        ? `Invitation sent to ${rawEmail} with a temporary password (valid 7 days). They set their own password at first sign-in.`
-        : `Account created and password set — ${rawEmail} can sign in immediately.`,
+      adopted,
+      message,
       ...(warning ? { warning } : {}),
     });
   } catch (err) {
