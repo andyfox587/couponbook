@@ -6,6 +6,19 @@ import { db } from '../db.js';
 import * as schema from '../schema.js';
 import { eq, and, isNull, count, sql, desc, ilike, or, isNotNull, gte, lte, inArray } from 'drizzle-orm';
 import { getPlatformRedemptionOverview, getPlatformSubscriptionOverview } from '../redemptionAnalytics.js';
+import {
+  CognitoIdentityProviderClient,
+  AdminCreateUserCommand,
+  AdminSetUserPasswordCommand,
+} from '@aws-sdk/client-cognito-identity-provider';
+
+// Cognito admin client for creating customer accounts on a member's behalf.
+// NOTE: keep the region fallback — an empty AWS_REGION crashes the whole
+// serverless function at module load otherwise.
+const cognitoAdmin = new CognitoIdentityProviderClient({
+  region: (process.env.AWS_REGION || 'us-east-1').trim(),
+});
+const ADMIN_USER_POOL_ID = (process.env.COGNITO_USER_POOL_ID || '').trim();
 
 const router = express.Router();
 
@@ -400,6 +413,142 @@ router.get('/users', async (req, res, next) => {
     res.json({ users, limit: Number(limit), offset: Number(offset) });
   } catch (err) {
     console.error('📦  error in GET /admin/users', err);
+    next(err);
+  }
+});
+
+/**
+ * POST /api/v1/admin/users
+ * Create a customer account on the customer's behalf (super admin only).
+ * Skips the self-signup email-verification code entirely.
+ *
+ * body: { name, email, mode: 'invite' | 'password', password? }
+ *   invite   → Cognito emails the customer a temporary password (7-day validity);
+ *              they set their own password on first sign-in.
+ *   password → the admin sets a permanent password now (tell the customer by
+ *              phone/text); zero email steps. Email is marked verified.
+ *
+ * Also creates the local app user row immediately, so the account shows in
+ * User Management right away instead of after their first sign-in.
+ */
+router.post('/users', async (req, res, next) => {
+  const rawEmail = (req.body?.email || '').trim().toLowerCase();
+  const name = (req.body?.name || '').trim();
+  const mode = req.body?.mode === 'password' ? 'password' : 'invite';
+  const password = req.body?.password || '';
+  console.log('📦  POST /api/v1/admin/users', { email: rawEmail, mode });
+
+  try {
+    if (!ADMIN_USER_POOL_ID) {
+      return res.status(500).json({ error: 'COGNITO_USER_POOL_ID is not configured on the server' });
+    }
+    if (!name || name.length > 255) {
+      return res.status(400).json({ error: 'Name is required (max 255 chars)' });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail) || rawEmail.length > 255) {
+      return res.status(400).json({ error: 'A valid email address is required' });
+    }
+    if (mode === 'password' && password.length < 8) {
+      return res.status(400).json({ error: 'Password mode needs a password of at least 8 characters' });
+    }
+
+    // Friendly duplicate check against the app DB first.
+    const [existing] = await db
+      .select({ id: schema.user.id })
+      .from(schema.user)
+      .where(and(eq(schema.user.email, rawEmail), isNull(schema.user.deletedAt)))
+      .limit(1);
+    if (existing) {
+      return res.status(409).json({ error: 'A user with this email already exists in the app' });
+    }
+
+    // 1) Create the Cognito account (no verification code involved).
+    const createParams = {
+      UserPoolId: ADMIN_USER_POOL_ID,
+      Username: rawEmail,
+      UserAttributes: [
+        { Name: 'email', Value: rawEmail },
+        { Name: 'email_verified', Value: 'true' },
+        { Name: 'name', Value: name },
+      ],
+    };
+    if (mode === 'password') {
+      createParams.MessageAction = 'SUPPRESS'; // no invite email; we set the password below
+    } else {
+      createParams.DesiredDeliveryMediums = ['EMAIL']; // invite email w/ temporary password
+    }
+
+    let created;
+    try {
+      created = await cognitoAdmin.send(new AdminCreateUserCommand(createParams));
+    } catch (err) {
+      if (err?.name === 'UsernameExistsException') {
+        return res.status(409).json({ error: 'An account with this email already exists in the sign-in system' });
+      }
+      if (err?.name === 'InvalidParameterException' || err?.name === 'InvalidPasswordException') {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
+    }
+
+    const sub = created.User?.Attributes?.find((a) => a.Name === 'sub')?.Value;
+
+    // 2) Password mode: make the chosen password permanent (no forced reset).
+    if (mode === 'password') {
+      try {
+        await cognitoAdmin.send(new AdminSetUserPasswordCommand({
+          UserPoolId: ADMIN_USER_POOL_ID,
+          Username: rawEmail,
+          Password: password,
+          Permanent: true,
+        }));
+      } catch (err) {
+        if (err?.name === 'InvalidPasswordException') {
+          // Cognito account exists but has no usable password; surface the
+          // policy error so the admin can retry with a stronger one.
+          return res.status(400).json({
+            error: `Password rejected by the sign-in system: ${err.message}. ` +
+              'The account was created — retry with a stronger password, or resend as an invite.',
+          });
+        }
+        throw err;
+      }
+    }
+
+    // 3) Create the local app row now (normally lazily created at first
+    //    sign-in, which made admin-created users invisible in User Management).
+    let localRow = null;
+    let warning = null;
+    if (sub) {
+      try {
+        [localRow] = await db
+          .insert(schema.user)
+          .values({ cognitoSub: sub, email: rawEmail, name, role: 'customer' })
+          .returning();
+      } catch (err) {
+        console.error('📦  local user row insert failed (sync will heal on first sign-in)', err);
+        warning = 'Account created, but it will appear in User Management after their first sign-in.';
+      }
+    }
+
+    await logAdminAction(req.dbUser.id, 'user_create', 'user', localRow?.id || sub || rawEmail, {
+      email: rawEmail,
+      mode,
+    });
+
+    return res.status(201).json({
+      id: localRow?.id || null,
+      email: rawEmail,
+      name,
+      role: 'customer',
+      mode,
+      message: mode === 'invite'
+        ? `Invitation sent to ${rawEmail} with a temporary password (valid 7 days). They set their own password at first sign-in.`
+        : `Account created and password set — ${rawEmail} can sign in immediately.`,
+      ...(warning ? { warning } : {}),
+    });
+  } catch (err) {
+    console.error('📦  error in POST /admin/users', err);
     next(err);
   }
 });

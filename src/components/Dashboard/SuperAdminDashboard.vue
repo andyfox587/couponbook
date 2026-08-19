@@ -193,7 +193,9 @@
         <!-- USERS TAB -->
         <section v-if="activeTab === 'users'" class="dashboard-section">
           <h2>User Management</h2>
-          
+
+          <CreateCustomerAccount @created="searchUsers" />
+
           <div class="search-bar">
             <input
               type="text"
@@ -1415,12 +1417,13 @@
 import { mapGetters } from "vuex";
 import { getAccessToken, signIn, setImpersonation } from "@/services/authService";
 import Modal from "@/components/Common/Modal.vue";
+import CreateCustomerAccount from "@/components/Dashboard/CreateCustomerAccount.vue";
 
 const API_BASE = "/api/v1";
 
 export default {
   name: "SuperAdminDashboard",
-  components: { Modal },
+  components: { Modal, CreateCustomerAccount },
 
   data() {
     return {
