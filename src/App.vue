@@ -1,5 +1,8 @@
 <template>
   <div id="app">
+    <div v-if="isStagingHost" class="staging-banner">
+      ⚠️ STAGING — test site. Nothing done here reaches members. The real site is couponbook.vivaspot.com
+    </div>
     <div v-if="impersonating" class="impersonation-banner">
       <span>
         👤 Viewing as <strong>{{ impersonating.name || impersonating.email }}</strong>
@@ -37,6 +40,14 @@ export default {
     // the full-screen mobile UI prototype).
     bare() {
       return !!this.$route.meta?.bare
+    },
+    // Unmissable banner on every non-production host (staging, previews) so
+    // admin work can't silently happen in the sandbox. Hostname-based: needs
+    // no env var and can't drift.
+    isStagingHost() {
+      if (typeof window === 'undefined') return false
+      const h = window.location.hostname
+      return h !== 'couponbook.vivaspot.com' && h !== 'localhost' && h !== '127.0.0.1'
     }
   },
   methods: {
@@ -58,6 +69,25 @@ export default {
 
 router-view {
   flex: 1;
+}
+
+.staging-banner {
+  position: sticky;
+  top: 0;
+  z-index: 2100;
+  background: repeating-linear-gradient(
+    -45deg,
+    #f2a413,
+    #f2a413 14px,
+    #d98a00 14px,
+    #d98a00 28px
+  );
+  color: #1a1205;
+  text-align: center;
+  font-size: 0.85rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  padding: 7px 14px;
 }
 
 .impersonation-banner {
