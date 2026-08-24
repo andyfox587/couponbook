@@ -13,6 +13,7 @@ import eventSubmissionsRouter from './routes/eventSubmissions.js';
 import stripeRouter from './routes/stripe.js';
 import adminRouter from './routes/admin.js';
 import cronRouter from './routes/cron.js';
+import joinRouter from './routes/join.js';
 
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
@@ -50,6 +51,7 @@ app.use('/api/v1/merchants', merchantsRouter);
 app.use('/api/v1/coupons', couponsRouter);
 app.use('/api/v1/groups', groupsRouter);
 app.use('/api/v1/coupon-submissions', couponSubmissionsRouter);
+app.use('/api/v1/join', joinRouter); // public coupon-first merchant onboarding
 // Event submissions: individual endpoints apply auth() as needed (mirrors coupon-submissions)
 app.use('/api/v1/event-submissions', eventSubmissionsRouter);
 // Events: public read endpoints + auth-gated write/RSVP endpoints (individual routes apply auth)
