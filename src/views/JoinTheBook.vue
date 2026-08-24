@@ -93,6 +93,10 @@
             <span>Expires *</span>
             <input v-model="form.expires_at" type="date" required />
           </label>
+          <p class="join-commitment join-wide">
+            📅 We've set your deal to run a <strong>full 12 months</strong> — that's what
+            members count on when they buy the book. You can shorten it if you need to.
+          </p>
         </div>
 
         <h2 class="join-step"><span>3</span>You</h2>
@@ -166,11 +170,13 @@ export default {
     } catch (e) {
       /* dropdown stays empty; server validates anyway */
     }
-    // sensible defaults: valid today, expires in ~3 months
+    // Default: valid today, expires in 12 months — the year-long run members
+    // count on (Repeats-style commitment, editable if they need shorter).
     const today = new Date();
-    const later = new Date(today.getTime() + 90 * 86400000);
+    const yearOut = new Date(today);
+    yearOut.setFullYear(yearOut.getFullYear() + 1);
     this.form.valid_from = today.toISOString().slice(0, 10);
-    this.form.expires_at = later.toISOString().slice(0, 10);
+    this.form.expires_at = yearOut.toISOString().slice(0, 10);
   },
   methods: {
     onLogo(e) {
@@ -346,6 +352,17 @@ h1 {
   width: 100%;
 }
 .join-fineprint { text-align: center; margin: 12px 0 0; }
+.join-commitment {
+  margin: 2px 0 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(242, 84, 45, 0.1);
+  border: 1px solid rgba(242, 84, 45, 0.3);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .join-error {
   margin: 18px 0 0;
   padding: 11px 14px;
