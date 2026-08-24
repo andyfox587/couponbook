@@ -99,11 +99,13 @@ const routes = [
     name: 'AuthCallback',
     component: AuthCallback
   },
-  // Public coupon-first merchant onboarding — one form, no login.
+  // Public coupon-first merchant onboarding — one form, no login. The design
+  // is a standalone page with its own brand bar, so it renders bare.
   {
     path: '/join',
     name: 'JoinTheBook',
-    component: () => import('@/views/JoinTheBook.vue')
+    component: () => import('@/views/JoinTheBook.vue'),
+    meta: { bare: true }
   },
   // Consumer-UI design prototype (three directions, real coupon data).
   // meta.bare hides the site header/footer so it reads as a real mobile app.
