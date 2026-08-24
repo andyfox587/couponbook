@@ -18,6 +18,10 @@
 
     <!-- Form -->
     <section v-else class="join-card">
+      <div class="join-brand">
+        <span class="join-brand-name">Chapel Hill Foodies</span>
+        <span class="join-powered">POWERED BY <img :src="logo" alt="VivaSpot" class="join-logo" /></span>
+      </div>
       <p class="join-eyebrow">FOR RESTAURANTS · FREE</p>
       <h1>Get your deal in the Coupon Book</h1>
       <p class="join-lead">
@@ -43,15 +47,19 @@
             </select>
           </label>
           <label class="join-field">
-            <span>Cuisine</span>
-            <input v-model.trim="form.cuisine_type" type="text" list="join-cuisines" maxlength="100" placeholder="e.g. Thai" />
-            <datalist id="join-cuisines">
-              <option v-for="c in cuisines" :key="c" :value="c" />
-            </datalist>
+            <span>Restaurant type</span>
+            <select v-model="form.cuisine_type">
+              <option value="">Choose…</option>
+              <option v-for="c in cuisines" :key="c" :value="c">{{ c }}</option>
+            </select>
           </label>
           <label class="join-field">
             <span>Website</span>
             <input v-model.trim="form.website" type="text" maxlength="500" placeholder="https://yourrestaurant.com" />
+          </label>
+          <label class="join-field">
+            <span>Instagram (optional)</span>
+            <input v-model.trim="form.instagram" type="text" maxlength="100" placeholder="@yourrestaurant" />
           </label>
           <label class="join-field join-file">
             <span>Logo (optional)</span>
@@ -126,10 +134,13 @@
 </template>
 
 <script>
+import logo from '@/assets/logo.png';
+
 export default {
   name: 'JoinTheBook',
   data() {
     return {
+      logo,
       groups: [],
       cuisines: ['American', 'Mexican', 'Thai', 'Indian', 'Italian', 'Chinese', 'Japanese',
         'Mediterranean', 'Seafood', 'BBQ', 'Bar & Grill', 'Bakery', 'Baked Goods',
@@ -140,6 +151,7 @@ export default {
         group_id: '',
         cuisine_type: '',
         website: '',
+        instagram: '',
         contact_name: '',
         email: '',
         coupon_type: '',
@@ -240,6 +252,36 @@ export default {
   padding: 30px 28px 34px;
   color: #fff;
 }
+.join-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+}
+.join-brand-name {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: #f4eee4;
+}
+.join-powered {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: rgba(255, 255, 255, 0.55);
+}
+.join-logo {
+  height: 18px;
+  width: auto;
+  object-fit: contain;
+}
+
 .join-eyebrow {
   margin: 0 0 8px;
   font-size: 11px;

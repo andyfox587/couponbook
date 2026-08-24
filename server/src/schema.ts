@@ -226,6 +226,7 @@ export const merchant = pgTable("merchant", {
 	// Per-restaurant background photo, shown behind the offer on coupon cards.
 	backgroundImageUrl: varchar("background_image_url", { length: 500 }),
 	websiteUrl: varchar("website_url", { length: 500 }),
+	instagramUrl: varchar("instagram_url", { length: 500 }),
 	ownerId: uuid("owner_id").notNull(),
 	deletedAt: timestamp("deleted_at", { mode: 'string' }),
 	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow().notNull(),

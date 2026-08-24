@@ -77,6 +77,7 @@ router.post('/', upload.single('logo'), handleMulterError, async (req, res, next
     const groupId = (b.group_id || '').trim();
     const cuisine = (b.cuisine_type || '').trim();
     const website = (b.website || '').trim();
+    const instagramRaw = (b.instagram || '').trim();
     const contactName = (b.contact_name || '').trim();
     const email = (b.email || '').trim().toLowerCase();
     const couponType = (b.coupon_type || '').trim();
@@ -114,6 +115,19 @@ router.post('/', upload.single('logo'), handleMulterError, async (req, res, next
     }
     if (req.file && !ALLOWED_MIME_TYPES.includes(req.file.mimetype)) {
       return fail('Logo must be a PNG, JPG or WebP image');
+    }
+
+    // Instagram: accept "@handle", "handle", or a full instagram.com URL →
+    // normalize to https://instagram.com/<handle>. Optional.
+    let instagramUrl = null;
+    if (instagramRaw) {
+      let handle = instagramRaw.replace(/^@/, '');
+      const m = handle.match(/instagram\.com\/([A-Za-z0-9._]+)/i);
+      if (m) handle = m[1];
+      if (!/^[A-Za-z0-9._]{1,30}$/.test(handle)) {
+        return fail('Instagram should be your handle, like @yourrestaurant');
+      }
+      instagramUrl = `https://instagram.com/${handle}`;
     }
 
     const [group] = await db
@@ -192,8 +206,11 @@ router.post('/', upload.single('logo'), handleMulterError, async (req, res, next
           name: restaurantName,
           ownerId: row.id,
           websiteUrl: website ? (website.startsWith('http') ? website : `https://${website}`) : null,
+          instagramUrl,
         })
         .returning();
+    } else if (instagramUrl && !rest.instagramUrl) {
+      await db.update(merchant).set({ instagramUrl }).where(eq(merchant.id, rest.id));
     }
 
     // ---- 4) optional logo → S3 ----------------------------------------------
