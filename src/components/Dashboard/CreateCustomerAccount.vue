@@ -70,6 +70,13 @@
           </button>
         </div>
       </div>
+      <label v-if="mode === 'password'" class="cca-temp">
+        <input type="checkbox" v-model="requireChange" />
+        <span>
+          Make it <strong>temporary</strong> — they choose their own password at first
+          sign-in (valid 7 days). Recommended when reading it over the phone.
+        </span>
+      </label>
 
       <div class="cca-actions">
         <button type="submit" class="cca-btn-primary" :disabled="busy">
@@ -100,6 +107,7 @@ export default {
       role: 'customer',
       mode: 'invite',
       password: '',
+      requireChange: true,
       showPassword: false,
       busy: false,
       success: null,
@@ -153,7 +161,7 @@ export default {
             email: this.email,
             role: this.role,
             mode: this.mode,
-            ...(this.mode === 'password' ? { password: this.password } : {}),
+            ...(this.mode === 'password' ? { password: this.password, requireChange: this.requireChange } : {}),
           }),
         });
 
@@ -293,6 +301,21 @@ export default {
   line-height: 1.35;
   margin-top: 0.15rem;
 }
+.cca-temp {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin-top: 0.6rem;
+  font-size: 0.83rem;
+  line-height: 1.4;
+  opacity: 0.9;
+  cursor: pointer;
+}
+.cca-temp input {
+  margin-top: 0.2rem;
+  accent-color: #f2542d;
+}
+
 .cca-password-row {
   margin-top: 0.75rem;
   align-items: flex-end;

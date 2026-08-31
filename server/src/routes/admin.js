@@ -464,6 +464,8 @@ router.post('/users', async (req, res, next) => {
   const mode = req.body?.mode === 'password' ? 'password' : 'invite';
   const role = req.body?.role === 'merchant' ? 'merchant' : 'customer';
   const password = req.body?.password || '';
+  // Temporary password: they must choose their own at first sign-in (default).
+  const requireChange = req.body?.requireChange !== false;
   console.log('📦  POST /api/v1/admin/users', { email: rawEmail, mode, role });
 
   const accessDenied = (err) => res.status(500).json({
@@ -559,7 +561,7 @@ router.post('/users', async (req, res, next) => {
           UserPoolId: ADMIN_USER_POOL_ID,
           Username: rawEmail,
           Password: password,
-          Permanent: true,
+          Permanent: !requireChange,
         }));
       } catch (err) {
         if (err?.name === 'InvalidPasswordException') {
@@ -601,14 +603,20 @@ router.post('/users', async (req, res, next) => {
     if (!adopted) {
       message = mode === 'invite'
         ? `Invitation sent to ${rawEmail} with a temporary password (valid 7 days). They set their own password at first sign-in.`
-        : `Account created and password set — ${rawEmail} can sign in immediately.`;
+        : requireChange
+          ? `Account created — give ${rawEmail} this temporary password (valid 7 days); they'll choose their own at first sign-in.`
+          : `Account created and password set — ${rawEmail} can sign in immediately.`;
     } else if (wasUnconfirmed) {
       message = mode === 'password'
-        ? `This email had a signup stuck at the verification code — it's now confirmed and the password you set replaced theirs. They can sign in immediately.`
+        ? (requireChange
+            ? `This email had a signup stuck at the verification code — it's confirmed, and the temporary password you set replaced theirs (valid 7 days; they'll choose their own at first sign-in).`
+            : `This email had a signup stuck at the verification code — it's now confirmed and the password you set replaced theirs. They can sign in immediately.`)
         : `This email had a signup stuck at the verification code — it's now confirmed and linked into the app. They sign in with the password they chose at signup (use password mode if they've forgotten it).`;
     } else {
       message = mode === 'password'
-        ? `This email already had a working sign-in account — it's now linked into the app and the password you set replaced theirs.`
+        ? (requireChange
+            ? `This email already had an account — the temporary password you set replaced theirs (valid 7 days; they'll choose their own at first sign-in).`
+            : `This email already had a working sign-in account — it's now linked into the app and the password you set replaced theirs.`)
         : `This email already had a working sign-in account — it's now linked into the app. Their existing password still works.`;
     }
     if (role === 'merchant') {
