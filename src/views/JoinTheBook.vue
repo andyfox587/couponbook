@@ -29,7 +29,7 @@
           </p>
         </div>
         <div class="jn-hero-stat">
-          <div class="jn-hero-stat-num">{{ brand.statNum }}</div>
+          <div class="jn-hero-stat-num" :class="{ 'jn-hero-stat-num-long': brand.statNum.length > 4 }">{{ brand.statNum }}</div>
           <div class="jn-hero-stat-sub">{{ brand.statCaption }}</div>
         </div>
       </div>
@@ -416,6 +416,7 @@ export default {
 }
 .jn-hero-lead { margin: 0; font-size: 18px; line-height: 1.45; max-width: 44ch; opacity: 0.95; }
 .jn-hero-stat { border-left: 2px solid rgba(255, 255, 255, 0.45); padding-left: 28px; }
+.jn-hero-stat-num-long { font-size: clamp(40px, 6vw, 64px) !important; }
 .jn-hero-stat-num { font-weight: 700; font-size: 104px; line-height: 0.82; letter-spacing: -0.04em; }
 .jn-hero-stat-sub { margin-top: 16px; font-size: 15px; line-height: 1.4; max-width: 26ch; }
 
