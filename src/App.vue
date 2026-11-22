@@ -1,6 +1,9 @@
 <template>
   <div id="app">
-    <div v-if="isStagingHost" class="staging-banner">
+    <div v-if="isDemoHost" class="demo-banner">
+      ✨ DEMO — evaluation site preloaded with sample data. Powered by VivaSpot.
+    </div>
+    <div v-else-if="isStagingHost" class="staging-banner">
       ⚠️ STAGING — test site. Nothing done here reaches members. The real site is couponbook.vivaspot.com
     </div>
     <div v-if="impersonating" class="impersonation-banner">
@@ -21,6 +24,7 @@
 import AppHeader from './components/Common/Header.vue'
 import AppFooter from './components/Common/Footer.vue'
 import { getImpersonatedUser, clearImpersonation } from '@/services/authService'
+import { isDemoHostname } from '@/demoHost'
 
 export default {
   name: 'App',
@@ -48,6 +52,12 @@ export default {
       if (typeof window === 'undefined') return false
       const h = window.location.hostname
       return h !== 'couponbook.vivaspot.com' && h !== 'localhost' && h !== '127.0.0.1'
+    },
+    // Demo instances (prospect evaluations with their own DB of sample data)
+    // get a friendly banner instead of the scary staging one.
+    isDemoHost() {
+      if (typeof window === 'undefined') return false
+      return isDemoHostname(window.location.hostname)
     }
   },
   methods: {
@@ -69,6 +79,19 @@ export default {
 
 router-view {
   flex: 1;
+}
+
+.demo-banner {
+  position: sticky;
+  top: 0;
+  z-index: 2100;
+  background: linear-gradient(90deg, #1d4ed8, #2563eb);
+  color: #fff;
+  text-align: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 7px 14px;
 }
 
 .staging-banner {

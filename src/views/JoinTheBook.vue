@@ -9,8 +9,8 @@
   <div class="jn">
     <!-- Brand bar -->
     <header class="jn-bar">
-      <img :src="chfLogo" alt="Chapel Hill Foodies" class="jn-bar-mark" />
-      <div class="jn-bar-name">Chapel Hill Foodies</div>
+      <img :src="brand.logo" :alt="brand.name" class="jn-bar-mark" />
+      <div class="jn-bar-name">{{ brand.name }}</div>
       <div class="jn-bar-powered">
         <span>Powered by</span>
         <img :src="vsLogo" alt="Vivaspot" class="jn-bar-vs" />
@@ -29,8 +29,8 @@
           </p>
         </div>
         <div class="jn-hero-stat">
-          <div class="jn-hero-stat-num">50K+</div>
-          <div class="jn-hero-stat-sub">Foodies across Chapel Hill, Carrboro, Raleigh and Durham deciding where to eat next.</div>
+          <div class="jn-hero-stat-num">{{ brand.statNum }}</div>
+          <div class="jn-hero-stat-sub">{{ brand.statCaption }}</div>
         </div>
       </div>
     </section>
@@ -48,7 +48,7 @@
         </div>
         <div class="jn-strip-cell">
           <div class="jn-strip-title">Track your redemptions</div>
-          <div class="jn-strip-sub">After you submit, you get credentials for the Chapel Hill Foodies Coupon Book app.</div>
+          <div class="jn-strip-sub">After you submit, you get credentials for the {{ brand.appName }} app.</div>
         </div>
       </div>
     </section>
@@ -208,6 +208,16 @@
 <script>
 import chfLogo from '@/assets/chf-logo.png';
 import vsLogo from '@/assets/vivaspot-lockup.png';
+import { demoBrand } from '@/demoHost';
+
+// Default branding (the live Chapel Hill market); demo hosts override it.
+const DEFAULT_BRAND = {
+  name: 'Chapel Hill Foodies',
+  logo: chfLogo,
+  statNum: '50K+',
+  statCaption: 'Foodies across Chapel Hill, Carrboro, Raleigh and Durham deciding where to eat next.',
+  appName: 'Chapel Hill Foodies Coupon Book',
+};
 
 const FONTS =
   'https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap';
@@ -216,7 +226,7 @@ export default {
   name: 'JoinTheBook',
   data() {
     return {
-      chfLogo,
+      brand: demoBrand() || DEFAULT_BRAND,
       vsLogo,
       step: 1,
       groups: [],
